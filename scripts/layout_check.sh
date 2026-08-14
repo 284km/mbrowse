@@ -31,16 +31,21 @@
 # a box with nothing in it and no border or padding lets margins collapse THROUGH — an empty `<div>`
 # after a paragraph is placed after the collapsed margin, which puts it below its own parent's bottom
 # edge, and adds nothing to that parent's height.
-#   13  an inline element's x or width: `<strong>` 39px to the right of where it belongs, which is a
-#       float beside it that this does not shorten the line for.
-#    6  a `<div>` at the wrong x AND y — floats again, placed beside rather than below.
-#    4  a `<div>` whose height does not include the float inside it.
-#    2  an `<svg>` reported 288 wide where the browser says 0 — a replaced element with no intrinsic
-#       size, which is not a box-model question.
 #
-# **The ordering in this header used to say `font-size` first. Not one of the 126 documents sets it.**
-# That was written from what a layout engine usually needs rather than from what this corpus asks, and
-# the corpus was one grep away. The list above is from the failures themselves.
+# What is left, grouped by the first box whose geometry differs. **This list is re-derived from the
+# failures every time and not carried forward**, because it has been wrong twice: it once named
+# `font-size`, which not one of the 126 documents sets, and then floats, which are 12 of the 113.
+#
+#   65  TABLE LAYOUT. `<table>`, `<tbody>`, `<tr>`, `<td>` are laid out as ordinary blocks here, and
+#       they are not: a table shrinks to fit its content rather than filling its container, rows share
+#       a column's width, and `border-spacing` insets every cell — 2px by default, which is why the
+#       browser's `<tbody>` starts two pixels inside its table. This is its own algorithm and it is the
+#       next thing.
+#   22  an inline element 19 pixels to the right of where it belongs, all in table documents too.
+#   12  floats: a box placed beside its predecessor rather than below, a line that should have been
+#       shortened beside one, and a parent whose height should have grown to contain one.
+#    3  an `<svg>` reported 288 wide where the browser says 0 — a replaced element with no intrinsic
+#       size, which is not a box-model question.
 #
 # **Both sides measure with the same font, and they have to.** The expectations were first taken with
 # whatever font the browser defaulted to — on that machine a system font that cannot be
