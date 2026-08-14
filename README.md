@@ -67,7 +67,7 @@ web-platform-tests on 2026-06-26, which is why looking for it at its old path re
 a 404 that reads like a wrong path. `scripts/vendor_tests.sh` takes it from the last
 commit before that move, **by SHA** — 199 cases in `test/data/tree_tests*.dat`. An
 oracle is a versioned dependency; pinning is the correct form rather than a
-workaround. `scripts/tree_check.sh` runs it: **95 of 189**, pinned exactly.
+workaround. `scripts/tree_check.sh` runs it: **102 of 189**, pinned exactly.
 
 Most of what fails needs things that are not here yet — a tokenizer state chosen by
 the builder (many cases start in one), the table insertion modes, foreign content,

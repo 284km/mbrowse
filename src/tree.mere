@@ -68,9 +68,9 @@
 //
 // 2. ~~The adoption agency's other half.~~ Done, in src/aaa.mere, and checked on
 //    `<b>1<p>2</b>` — the clone of the `<b>` becomes the paragraph's child and the
-//    text moves into it. **Nothing calls it yet**, which is why the corpus still says
-//    95 of 189: wiring it into this builder's end-tag handling is the next step, and
-//    it is the one that will move the number.
+//    text moves into it. Wired in as of the next commit: a formatting element's end
+//    tag goes to the algorithm, which says whether it handled the token, and 95 of 189
+//    became 102.
 //
 // The four pieces under both are each checked on their own, which is the point of
 // having built them separately: when the rewrite is wrong, what it is standing on
@@ -79,6 +79,7 @@
 import "mere-html/tokenizer.mere";
 import "dom.mere";
 import "nodes.mere";
+import "aaa.mere";
 
 module Tree {
   // Which tokenizer state an element's content is in. This is the half of the loop
@@ -188,14 +189,29 @@ module Tree {
       else if _is_special n then false
       else _end_tag_matches arena rest name;
 
+  // The formatting elements: the ones the adoption agency exists for, because these
+  // are what people leave open across a block boundary.
+  let _is_formatting = fn (n: str) ->
+    n == "a" || n == "b" || n == "big" || n == "code" || n == "em" || n == "font"
+    || n == "i" || n == "nobr" || n == "s" || n == "small" || n == "strike"
+    || n == "strong" || n == "tt" || n == "u";
+
+  // Entering one of these means formatting must not escape it, so a marker goes on
+  // the list and leaving clears back to it.
+  let _is_marker_scope = fn (n: str) ->
+    n == "applet" || n == "object" || n == "marquee" || n == "td" || n == "th"
+    || n == "caption" || n == "template";
+
   let build = fn (tokens: token list) ->
     let push_el = fn (arena: anode list) -> fn (open_ids: int list) ->
                   fn (name: str) -> fn (attrs: attr list) ->
       let (a, id) = Nodes.element arena (_parent open_ids) name attrs in
       (a, Cons (id, open_ids)) in
 
-    let rec go = fn (ts: token list) -> fn (mode: str) ->
-                 fn (arena: anode list) -> fn (open_ids: int list) ->
+    let drop1 = fn (o: int list) -> match o with Cons (_, r) -> r | Nil -> Nil in
+
+    let rec go = fn (ts: token list) -> fn (mode: str) -> fn (arena: anode list) ->
+                 fn (open_ids: int list) -> fn (afe: afe list) ->
       match ts with
       | Nil ->
         let (a, _o) = if _open_has arena open_ids "body" then (arena, open_ids)
@@ -205,76 +221,91 @@ module Tree {
       | Cons (t, rest) ->
         (match t with
         | TDoctype (name, pub, has_pub, sys, has_sys, ok) ->
-          if mode != "initial" then go rest mode arena open_ids
+          if mode != "initial" then go rest mode arena open_ids afe
           else
             let (a, _id) = Nodes.doctype arena (_parent open_ids) name in
-            go rest "before html" a open_ids
+            go rest "before html" a open_ids afe
         | TComment data ->
           let (a, _id) = Nodes.comment arena (_parent open_ids) data in
-          go rest mode a open_ids
+          go rest mode a open_ids afe
         | TChar data ->
-          if _is_ws data && mode != "in body" then go rest mode arena open_ids
+          if _is_ws data && mode != "in body" then go rest mode arena open_ids afe
           else if mode == "in body" then
-            let (a, _id) = Nodes.add_text arena (_parent open_ids) data in
-            go rest mode a open_ids
+            // Anything inserted into a new block reopens the formatting elements that
+            // are listed but no longer open — that is what the list is for.
+            let (a0, o0, l0, p0) =
+              Reconstruct.run arena open_ids afe (_parent open_ids) in
+            let (a, _id) = Nodes.add_text a0 p0 data in
+            go rest mode a o0 l0
           else
             let (a, o) = _open_body (mode == "after head" || mode == "after body")
                            arena open_ids in
-            go ts "in body" a o
+            go ts "in body" a o afe
         | TStart (name, attrs, selfc) ->
           if mode == "initial" || mode == "before html" then
             if name == "html" then
               let (a, o) = push_el arena open_ids "html" attrs in
-              go rest "before head" a o
+              go rest "before head" a o afe
             else
               let (a, o) = push_el arena open_ids "html" Nil in
-              go ts "before head" a o
+              go ts "before head" a o afe
           else if mode == "before head" then
             if name == "head" then
               let (a, o) = push_el arena open_ids "head" attrs in
-              go rest "in head" a o
+              go rest "in head" a o afe
             else
               let (a, o) = push_el arena open_ids "head" Nil in
-              go ts "in head" a o
+              go ts "in head" a o afe
           else if mode == "in head" then
             if name == "title" || name == "style" || name == "script"
                || _is_void name then
               let (a, o) = push_el arena open_ids name attrs in
-              go rest mode a (match o with Cons (_, r) -> r | Nil -> Nil)
-            else
-              go ts "after head" arena
-                (match open_ids with Cons (_, r) -> r | Nil -> Nil)
+              go rest mode a (drop1 o) afe
+            else go ts "after head" arena (drop1 open_ids) afe
           else if mode == "after head" then
             if name == "body" then
               let (a, o) = push_el arena open_ids "body" attrs in
-              go rest "in body" a o
+              go rest "in body" a o afe
             else
               let (a, o) = _open_body true arena open_ids in
-              go ts "in body" a o
+              go ts "in body" a o afe
           else
             if _is_void name || selfc then
               let (a, o) = push_el arena open_ids name attrs in
-              go rest mode a (match o with Cons (_, r) -> r | Nil -> Nil)
+              go rest mode a (drop1 o) afe
             else if _open_same_kind arena open_ids name != "" then
               go ts mode arena
-                (_pop_through arena open_ids (_open_same_kind arena open_ids name))
+                (_pop_through arena open_ids (_open_same_kind arena open_ids name)) afe
             else if _closes_p name && _open_has arena open_ids "p" then
-              go ts mode arena (_pop_through arena open_ids "p")
+              go ts mode arena (_pop_through arena open_ids "p") afe
             else
               let (a, o) = push_el arena open_ids name attrs in
-              go rest mode a o
+              let id = _parent o in
+              let l = if _is_formatting name then Formatting.push afe id name attrs
+                      else if _is_marker_scope name then Formatting.push_marker afe
+                      else afe in
+              go rest mode a o l
         | TEnd name ->
           if name == "html" || name == "body" then
-            if mode == "in body" then go rest "after body" arena open_ids
-            else go rest mode arena open_ids
+            if mode == "in body" then go rest "after body" arena open_ids afe
+            else go rest mode arena open_ids afe
+          // A formatting element's end tag is the adoption agency's, and it says
+          // whether it handled the token: `handled` false means fall through to the
+          // ordinary path, which is the standard's "any other end tag".
+          else if _is_formatting name then
+            let (a, o, l, handled, complex) =
+              Aaa.run arena open_ids afe name _is_special in
+            if handled then go rest mode a o l
+            else if _end_tag_matches arena open_ids name then
+              go rest mode arena (_pop_through arena open_ids name) afe
+            else go rest mode arena open_ids afe
           else if _end_tag_matches arena open_ids name then
-            go rest (if name == "head" then "after head" else mode)
-              arena (_pop_through arena open_ids name)
-          else go rest mode arena open_ids)
+            let o = _pop_through arena open_ids name in
+            let l = if _is_marker_scope name then Formatting.clear_to_marker afe
+                    else afe in
+            go rest (if name == "head" then "after head" else mode) arena o l
+          else go rest mode arena open_ids afe)
 
-    // Everything before the body is optional in the source and required in the tree.
-    // `head_done` because a closed head is no longer on the stack: asking the stack
-    // cannot tell "never created" from "created and finished". The mode knows.
     and _open_body = fn (head_done: bool) -> fn (arena: anode list) ->
                      fn (open_ids: int list) ->
       if _open_has arena open_ids "body" then (arena, open_ids)
@@ -287,8 +318,8 @@ module Tree {
           else if head_done then (a1, o1)
           else
             let (x, y) = push_el a1 o1 "head" Nil in
-            (x, match y with Cons (_, r) -> r | Nil -> Nil) in
+            (x, drop1 y) in
         push_el a2 o2 "body" Nil
     in
-    go tokens "initial" Nodes.empty Nil;
+    go tokens "initial" Nodes.empty Nil Nil;
 }
