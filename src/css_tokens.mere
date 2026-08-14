@@ -56,7 +56,26 @@ module Css {
     else if c >= "a" && c <= "f" then ord c - 87
     else ord c - 55;
 
-  let tokenize = fn (src: str) ->
+  // The input stream is preprocessed before the tokenizer sees it: CRLF, a lone CR and a
+  // form feed all become LF, and U+0000 becomes U+FFFD. Doing it here rather than in
+  // every state is the same reasoning the HTML standard gives for its own preprocessing
+  // — otherwise every rule that mentions a newline has to mention three of them.
+  let preprocess = fn (s: str) ->
+    let n = str_len s in
+    let at = fn (i: int) -> if i >= n then "" else char_at s i in
+    let repl = chr 239 ++ chr 191 ++ chr 189 in
+    let rec go = fn (i: int) -> fn (out: str) ->
+      if i >= n then out
+      else
+        let c = at i in
+        if c == "\r" && at (i + 1) == "\n" then go (i + 2) (out ++ "\n")
+        else if c == "\r" || c == chr 12 then go (i + 1) (out ++ "\n")
+        else if ord c == 0 then go (i + 1) (out ++ repl)
+        else go (i + 1) (out ++ c) in
+    go 0 "";
+
+  let tokenize = fn (src0: str) ->
+    let src = preprocess src0 in
     let n = str_len src in
     let at = fn (i: int) -> if i >= n then "" else char_at src i in
 
