@@ -168,9 +168,26 @@ module Css {
                 || (c == "-" && (_is_name_start (at (i + 1)) || at (i + 1) == "-"
                                  || (at (i + 1) == "\\" && esc_ok (i + 1)))) then
           let (v, e) = name_from i in
-          // A name followed by `(` is a function, and the parenthesis belongs to it.
-          if at e == "(" then go (e + 1) (Cons (Named ("function", v), out))
-          else go e (Cons (Named ("ident", v), out))
+          // A name followed by `(` is a function, and the parenthesis belongs to it —
+          // except `url(`, which is its own token unless what follows is a quote. That
+          // exception exists because a URL is not a CSS value: it may contain
+          // parentheses, slashes and colons that no other component value would
+          // survive, so the tokenizer stops interpreting until the closing bracket.
+          // With a quote it *is* a string, and then `url` is an ordinary function.
+          if at e != "(" then go e (Cons (Named ("ident", v), out))
+          else if to_lower v != "url" then go (e + 1) (Cons (Named ("function", v), out))
+          else
+            let rec skip_ws = fn (k: int) -> if _is_ws (at k) then skip_ws (k + 1) else k in
+            let b0 = skip_ws (e + 1) in
+            if at b0 == "\"" || at b0 == "'" then
+              go (e + 1) (Cons (Named ("function", v), out))
+            else
+              let rec upto = fn (k: int) -> if k >= n || at k == ")" then k else upto (k + 1) in
+              let ue = upto b0 in
+              let rec rtrim = fn (k: int) ->
+                if k > b0 && _is_ws (at (k - 1)) then rtrim (k - 1) else k in
+              go (if ue >= n then ue else ue + 1)
+                 (Cons (Named ("url", substring src b0 (rtrim ue)), out))
         else go (i + 1) (Cons (Bare c, out)) in
     go 0 Nil;
 
