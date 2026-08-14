@@ -39,4 +39,25 @@ let _ = check "remove takes it out" (not (Formatting.has (Formatting.remove l2 2
 let ord = Formatting.entries_after_marker l2;
 let _ = check "reopening order is oldest first"
   (match ord with Cons ((i, _, _), _) -> i == 1 | Nil -> false);
+// --- reconstructing ---------------------------------------------------------
+// `<b><p>` : the b is in the list and no longer open, so the paragraph gets one.
+let ar0 = Nodes.empty;
+let (ar1, bodyid) = Nodes.element ar0 0 "body" Nil;
+let (ar2, bid) = Nodes.element ar1 bodyid "b" Nil;
+let fl = Formatting.push Nil bid "b" Nil;
+let _ = check "not needed while the element is open" (not (Reconstruct.needed fl (Cons (bid, Nil))));
+let _ = check "needed once it is closed" (Reconstruct.needed fl Nil);
+
+let (ar3, pid) = Nodes.element ar2 bodyid "p" Nil;
+let (ar4, o4, fl4, ins) = Reconstruct.run ar3 Nil fl pid;
+let (ar5, _t) = Nodes.text ar4 ins "X";
+let _ = check "the b is reopened inside the p"
+  (Nodes.serialize ar5 == Dom.serialize (Cons (Element ("body", Nil,
+     Cons (Element ("b", Nil, Nil),
+     Cons (Element ("p", Nil, Cons (Element ("b", Nil, Cons (Text "X", Nil)), Nil)), Nil))), Nil)));
+let _ = check "and the entry names the new element" (not (Formatting.has fl4 bid));
+
+// A marker stops it: formatting does not escape a cell.
+let _ = check "a marker means nothing to reconstruct"
+  (not (Reconstruct.needed (Formatting.push_marker fl) Nil));
 0

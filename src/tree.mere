@@ -38,7 +38,15 @@
 // with the marker discipline and the Noah's Ark clause, checked on the parts that
 // have a defined answer without the algorithm around them.
 //
-// What is left is the algorithm itself, and then this builder moves onto the arena.
+// And "reconstruct the active formatting elements" is there too — the operation that
+// makes the list worth keeping, reopening a still-listed but no-longer-open `<b>`
+// inside the new block so that `<b><p>X` has one in the paragraph. It is a function
+// over the arena, the open stack and the list, checked on that document.
+//
+// What is left is the adoption agency loop itself, and then this builder moves onto
+// the arena. The three pieces under it are each checked on their own, which is the
+// point of having built them separately: when the loop is wrong, the thing it is
+// standing on will not be.
 
 import "mere-html/tokenizer.mere";
 import "dom.mere";

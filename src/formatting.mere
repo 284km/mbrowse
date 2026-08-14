@@ -95,3 +95,52 @@ module Formatting {
       | Cons (AElem (id, n, a), rest) -> go rest (Cons ((id, n, a), out)) in
     go list Nil;
 }
+
+// Reconstructing the active formatting elements.
+//
+// The operation that makes the list worth keeping: before inserting anything into a
+// new block, any formatting element that is still in the list but no longer open gets
+// reopened, innermost last, so `<b><p>X` puts a `<b>` inside the paragraph. The
+// standard calls this from "insert an HTML element", which is why it is here as a
+// function over the three structures rather than inside the builder.
+//
+// `open_ids` is the stack of open elements, newest first. The reopened element takes
+// the place of its entry in the list — the entry is the *element*, and after this it
+// is a different one.
+module Reconstruct {
+  let rec _in_open = fn (open_ids: int list) -> fn (id: int) ->
+    match open_ids with
+    | Nil -> false
+    | Cons (x, rest) -> if x == id then true else _in_open rest id;
+
+  // Nothing to do when the list is empty, or when its newest entry is a marker or is
+  // already open: those are the standard's three early exits, and together they are
+  // why this costs nothing on an ordinary document.
+  let needed = fn (list: afe list) -> fn (open_ids: int list) ->
+    match list with
+    | Nil -> false
+    | Cons (AMarker, _) -> false
+    | Cons (AElem (id, _, _), _) -> not (_in_open open_ids id);
+
+  // Reopen, oldest first, under `parent`. Each reopened element becomes the parent of
+  // the next, which is what "innermost last" means and what a flat loop would get
+  // backwards.
+  let run = fn (arena: anode list) -> fn (open_ids: int list) ->
+            fn (list: afe list) -> fn (parent: int) ->
+    if not (needed list open_ids) then (arena, open_ids, list, parent)
+    else
+      let rec go = fn (todo: (int * str * attr list) list) ->
+                   fn (a: anode list) -> fn (o: int list) ->
+                   fn (l: afe list) -> fn (p: int) ->
+        match todo with
+        | Nil -> (a, o, l, p)
+        | Cons ((old_id, name, attrs), rest) ->
+          if _in_open o old_id then go rest a o l p
+          else
+            let (a2, new_id) = Nodes.element a p name attrs in
+            // The entry now names the new element: the old one is finished and
+            // nothing may reopen it a second time.
+            let l2 = Formatting.push (Formatting.remove l old_id) new_id name attrs in
+            go rest a2 (Cons (new_id, o)) l2 new_id in
+      go (Formatting.entries_after_marker list) arena open_ids list parent;
+}
