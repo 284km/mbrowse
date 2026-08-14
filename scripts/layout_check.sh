@@ -36,12 +36,12 @@
 # failures every time and not carried forward**, because it has been wrong twice: it once named
 # `font-size`, which not one of the 126 documents sets, and then floats, which are 12 of the 113.
 #
-#   65  TABLE LAYOUT. `<table>`, `<tbody>`, `<tr>`, `<td>` are laid out as ordinary blocks here, and
-#       they are not: a table shrinks to fit its content rather than filling its container, rows share
-#       a column's width, and `border-spacing` insets every cell — 2px by default, which is why the
-#       browser's `<tbody>` starts two pixels inside its table. This is its own algorithm and it is the
-#       next thing.
-#   22  an inline element 19 pixels to the right of where it belongs, all in table documents too.
+#   63  ANONYMOUS TABLE BOXES. `display: table-cell` on a `<span>` with no table around it — the
+#       standard wraps it in an anonymous table, row group and row, so it takes a line of its own and
+#       the inline content after it starts the next one. Here it stays inline, and the document comes
+#       out one line short. Table layout itself is in; what is missing is the boxes nobody wrote.
+#   22  an inline element 21 pixels to the left of where it belongs, in those same documents and for
+#       the same reason.
 #   12  floats: a box placed beside its predecessor rather than below, a line that should have been
 #       shortened beside one, and a parent whose height should have grown to contain one.
 #    3  an `<svg>` reported 288 wide where the browser says 0 — a replaced element with no intrinsic
