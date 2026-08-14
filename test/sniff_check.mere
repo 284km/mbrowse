@@ -1,0 +1,27 @@
+// Encoding sniffing, on the shapes a declaration actually takes.
+//
+// html5lib-tests has an encoding suite (test/data/encoding_tests*.dat) and running
+// this against it is the next step; these are the cases that drove the code.
+
+import "../src/sniff.mere";
+
+let check = fn (label: str) -> fn (src: str) -> fn (want: str) ->
+  let got = Sniff.of_bytes (bytes_of_str src) in
+  print (label ++ ": " ++ (if got == want then "ok"
+                           else "MISMATCH got=" ++ got ++ " want=" ++ want));
+
+let _ = check "no declaration" "<!DOCTYPE HTML><p>x" "windows-1252";
+let _ = check "meta charset" "<meta charset=\"ISO-8859-1\">" "windows-1252";
+let _ = check "meta charset utf-8" "<meta charset=utf-8>" "utf-8";
+// The value ends at the attribute's own closing quote, not at the end of the tag.
+let _ = check "http-equiv content"
+  "<meta http-equiv=Content-Type content=\"text/html; charset=utf-8\">" "utf-8";
+let _ = check "comment before" "<!-- <meta charset=utf-8> --><meta charset=utf-8>" "utf-8";
+let _ = check "BOM wins" (chr 239 ++ chr 187 ++ chr 191 ++ "<meta charset=utf-8>") "UTF-8";
+
+// Known gap, upstream: `utf-16` is a label in the Encoding Standard and the
+// vendored label table does not have it, so this answers windows-1252 where the
+// standard says UTF-8 (a page declaring UTF-16 in ASCII cannot be in it). Written
+// down as the case it is rather than left out.
+let _ = check "utf-16 declared (KNOWN GAP)" "<meta charset=utf-16>" "windows-1252";
+0

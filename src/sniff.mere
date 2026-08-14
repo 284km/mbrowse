@@ -1,0 +1,105 @@
+// Which encoding is this page in, before it can be decoded.
+//
+// A chicken-and-egg problem the standard answers by cheating carefully: to read
+// `<meta charset="...">` you must decode the bytes, and to decode the bytes you
+// must read `<meta charset>`. The way out is that the declaration is ASCII, and
+// every encoding a page can plausibly be in agrees with ASCII on the bytes that
+// spell it — so the first 1024 bytes are scanned as bytes, not as text.
+//
+// This is a scanner and not the tokenizer, deliberately. It has to run before
+// anything is decoded, it may not fail, and it stops after 1024 bytes whether or
+// not it is in the middle of something. Reusing the tokenizer here would mean
+// giving it a mode in which none of those things are true.
+
+import "mere-encoding/decode.mere";
+
+module Sniff {
+  let _lower = fn (c: str) -> if c >= "A" && c <= "Z" then to_lower c else c;
+
+  let _is_space = fn (c: str) ->
+    c == " " || c == "\t" || c == "\n" || c == "\r" || c == chr 12;
+
+  // A byte-order mark wins over everything, including a `<meta>` that disagrees:
+  // it is what the bytes say about themselves.
+  let bom_of = fn (b: bytes) ->
+    let at = fn (i: int) -> if i >= bytes_len b then 0 - 1 else bytes_get b i in
+    if at 0 == 239 && at 1 == 187 && at 2 == 191 then "UTF-8"
+    else if at 0 == 254 && at 1 == 255 then "UTF-16BE"
+    else if at 0 == 255 && at 1 == 254 then "UTF-16LE"
+    else "";
+
+  // `charset=` inside an attribute value, as the standard's "extracting a
+  // character encoding from a meta element" step reads it.
+  let _charset_in = fn (s: str) ->
+    let n = str_len s in
+    let low = to_lower s in
+    let idx = str_index_of low "charset" in
+    if idx < 0 then ""
+    else
+      let rec skip = fn (i: int) ->
+        if i < n && _is_space (char_at s i) then skip (i + 1) else i in
+      let i = skip (idx + 7) in
+      if i >= n || char_at s i != "=" then ""
+      else
+        let j = skip (i + 1) in
+        if j >= n then ""
+        else
+          let q = char_at s j in
+          if q == "\"" || q == "'" then
+            let e = str_index_of (substring s (j + 1) n) q in
+            if e < 0 then "" else substring s (j + 1) (j + 1 + e)
+          else
+            // An unquoted value ends at whitespace, `;` or `"` — the last because
+            // `content="text/html; charset=utf-8"` puts the attribute's own closing
+            // quote right after the value, and taking it made every such page
+            // unlabelled.
+            let rec upto = fn (k: int) ->
+              if k >= n || _is_space (char_at s k) || char_at s k == ";"
+                 || char_at s k == "\"" || char_at s k == "'" then k
+              else upto (k + 1) in
+            substring s j (upto j);
+
+  // The prescan: the first 1024 bytes, looking only for a meta element that
+  // declares an encoding. Comments and other tags are skipped rather than parsed,
+  // because at this point there is no document to build.
+  let prescan = fn (src: str) ->
+    let n = if str_len src > 1024 then 1024 else str_len src in
+    let at = fn (i: int) -> if i >= n then "" else char_at src i in
+    let rec go = fn (i: int) ->
+      if i >= n then ""
+      else if at i != "<" then go (i + 1)
+      else if at (i + 1) == "!" && at (i + 2) == "-" && at (i + 3) == "-" then
+        let rec skip = fn (k: int) ->
+          if k + 2 >= n then n
+          else if at k == "-" && at (k + 1) == "-" && at (k + 2) == ">" then k + 3
+          else skip (k + 1) in
+        go (skip (i + 4))
+      else
+        // The tag's text up to the next ">" is enough: a meta element has no
+        // content, so everything that matters is inside its own angle brackets.
+        let rec upto = fn (k: int) -> if k >= n || at k == ">" then k else upto (k + 1) in
+        let e = upto i in
+        let tag = substring src i (if e >= n then n else e) in
+        let name = to_lower (substring tag 1 (if str_len tag >= 6 then 6 else str_len tag)) in
+        if name == "meta " || name == "meta\t" || name == "meta\n"
+           || name == "meta\r" || name == "meta/" then
+          let cs = _charset_in tag in
+          if cs != "" then cs else go (e + 1)
+        else go (e + 1) in
+    go 0;
+
+  // The encoding to decode with: the mark, then the declaration, then the default.
+  // Windows-1252 is the default the standard names for an unlabelled page, and it
+  // is not a guess about the content — it is the answer that makes the most pages
+  // that exist render as their authors saw them.
+  let of_bytes = fn (b: bytes) ->
+    let bom = bom_of b in
+    if bom != "" then bom
+    else
+      // A page that declares UTF-16 in ASCII cannot be in UTF-16, so the standard
+      // reads that declaration as UTF-8.
+      match Encoding.label_of (prescan (str_of_bytes b)) with
+      | None -> "windows-1252"
+      | Some d ->
+        if d == "UTF-16LE" || d == "UTF-16BE" then "UTF-8" else d;
+}
