@@ -43,9 +43,48 @@ module Css {
       else go (i + 1) (out ++ at i) in
     go 0 "";
 
+  let _is_hex = fn (c: str) ->
+    (c >= "0" && c <= "9") || (c >= "a" && c <= "f") || (c >= "A" && c <= "F");
+
+  let _hexval = fn (c: str) ->
+    if c >= "0" && c <= "9" then ord c - 48
+    else if c >= "a" && c <= "f" then ord c - 87
+    else ord c - 55;
+
   let tokenize = fn (src: str) ->
     let n = str_len src in
     let at = fn (i: int) -> if i >= n then "" else char_at src i in
+
+    // An escape: a backslash and up to six hex digits, then one optional whitespace
+    // that belongs to the escape and not to the document — which is why `\30 red` is
+    // the single identifier `0red` and not `0` followed by `red`. A backslash before
+    // anything else is that character literally; at the end of input it is U+FFFD.
+    // A backslash before a newline is not an escape — it is a delimiter and then a
+    // line break, which is why `\<newline>red` is three component values and not one
+    // identifier.
+    let esc_ok = fn (i: int) -> at (i + 1) != "\n" && at (i + 1) != "\r" in
+    let esc_at = fn (i: int) ->
+      if at (i + 1) == "" then (chr 239 ++ chr 191 ++ chr 189, i + 1)
+      else if not (_is_hex (at (i + 1))) then (at (i + 1), i + 2)
+      else
+        let rec hx = fn (k: int) -> fn (v: int) -> fn (cnt: int) ->
+          if cnt >= 6 || not (_is_hex (at k)) then (k, v)
+          else hx (k + 1) (v * 16 + _hexval (at k)) (cnt + 1) in
+        let (k, v) = hx (i + 1) 0 0 in
+        let k2 = if _is_ws (at k) then k + 1 else k in
+        (str_of_codepoint (if v == 0 || v > 1114111 then 65533 else v), k2) in
+
+    // A name, built as it is scanned because an escape inside it stands for something
+    // other than its own characters. This was a substring until the corpus asked for
+    // `\30 red`.
+    let name_from = fn (i: int) ->
+      let rec go = fn (k: int) -> fn (acc: str) ->
+        if k >= n then (acc, k)
+        else if at k == "\\" && esc_ok k then
+          let (t, k2) = esc_at k in go k2 (acc ++ t)
+        else if _is_name (at k) then go (k + 1) (acc ++ at k)
+        else (acc, k) in
+      go i "" in
 
     let rec name_end = fn (i: int) -> if i < n && _is_name (at i) then name_end (i + 1) else i in
 
@@ -72,6 +111,9 @@ module Css {
           let rec str_end = fn (k: int) -> fn (acc: str) ->
             if k >= n then (k, acc)
             else if at k == c then (k + 1, acc)
+            else if at k == "\\" && at (k + 1) == "\n" then str_end (k + 2) acc
+            else if at k == "\\" then
+              let (t, k2) = esc_at k in str_end k2 (acc ++ t)
             else str_end (k + 1) (acc ++ at k) in
           let (e, v) = str_end (i + 1) "" in
           go e (Cons (Named ("string", v), out))
@@ -107,11 +149,13 @@ module Css {
           go (i + 4) (Cons (Bare "<!--", out))
         else if c == "-" && at (i + 1) == "-" && at (i + 2) == ">" then
           go (i + 3) (Cons (Bare "-->", out))
-        else if _is_name_start c || (c == "-" && (_is_name_start (at (i + 1)) || at (i + 1) == "-")) then
-          let e = name_end i in
+        else if _is_name_start c || (c == "\\" && esc_ok i)
+                || (c == "-" && (_is_name_start (at (i + 1)) || at (i + 1) == "-"
+                                 || (at (i + 1) == "\\" && esc_ok (i + 1)))) then
+          let (v, e) = name_from i in
           // A name followed by `(` is a function, and the parenthesis belongs to it.
-          if at e == "(" then go (e + 1) (Cons (Named ("function", substring src i e), out))
-          else go e (Cons (Named ("ident", substring src i e), out))
+          if at e == "(" then go (e + 1) (Cons (Named ("function", v), out))
+          else go e (Cons (Named ("ident", v), out))
         else go (i + 1) (Cons (Bare c, out)) in
     go 0 Nil;
 
