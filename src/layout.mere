@@ -40,6 +40,13 @@ module Layout {
   // this constant goes.
   let font_size = 16;
 
+  // The displays that make a box block-level in its parent's flow. The table families are here because
+  // an anonymous table is generated around them wherever one is missing, and an anonymous table is a
+  // block.
+  let _is_block_level = fn (d: str) ->
+    d == "block" || d == "table" || d == "table-cell" || d == "table-row"
+    || d == "table-row-group" || d == "table-caption";
+
   let _shift = fn (bs: box list) -> fn (dx: int) -> fn (dy: int) ->
     list_map bs (fn (b: box) ->
       box { tag = b.tag, x = b.x + dx, y = b.y + dy, w = b.w, h = b.h });
@@ -175,12 +182,16 @@ module Layout {
         if w == "" then words rest x line true
         else
           let wu = Font.text_units f w in
-          if x == 0 then words rest wu line false
+          // A space is owed after every word, because splitting on spaces is what made these words:
+          // the separator is not in either piece and has to be put back. Leaving the flag false here
+          // dropped the space between two words of the same text node — four pixels, and only visible
+          // as a box slightly too narrow.
+          if x == 0 then words rest wu line true
           else if x + (if gap then space else 0) + wu <= cap then
-            words rest (x + (if gap then space else 0) + wu) line false
+            words rest (x + (if gap then space else 0) + wu) line true
           // A word that does not fit starts the next line, and one wider than the whole line gets a
           // line of its own and overflows — which is what a browser does rather than cutting it.
-          else words rest wu (line + 1) false in
+          else words rest wu (line + 1) true in
     let rec walk = fn (ns: node list) -> fn (x: int) -> fn (line: int) -> fn (gap: bool) ->
                    fn (acc: box list) ->
       match ns with
@@ -261,6 +272,27 @@ module Layout {
     | Nil -> b
     | Cons (_x, ra) -> match b with Nil -> Nil | Cons (_y, rb) -> _drop ra rb;
 
+  // The longest run of inline children at the head of a list, and what is left after it. One anonymous
+  // block is made per run, which is what the standard says and also why the runs have to be maximal:
+  // two anonymous blocks where there should be one puts a line break in the middle of a sentence.
+  let rec _inline_run = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
+                        fn (anc: elem list) -> fn (ns: node list) ->
+    let rec go = fn (xs: node list) -> fn (acc: node list) ->
+      match xs with
+      | Nil -> (list_rev acc, Nil)
+      | Cons (n, rest) ->
+        match n with
+        | Element (tag, attrs, _k) ->
+          let st = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") in
+          if st.display == "none" then go rest acc
+          else if _is_block_level st.display || st.position == "absolute"
+                  || st.position == "fixed" then (list_rev acc, xs)
+          else go rest (Cons (n, acc))
+        | Text _t -> go rest (Cons (n, acc))
+        | Comment _c -> go rest acc
+        | Doctype (_x, _y, _z) -> go rest acc in
+    go ns Nil;
+
   // A list of siblings, stacked. `cbw` is the containing block's content width; `open_mb` is the
   // bottom margin left hanging by whatever came before. `swallow_first` says that the first
   // child's top margin belongs to the PARENT and must not become a gap here — the parent asks
@@ -284,7 +316,21 @@ module Layout {
       | Element (tag, attrs, kids) ->
         let e = _elem_of tag attrs in
         let st = style_of ua author e ancestors (_attr attrs "style") in
-        if st.display == "none" then
+        if not (_is_block_level st.display) && st.position != "absolute"
+           && st.position != "fixed" then
+          // An inline child of a block container: it and everything inline after it are one ANONYMOUS
+          // block, laid out as a single inline formatting context. Without it the inline content
+          // between two block-level children is dropped, and with it the two spans in
+          // `<div><span style="display:table-cell">…</span><span>…</span></div>` land on two lines,
+          // which is what the browser does.
+          let (run, after) = _inline_run f ua author ancestors ns in
+          let (ibs, ilines) = _inline f run cbw font_size in
+          let gap = _collapse open_mb 0 in
+          let top = y + gap in
+          let h = ilines * Font.line_height f font_size in
+          _stack f ua author ancestors after cbw (top + h) 0 swallow_first first_mt true (top + h)
+                 (list_append (list_rev (_shift ibs 0 top)) acc)
+        else if st.display == "none" then
           _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom acc
         // Out of flow: the box is laid out where it would have been — its static position, which is
         // what `top` and `left` of `auto` mean — and then the cursor does not move and the height does
@@ -314,8 +360,18 @@ module Layout {
                  swallow_first (if is_first then fmt else first_mt) true
                  (if through then bottom else top + fh)
                  (list_append (list_rev bs) acc)
-      // Text and comments generate no box yet. A line of text needs a font metric to have a
-      // height, and there is none — zero here is the absence of a measurement, not a guess at one.
+      | Text t ->
+        // Whitespace between two block-level children is discarded; anything else starts an anonymous
+        // block, exactly as an inline element does.
+        if _collapse_ws t == "" then
+          _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom acc
+        else
+          let (run, after) = _inline_run f ua author ancestors ns in
+          let (ibs, ilines) = _inline f run cbw font_size in
+          let top = y + _collapse open_mb 0 in
+          let h = ilines * Font.line_height f font_size in
+          _stack f ua author ancestors after cbw (top + h) 0 swallow_first first_mt true (top + h)
+                 (list_append (list_rev (_shift ibs 0 top)) acc)
       | _ -> _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom acc
 
   // The element children of a node, with their resolved styles. Tables ask this three times — for row
@@ -501,7 +557,10 @@ module Layout {
         | Element (ktag, kattrs, _kk) ->
           let ke = _elem_of ktag kattrs in
           let kst = style_of ua author ke inner_ancestors (_attr kattrs "style") in
-          if kst.display == "block" then true else has_block more
+          // Block-LEVEL, which is not the same as `display: block`. A `display: table-cell` with no
+          // table around it is wrapped by the standard in an anonymous table, row group and row, and
+          // the result sits in its parent's flow as a block does: it takes a line of its own.
+          if _is_block_level kst.display then true else has_block more
         | Text _t -> has_block more
         | Comment _c -> has_block more
         | Doctype (_x, _y, _z) -> has_block more in

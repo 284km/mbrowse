@@ -138,11 +138,10 @@ column's width, and `border-spacing` insets every cell including at the edges. C
 **font units**, not pixels — rounding a column's width first and then asking whether the text fits wraps
 a line whose text is 71.2 wide into a column of 71, and that column was sized from that very text.
 
-What is left is **anonymous table boxes** — 63 of the 112, and 22 more that are the same documents seen
-from a different box. `display: table-cell` on a `<span>` with no table around it makes the standard
-wrap it in an anonymous table, row group and row, so it takes a line of its own. Here it stays inline and
-the document comes out one line short. Table layout itself is in; what is missing is the boxes nobody
-wrote. Floats are 12, and a replaced element with no intrinsic size is 3.
+Anonymous boxes are in. A run of inline children inside a block container becomes one anonymous block, and
+a `display: table-cell` with no table around it is block-level — the standard wraps it in an anonymous
+table, row group and row, so it takes a line of its own. What is left is floats, and a replaced element
+with no intrinsic size.
 
 That list is re-derived from the failures each time rather than carried forward, because it has been
 wrong twice: it once named `font-size`, which **not one of the 126 documents sets**, and then floats,

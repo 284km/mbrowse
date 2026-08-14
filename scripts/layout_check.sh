@@ -22,7 +22,7 @@
 # The pass count is pinned exactly rather than as a floor: a floor lets a regression hide behind
 # a new pass.
 #
-# Fourteen of the 126 pass, and what is left is measured rather than guessed. The failures are grouped by
+# Nineteen of the 126 pass, and what is left is measured rather than guessed. The failures are grouped by
 # the first box whose geometry differs:
 #
 # The 8-pixel error that was in 83 of them is gone, and it was not the body's own margin: the cursor and
@@ -36,14 +36,11 @@
 # failures every time and not carried forward**, because it has been wrong twice: it once named
 # `font-size`, which not one of the 126 documents sets, and then floats, which are 12 of the 113.
 #
-#   63  ANONYMOUS TABLE BOXES. `display: table-cell` on a `<span>` with no table around it — the
-#       standard wraps it in an anonymous table, row group and row, so it takes a line of its own and
-#       the inline content after it starts the next one. Here it stays inline, and the document comes
-#       out one line short. Table layout itself is in; what is missing is the boxes nobody wrote.
-#   22  an inline element 21 pixels to the left of where it belongs, in those same documents and for
-#       the same reason.
-#   12  floats: a box placed beside its predecessor rather than below, a line that should have been
-#       shortened beside one, and a parent whose height should have grown to contain one.
+#   the taxonomy below is stale the moment something is fixed, so re-derive it rather than read it:
+#     for f in test/data/layout/*.html; do ... done   (see the repository history for the one-liner)
+#
+#   Last derived at 19 of 126: anonymous table boxes are in, and what remains is floats, a handful of
+#   inline positions inside them, and:
 #    3  an `<svg>` reported 288 wide where the browser says 0 — a replaced element with no intrinsic
 #       size, which is not a box-model question.
 #
@@ -68,7 +65,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "layout_check: no mere — set MERE=..." >&2; exit 1; }
 DATA="$ROOT/test/data/layout"
-EXPECT_PASS=${EXPECT_PASS:-14}
+EXPECT_PASS=${EXPECT_PASS:-19}
 
 T="${TMPDIR:-/tmp}/mbrowse_layout.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 
