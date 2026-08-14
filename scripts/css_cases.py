@@ -96,6 +96,46 @@ def _render_into(vals, depth, lines, why):
     return lines
 
 
+def render_rules(items):
+    """The rule levels, in the same indented form. A rule's two child lists are labelled
+    rather than positional: an at-rule with an empty body and one with no body at all are
+    different answers, and two unlabelled lists cannot say which is which."""
+    why = set()
+    out = []
+    for v in items:
+        if not isinstance(v, list) or not v:
+            why.add("other")
+            continue
+        k = v[0]
+        if k == "error":
+            out.append("E\t%s" % v[1])
+        elif k == "declaration":
+            out.append("D\t%s\t%s" % (esc(v[1]), "important" if v[3] else "normal"))
+            out.extend(_sub("value", v[2], why))
+        elif k == "at-rule":
+            out.append("A\t%s" % esc(v[1]))
+            out.extend(_sub("prelude", v[2], why))
+            if v[3] is None:
+                out.append("  content\tnone")
+            else:
+                out.extend(_sub("content", v[3], why))
+        elif k == "qualified rule":
+            out.append("Q")
+            out.extend(_sub("prelude", v[1], why))
+            out.extend(_sub("content", v[2], why))
+        else:
+            why.add("other:" + str(k))
+    if why:
+        return (None, ",".join(sorted(why)))
+    return ("\n".join(out), None)
+
+
+def _sub(label, vals, why):
+    if not vals:
+        return ["  " + label]
+    return ["  " + label] + _render_into(vals, 2, [], why)
+
+
 def _group(text):
     """Lines back into component values: a line at depth zero starts a new one and the
     indented lines under it belong to it."""
@@ -110,6 +150,10 @@ def _group(text):
 
 if sys.argv[1] == "--compare":
     got, meta, expect = sys.argv[2], sys.argv[3], int(sys.argv[4])
+    label = sys.argv[5] if len(sys.argv) > 5 else "css_tokens"
+    # What a group is depends on the level, and calling a rule a component value would
+    # point the reader at the wrong thing to go and look at.
+    noun = "component value" if label.endswith("component") else "rule"
     blocks, cur = {}, None
     for line in open(got, encoding="utf-8").read().split("\n"):
         if line.startswith("##"): cur = int(line[2:]); blocks[cur] = []
@@ -129,8 +173,8 @@ if sys.argv[1] == "--compare":
         else:
             f += 1
             if len(bad) < 5: bad.append((w, a))
-    print("css_tokens: %d passed, %d failed, %d not compared, of %d"
-          % (p, f, sk, len(rows)))
+    print("%s: %d passed, %d failed, %d not compared, of %d"
+          % (label, p, f, sk, len(rows)))
     for w in sorted(by_why):
         print("  not compared: %-16s %d" % (w, by_why[w]))
     for w, a in bad:
@@ -154,23 +198,31 @@ if sys.argv[1] == "--compare":
             print("  FAIL (lengths %d vs %d, no differing element)" % (len(wl), len(al)))
         else:
             k, wk, ak = first
-            print("  FAIL at component value %d of %d:" % (k + 1, len(wl)))
+            print("  FAIL at %s %d of %d:" % (noun, k + 1, len(wl)))
             for tag, rows in (("want", wk), ("got ", ak)):
                 for j, r in enumerate(rows):
                     print("       %s %s" % (tag if j == 0 else "    ", r))
     if p != expect:
-        print("css_tokens: expected exactly %d passing, got %d — raise EXPECT_PASS if this "
-              "is the tokenizer growing" % (expect, p))
+        print("%s: expected exactly %d passing, got %d — raise EXPECT_PASS if this "
+              "is the parser growing" % (label, expect, p))
         sys.exit(1)
-    print("css_tokens: ok")
+    print("%s: ok" % label)
     sys.exit(0)
 
+LEVEL = sys.argv[4] if len(sys.argv) > 4 else "component"
 data = json.load(open(sys.argv[1], encoding="utf-8"))
 with open(sys.argv[2], "w", encoding="utf-8") as cf, open(sys.argv[3], "w", encoding="utf-8") as mf:
     for i in range(0, len(data), 2):
         src, exp = data[i], data[i + 1]
         cf.write(esc_in(src) + "\n")
-        r, why = render(exp)
+        if LEVEL == "component":
+            r, why = render(exp)
+        else:
+            # The two single-result levels answer with the rule itself rather than a list
+            # of one, so it is wrapped here — the difference is in the suite's shape, not
+            # in what the parser does.
+            r, why = render_rules(exp if LEVEL.endswith("-list") or LEVEL == "stylesheet"
+                                  else [exp])
         if r is None: mf.write("skip-%s\t\n" % why)
         else: mf.write("ok\t%s\n" % r.replace("\n", "\\N"))
-print("css_tokens: %d cases" % (len(data) // 2))
+print("css_%s: %d cases" % (LEVEL, len(data) // 2))

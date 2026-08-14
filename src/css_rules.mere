@@ -1,0 +1,252 @@
+// CSS declarations and rules: the levels above component values.
+//
+// Everything here works on the component value tree from `css_tokens.mere` and never on
+// the text, which is what makes it short. A `;` inside a block does not end a declaration
+// and a `}` inside a string does not end a rule — those are the awkward cases at this
+// level, and they are already gone by the time the tree exists. `@ media screen { div{;}}`
+// is one invalid declaration rather than three, and nothing here had to notice.
+//
+// Five entry points, one per level the suite has:
+//
+//   Rules.one_declaration    a single declaration, the whole input
+//   Rules.declaration_list   declarations and at-rules, split on `;`
+//   Rules.one_rule           a single rule, and extra input is an error
+//   Rules.rule_list          rules
+//   Rules.stylesheet         rules, with CDO and CDC ignored between them
+
+import "css_tokens.mere";
+
+// One type for all four outcomes, because a declaration list holds declarations, at-rules
+// and errors, and a rule list holds qualified rules, at-rules and errors. Splitting it by
+// level would mean converting between two types that hold the same things.
+type rule =
+  | Decl of (str * cval list * bool)          // name, value, important
+  | AtRule of (str * cval list * cval list option)   // name, prelude, block if there was one
+  | QualRule of (cval list * cval list)       // prelude, block
+  | RuleErr of str;                           // empty | invalid | extra-input
+
+module Rules {
+  let _is_ws = fn (v: cval) ->
+    match v with
+    | Bare s -> s == " "
+    | Named (_k, _s) -> false
+    | Block (_b, _k) -> false
+    | Func (_f, _k) -> false;
+
+  let _is_bare = fn (v: cval) -> fn (want: str) ->
+    match v with
+    | Bare s -> s == want
+    | Named (_k, _s) -> false
+    | Block (_b, _k) -> false
+    | Func (_f, _k) -> false;
+
+  // A curly block, and only a curly one: `@foo [ bar` keeps its square block in the
+  // prelude and has no body at all, so "a block" is not the question — "the block" is.
+  let _curly = fn (v: cval) ->
+    match v with
+    // A brace has to be escaped in a Mere string: `{` opens an interpolation.
+    | Block (b, kids) -> if b == "\{}" then Some kids else None
+    | Bare _s -> None
+    | Named (_k, _s) -> None
+    | Func (_f, _k) -> None;
+
+  let rec _skip_ws = fn (vs: cval list) ->
+    match vs with
+    | Nil -> Nil
+    | Cons (v, rest) -> if _is_ws v then _skip_ws rest else vs;
+
+  // Everything up to the first top-level `;`, and what is left after it. Top-level is the
+  // whole difficulty and the tree has already handled it.
+  let _upto_semi = fn (vs: cval list) ->
+    let rec go = fn (vs: cval list) -> fn (acc: cval list) ->
+      match vs with
+      | Nil -> (list_rev acc, Nil)
+      | Cons (v, rest) ->
+        if _is_bare v ";" then (list_rev acc, rest) else go rest (Cons (v, acc)) in
+    go vs Nil;
+
+  // ---- declarations -------------------------------------------------------------
+
+  // `!important`, found from the end. The suite is precise about this in four ways and
+  // each one is a case:
+  //
+  //   `foo: 9000  !Important`   the flag is ASCII case-insensitive
+  //   `foo: 9000  !İmportant`   and only ASCII: U+0130 is not an I
+  //   `foo: 9000  !important!`  it has to be the LAST two, so a trailing `!` cancels it
+  //   `z:x!;`                   a `!` with nothing after it stays in the value
+  //
+  // And one way it is not: the value keeps its trailing whitespace. `foo: ` has a value of
+  // one whitespace token, so this removes the `!` and what follows it and nothing else.
+  let _important = fn (value: cval list) ->
+    let is_important = fn (v: cval) ->
+      match v with
+      | Named (k, s) -> k == "ident" && to_lower s == "important"
+      | Bare _s -> false
+      | Block (_b, _k) -> false
+      | Func (_f, _k) -> false in
+    match _skip_ws (list_rev value) with
+    | Nil -> (value, false)
+    | Cons (last, r1) ->
+      if not (is_important last) then (value, false)
+      else
+        match _skip_ws r1 with
+        | Nil -> (value, false)
+        | Cons (bang, r2) ->
+          if _is_bare bang "!" then (list_rev r2, true) else (value, false);
+
+  // The name of an ident, or nothing. Written once because three levels ask it and each
+  // one has to answer "not an ident" the same way.
+  let _ident_name = fn (v: cval) ->
+    match v with
+    | Named (k, s) -> if k == "ident" then Some s else None
+    | Bare _s -> None
+    | Block (_b, _k) -> None
+    | Func (_f, _k) -> None;
+
+  let _at_name = fn (v: cval) ->
+    match v with
+    | Named (k, s) -> if k == "at-keyword" then Some s else None
+    | Bare _s -> None
+    | Block (_b, _k) -> None
+    | Func (_f, _k) -> None;
+
+  // A declaration out of component values: an ident, optional whitespace, a colon, and
+  // then whatever is left. Anything else is invalid — `foo*:`, `@foo:` and `.foo:` all
+  // fail here, and each is a case in the suite.
+  let declaration = fn (vs: cval list) ->
+    match _skip_ws vs with
+    | Nil -> RuleErr "invalid"
+    | Cons (head, rest) ->
+      match _ident_name head with
+      | None -> RuleErr "invalid"
+      | Some name ->
+        match _skip_ws rest with
+        | Nil -> RuleErr "invalid"
+        | Cons (colon, after) ->
+          if not (_is_bare colon ":") then RuleErr "invalid"
+          else
+            let (value, imp) = _important after in
+            Decl (name, value, imp);
+
+  // ---- at-rules and qualified rules ---------------------------------------------
+
+  // The prelude runs to the first top-level `;` or curly block. Which of the two it
+  // stopped at is the difference between an at-rule with a body and one without, so it is
+  // returned rather than recomputed.
+  let _prelude = fn (vs: cval list) ->
+    let rec go = fn (vs: cval list) -> fn (acc: cval list) ->
+      match vs with
+      | Nil -> (list_rev acc, None, Nil)
+      | Cons (v, rest) ->
+        if _is_bare v ";" then (list_rev acc, None, rest)
+        else
+          match _curly v with
+          | Some kids -> (list_rev acc, Some kids, rest)
+          | None -> go rest (Cons (v, acc)) in
+    go vs Nil;
+
+  // One rule, or an error, and what is left after it. Called by all three rule levels;
+  // they differ only in what they skip before it.
+  let _one = fn (vs: cval list) ->
+    match vs with
+    | Nil -> (RuleErr "empty", Nil)
+    | Cons (head, rest) ->
+      match _at_name head with
+      | Some name ->
+        let (pre, body, left) = _prelude rest in
+        (AtRule (name, pre, body), left)
+      | None ->
+        // A qualified rule has no name and its prelude is a selector, so it needs its
+        // block: reaching the end of the input without one loses the whole rule. That is
+        // `foo` and `foo 4` in the suite, and both are invalid rather than empty.
+        let (pre, body, left) = _prelude vs in
+        match body with
+        | None -> (RuleErr "invalid", left)
+        | Some kids -> (QualRule (pre, kids), left);
+
+  // ---- the five levels ----------------------------------------------------------
+
+  let one_declaration = fn (src: str) ->
+    let vs = Css.values src in
+    match _skip_ws vs with
+    // Nothing but whitespace and comments is a different answer from something that is not
+    // a declaration: `` is empty and `;` is invalid.
+    | Nil -> Cons (RuleErr "empty", Nil)
+    | Cons (_h, _t) -> Cons (declaration vs, Nil);
+
+  let declaration_list = fn (src: str) ->
+    let rec go = fn (vs: cval list) -> fn (acc: rule list) ->
+      match _skip_ws vs with
+      | Nil -> list_rev acc
+      | Cons (head, rest) ->
+        // A stray `;` between declarations is not an error, it is nothing: `;; /**/ ; ;`
+        // is an empty list rather than four errors.
+        if _is_bare head ";" then go rest acc
+        else
+          let is_at = match _at_name head with Some _n -> true | None -> false in
+          if is_at then
+            let (r, left) = _one (_skip_ws vs) in go left (Cons (r, acc))
+          else
+            // Everything to the next top-level `;` is one declaration, right or wrong.
+            // This is why `@ media screen { div{;}} a:b;` is a single invalid declaration:
+            // `@ ` is not an at-keyword, and the `;` inside the block is not top-level.
+            let (chunk, left) = _upto_semi (_skip_ws vs) in
+            go left (Cons (declaration chunk, acc)) in
+    go (Css.values src) Nil;
+
+  let one_rule = fn (src: str) ->
+    let vs = _skip_ws (Css.values src) in
+    match vs with
+    | Nil -> Cons (RuleErr "empty", Nil)
+    | Cons (_h, _t) ->
+      let (r, left) = _one vs in
+      // Whitespace and comments after the rule are not extra input; anything else is.
+      // `div {} -->` is extra input at this level and ignored in a stylesheet, which is
+      // the only place those two levels disagree.
+      match _skip_ws left with
+      | Nil -> Cons (r, Nil)
+      | Cons (_x, _y) -> Cons (RuleErr "extra-input", Nil);
+
+  // `skip_cdc` is the whole difference between a rule list and a stylesheet: in a
+  // stylesheet a CDO or CDC between rules is ignored, so that a stylesheet inside an HTML
+  // comment still parses. Inside a prelude they are ordinary component values in both —
+  // `a<!---->{` has them in its selector either way.
+  let _rules = fn (src: str) -> fn (skip_cdc: bool) ->
+    let rec go = fn (vs: cval list) -> fn (acc: rule list) ->
+      match _skip_ws vs with
+      | Nil -> list_rev acc
+      | Cons (head, rest) ->
+        if skip_cdc && (_is_bare head "<!--" || _is_bare head "-->") then go rest acc
+        else
+          let (r, left) = _one (_skip_ws vs) in go left (Cons (r, acc)) in
+    go (Css.values src) Nil;
+
+  let rule_list = fn (src: str) -> _rules src false;
+  let stylesheet = fn (src: str) -> _rules src true;
+
+  // ---- rendering ----------------------------------------------------------------
+
+  // The same indented form `Css.render` uses, so a rule and the component values inside it
+  // are read the same way. A rule's two child lists are named rather than positional,
+  // because an at-rule with an empty body and one with no body are different answers and a
+  // pair of unlabelled lists cannot say which is which.
+  let render = fn (rs: rule list) ->
+    let sub = fn (label: str) -> fn (vs: cval list) ->
+      match vs with
+      | Nil -> "  " ++ label
+      | Cons (_x, _y) -> "  " ++ label ++ "\n" ++ Css.render_at "    " vs in
+    let one = fn (r: rule) ->
+      match r with
+      | Decl (name, value, imp) ->
+        "D\t" ++ name ++ "\t" ++ (if imp then "important" else "normal") ++ "\n"
+        ++ sub "value" value
+      | AtRule (name, pre, body) ->
+        "A\t" ++ name ++ "\n" ++ sub "prelude" pre ++ "\n"
+        ++ (match body with
+            | None -> "  content\tnone"
+            | Some kids -> sub "content" kids)
+      | QualRule (pre, body) ->
+        "Q\n" ++ sub "prelude" pre ++ "\n" ++ sub "content" body
+      | RuleErr why -> "E\t" ++ why in
+    str_join "\n" (list_map rs one);
+}

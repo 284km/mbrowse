@@ -378,9 +378,11 @@ module Css {
   // is named after.
   let values = fn (src: str) -> parse (tokenize src);
 
-  // One line per component value, in the shape the harness compares — the two shapes
-  // the suite uses, kept apart.
-  let render = fn (vs: cval list) ->
+  // One line per component value, in the shape the harness compares. `pad` is the
+  // indentation this level sits at, which the rule levels above need: a declaration's value
+  // is component values printed two levels in, and they should print the same way there as
+  // at the top or the form is two forms.
+  let render_at = fn (pad0: str) -> fn (vs: cval list) ->
     let esc = fn (s: str) ->
       let rec e = fn (i: int) -> fn (o: str) ->
         if i >= str_len s then o
@@ -415,5 +417,7 @@ module Css {
                | Cons (_x, _xs) -> pad ++ "F\t" ++ esc f ++ "\n" ++ block (pad ++ "  ") kids) in
           go rest (Cons (row, acc)) in
       str_join "\n" (go vs Nil) in
-    block "" vs;
+    block pad0 vs;
+
+  let render = fn (vs: cval list) -> render_at "" vs;
 }

@@ -85,14 +85,24 @@ css-parsing-tests is to CSS is what html5lib-tests is to HTML. It is vendored an
 SHA, and it was **here before any parser was**.
 
 ```
-sh scripts/css_check.sh          # component values: 50 of 50
+sh scripts/css_check.sh          # all six levels: 126 of 126
 ```
 
 `src/css_tokens.mere` is the tokenizer and the component value parser, split where the
 standard splits them: the tokenizer answers *what is this token* and the parser answers
-*what is this token inside of*, which needs a stack the scanner does not have. **All 50
-cases pass with nothing exempted and nothing left uncompared.** One thing is deliberately
-not compared — the numeric *value* of a number, because the value is arithmetic on the
+*what is this token inside of*, which needs a stack the scanner does not have.
+`src/css_rules.mere` is the five levels above — declarations, at-rules, qualified rules,
+rule lists and stylesheets. **All 126 cases pass, every level pinned on its own count,
+with nothing exempted and nothing left uncompared.**
+
+The rule levels are short, and the reason is worth stating: they work on the component
+value tree and never on the text. A `;` inside a block does not end a declaration and a `}`
+inside a string does not end a rule — the two hard cases at that level — and both are
+already gone by the time the tree exists. `@ media screen { div{;}} a:b;` is *one* invalid
+declaration, and nothing in the rule code had to notice why. Checked by splitting a flat
+token list instead of the tree: 8 of 10.
+
+One thing is deliberately not compared — the numeric *value* of a number, because the value is arithmetic on the
 representation (the suite writes `+45.0` as 45) and comparing it would compare how two
 languages print a float rather than what the tokenizer decided.
 
@@ -102,6 +112,14 @@ that only wanted a number to say more about itself. Splitting what was left foun
 `unicode-range` cases and 2 hash flags, neither of which is a tree. **A bucket is a claim
 about what is left in it**, and this one was wrong three times in a row — each time in the
 direction of making the remaining work sound like one big thing.
+
+What the corpus decided rather than the implementer, at the rule levels: `!important` is
+ASCII case-insensitive and *only* ASCII (`!İmportant` is not it), has to be the last two
+values in the value (`!important!` cancels it), and does not cause the value's trailing
+whitespace to be trimmed. A stylesheet ignores CDO and CDC between rules and a rule list
+does not — the single difference between those two levels — while inside a prelude they are
+ordinary component values in both. Each of those is one case in the suite, and the two
+non-obvious ones were checked by breaking them on purpose: 20 of 21 and 13 of 16.
 
 Three rules that arrived separately turned out to be one rule: a unit is an identifier
 (`12.0-red` is twelve of the unit `-red`), an at-keyword is an identifier (`@-0media` is

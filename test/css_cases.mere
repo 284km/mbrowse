@@ -1,5 +1,5 @@
 // Runs the CSS tokenizer over a file of escaped inputs, one per line.
-import "../src/css_tokens.mere";
+import "../src/css_rules.mere";
 
 let unescape = fn (s: str) ->
   let hex = fn (c: str) ->
@@ -22,14 +22,28 @@ let unescape = fn (s: str) ->
         else go (i + 2) (out ++ d) in
   go 0 "";
 
-let rec run = fn (xs: str list) -> fn (i: int) ->
+// Which level to run is an argument, because the suite has five of them over the same
+// tokenizer and five near-identical runners would be five places to fix a rendering.
+let render_one = fn (level: str) -> fn (src: str) ->
+  if level == "component" then Css.render (Css.values src)
+  else if level == "one-declaration" then Rules.render (Rules.one_declaration src)
+  else if level == "declaration-list" then Rules.render (Rules.declaration_list src)
+  else if level == "one-rule" then Rules.render (Rules.one_rule src)
+  else if level == "rule-list" then Rules.render (Rules.rule_list src)
+  else Rules.render (Rules.stylesheet src);
+
+let rec run = fn (level: str) -> fn (xs: str list) -> fn (i: int) ->
   match xs with
   | Nil -> ()
   | Cons (line, rest) ->
     let _ = print ("##" ++ show i) in
-    let _ = print (Css.render (Css.values (unescape line))) in
-    run rest (i + 1);
+    let _ = print (render_one level (unescape line)) in
+    run level rest (i + 1);
 
-let path = match args () with Cons (p, _) -> p | Nil -> "cases.txt";
-let _ = run (read_lines path) 0;
+let (path, level) =
+  match args () with
+  | Cons (p, Cons (l, _)) -> (p, l)
+  | Cons (p, Nil) -> (p, "component")
+  | Nil -> ("cases.txt", "component");
+let _ = run level (read_lines path) 0;
 0

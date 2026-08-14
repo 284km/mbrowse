@@ -38,6 +38,30 @@ renderer that emits only one shape cannot match:
 'red-->/* Not CDC */'  => [["ident", "red--"], ">"]
 ```
 
+Some names carry more than a value, and each extra field is a separate decision:
+`["number", "+45.0", 45, "number"]` is the representation, the value and whether it is an
+integer; `["dimension", "0", 0, "integer", "rgba"]` adds the unit; `["hash", "0red",
+"unrestricted"]` says whether the name could have been an identifier; and
+`["unicode-range", 16, 31]` is a start and an end.
+
+A component value can also be a **tree**: `["function", "rgba", …children]` and
+`["()", …children]`, `["[]", …]`, `["{}", …]`. A mismatched closer inside one is
+`["error", "]"]` — the character, as a value — while a block still open at the end of the
+input just closes with no error at all.
+
+The five levels above component values reuse those shapes inside their own:
+
+```
+["declaration", "color", [["hash", "aaa", "id"]], false]     name, value, !important
+["at-rule", "media", [" ", ["ident", "print"]], null]        name, prelude, block or null
+["qualified rule", [["ident", "div"], " "], [" ", …]]        prelude, block
+["error", "empty" | "invalid" | "extra-input"]
+```
+
+**`null` and `[]` are different answers** for an at-rule's block: `@foo` has no block and
+`@foo {}` has an empty one. Any canonical form that renders both as "nothing" cannot tell
+the suite it got them right.
+
 The second is not a CDC: inside an identifier the dashes belong to the name, and what
 is left is a lone `>` delim.
 

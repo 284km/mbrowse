@@ -23,9 +23,25 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "css_check: no mere — set MERE=..." >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "css_check: python3 needed to read the JSON" >&2; exit 0; }
-EXPECT_PASS=${EXPECT_PASS:-50}
 T="${TMPDIR:-/tmp}/mbrowse_css.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
-python3 "$ROOT/scripts/css_cases.py" "$ROOT/test/data/css_component_value_list.json" \
-  "$T/cases.txt" "$T/meta.txt"
-"$MERE" "$ROOT/test/css_cases.mere" "$T/cases.txt" > "$T/got.txt" || true
-python3 "$ROOT/scripts/css_cases.py" --compare "$T/got.txt" "$T/meta.txt" "$EXPECT_PASS"
+
+# One loop over the five levels the suite has, because they are one parser read five ways
+# and five copies of this would be five places for a rendering to drift. Each count is
+# pinned on its own: a total would let one level pay for another.
+fail=0
+run_level() {
+  json="$1"; level="$2"; expect="$3"
+  python3 "$ROOT/scripts/css_cases.py" "$ROOT/test/data/$json.json" \
+    "$T/cases.txt" "$T/meta.txt" "$level"
+  "$MERE" "$ROOT/test/css_cases.mere" "$T/cases.txt" "$level" > "$T/got.txt" || true
+  python3 "$ROOT/scripts/css_cases.py" --compare "$T/got.txt" "$T/meta.txt" \
+    "$expect" "css_$level" || fail=1
+}
+
+run_level css_component_value_list component        "${EXPECT_COMPONENT:-50}"
+run_level css_one_declaration      one-declaration  "${EXPECT_ONE_DECL:-21}"
+run_level css_declaration_list     declaration-list "${EXPECT_DECL_LIST:-10}"
+run_level css_one_rule             one-rule         "${EXPECT_ONE_RULE:-14}"
+run_level css_rule_list            rule-list        "${EXPECT_RULE_LIST:-15}"
+run_level css_stylesheet           stylesheet       "${EXPECT_STYLESHEET:-16}"
+exit $fail
