@@ -8,5 +8,5 @@ import "../src/tree.mere";
 
 let path = match args () with Cons (p, _) -> p | Nil -> "";
 let src = str_join "\n" (read_lines path);
-let _ = print (Layout.render (Layout.boxes (Tree.build (Html.tokenize src))));
+let _ = print (Layout.render (Layout.boxes "test/data/font/NotoSans-Regular.ttf" (Tree.build (Html.tokenize src))));
 0

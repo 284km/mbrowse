@@ -117,13 +117,14 @@ and every comparison passed; it took poisoning the buffer to see it. Geometry fr
 cannot be passed by drawing nothing, because the numbers are specific. Reftests are still worth
 running later, for what geometry does not check: colour, stacking, and where the ink lands.
 
-`src/style.mere` is the UA stylesheet, the selectors and the cascade; `src/layout.mere` is normal
-flow with the box model and collapsing margins. Five of the 126 pass and the five are the ones with
-no text in normal flow — everything else fails for one reason, that **a line of text has no
-height**. In these documents a line is 18 pixels and that number is a font metric, so a box holding
-only text comes out zero high and every box below it is short by the same amount. What is already
-right across the corpus: every x coordinate, every width, and margin collapsing — a paragraph's 1em
-collapsing with the body's 8px to 16 is why `body` starts at y=16 on both sides.
+`src/style.mere` is the UA stylesheet, the selectors and the cascade; `src/layout.mere` is normal flow
+with the box model, collapsing margins, and inline formatting. Ten of the 126 pass. Text has a height
+now — a line is `(ascender - descender + lineGap)` scaled, 22px for this font at 16px — and words wrap
+at the containing block's width, compared in font units so the wrap point never turns on a rounding.
+
+What is left is listed in the gate's header, in the order it is worth doing: `font-size` (not resolved,
+so every em is 16px), `float` and `position` (layout modes, not values), anonymous block boxes (a box
+with both text and block children is laid out as if it were all inline), and kerning.
 
 The UA stylesheet is written as CSS and parsed by the same parser as everything else, rather than as
 a table of constants. A table would be a second place where "what a `<p>` is" is written down, and

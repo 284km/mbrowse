@@ -13,6 +13,7 @@
 
 import "dom.mere";
 import "style.mere";
+import "font.mere";
 
 // A laid-out box. `x` and `y` are document coordinates by the time `boxes` returns — the gate
 // compares against `getBoundingClientRect`, which is absolute — and they are the BORDER box,
@@ -33,6 +34,11 @@ module Layout {
   // `test/data/layout/*.expected` is wrong, so both have to change together and a default hides
   // that.
   let viewport_w = 800;
+
+  // The one font size there is, because `font-size` is not resolved yet. It is the initial value and the
+  // size the gate's expectations were taken at; when font-size lands this becomes a computed value and
+  // this constant goes.
+  let font_size = 16;
 
   let _shift = fn (bs: box list) -> fn (dx: int) -> fn (dy: int) ->
     list_map bs (fn (b: box) ->
@@ -101,6 +107,137 @@ module Layout {
   let _elem_of = fn (tag: str) -> fn (attrs: attr list) ->
     elem { tag = to_lower tag, id = _attr attrs "id", cls = to_lower (_attr attrs "class") };
 
+  // ---- inline content ------------------------------------------------------------
+
+  // The text of an inline run, with white space collapsed the way CSS collapses it: every run of
+  // spaces, tabs and newlines becomes one space. Source indentation is white space, so without this a
+  // paragraph written over three lines of a file is three times wider than it looks.
+  let rec _inline_text = fn (ns: node list) -> fn (acc: str) ->
+    match ns with
+    | Nil -> acc
+    | Cons (n, rest) ->
+      match n with
+      | Text t -> _inline_text rest (acc ++ t)
+      // An inline element contributes its own text to the same run. It is transparent to line
+      // breaking, which is what makes `a <b>bold</b> word` break between `bold` and `word`.
+      | Element (_tag, _a, kids) -> _inline_text rest (_inline_text kids acc)
+      | Comment _c -> _inline_text rest acc
+      | Doctype (_x, _y, _z) -> _inline_text rest acc;
+
+  let _is_space = fn (c: str) ->
+    c == " " || c == "\t" || c == "\n" || c == "\r" || c == chr 12;
+
+  // Runs of white space to one space, and the two ends removed. The ends go because a line box drops
+  // the white space at its edges, and for a single-line paragraph that is the whole rule.
+  let _collapse_ws = fn (s0: str) ->
+    let n = str_len s0 in
+    let rec go = fn (i: int) -> fn (out: str) -> fn (was_space: bool) ->
+      if i >= n then out
+      else
+        let c = char_at s0 i in
+        if _is_space c then
+          go (i + 1) (if was_space || out == "" then out else out ++ " ") true
+        else go (i + 1) (out ++ c) false in
+    let t = go 0 "" false in
+    if str_len t > 0 && char_at t (str_len t - 1) == " " then substring t 0 (str_len t - 1)
+    else t;
+
+  // White space collapsed to single spaces, with the ends KEPT: a space at the edge of a text node is
+  // not at the edge of a line when another node follows it.
+  let _collapse_runs = fn (s0: str) ->
+    let n = str_len s0 in
+    let rec go = fn (i: int) -> fn (out: str) -> fn (was: bool) ->
+      if i >= n then out
+      else
+        let c = char_at s0 i in
+        if _is_space c then go (i + 1) (if was then out else out ++ " ") true
+        else go (i + 1) (out ++ c) false in
+    go 0 "" false;
+
+  // The inline content of a box, laid out into lines, with a box for every inline element in it.
+  //
+  // The second half of that is why this exists rather than a line count: an inline element has a box
+  // and the gate compares it. Returning only a height dropped every `<span>` and `<strong>` in the
+  // corpus and the box-sequence number fell from 126 to 57 in one commit — which is what that second
+  // number is for.
+  //
+  // Everything is carried in font units until the end. `x` is how far along the current line the
+  // cursor is, `line` counts from zero, and `gap` says a space is owed before the next word — a space
+  // between two text nodes belongs to neither of them, so it cannot be part of either string.
+  let _inline = fn (f: font) -> fn (kids: node list) -> fn (cw: int) -> fn (size: int) ->
+    let cap = if cw <= 0 then 0 else (cw * f.upem) / size in
+    let space = Font.text_units f " " in
+    let lh = Font.line_height f size in
+    let rec words = fn (ws: str list) -> fn (x: int) -> fn (line: int) -> fn (gap: bool) ->
+      match ws with
+      | Nil -> (x, line, gap)
+      | Cons (w, rest) ->
+        if w == "" then words rest x line true
+        else
+          let wu = Font.text_units f w in
+          if x == 0 then words rest wu line false
+          else if x + (if gap then space else 0) + wu <= cap then
+            words rest (x + (if gap then space else 0) + wu) line false
+          // A word that does not fit starts the next line, and one wider than the whole line gets a
+          // line of its own and overflows — which is what a browser does rather than cutting it.
+          else words rest wu (line + 1) false in
+    let rec walk = fn (ns: node list) -> fn (x: int) -> fn (line: int) -> fn (gap: bool) ->
+                   fn (acc: box list) ->
+      match ns with
+      | Nil -> (acc, x, line, gap)
+      | Cons (n, rest) ->
+        match n with
+        | Text t ->
+          // Split on the collapsed text so an empty piece marks where a space was.
+          let (x2, l2, g2) = words (str_split (_collapse_runs t) " ") x line gap in
+          walk rest x2 l2 g2 acc
+        | Element (tag, _a, ks) ->
+          let sx = x in
+          let sl = line in
+          // The children are walked into a FRESH accumulator so the element's own box can be placed
+          // in front of them afterwards. Consing it onto the same accumulator put a nested inline
+          // element after its own children in document order, which the box-sequence number sees.
+          let (inner, x2, l2, g2) = walk ks x line gap Nil in
+          // The union of the element's fragments, which for one line is where it started to where it
+          // ended. A box spanning two lines is reported by the browser as the whole span from the
+          // first line's start to the last line's end, and that is what this gives.
+          let bx = Font.scale f sx size in
+          let bw = if l2 == sl then Font.scale f x2 size - bx else cw - bx in
+          walk rest x2 l2 g2
+               (list_append inner
+                  (Cons (box { tag = to_lower tag, x = bx, y = sl * lh,
+                               w = if bw < 0 then 0 else bw, h = (l2 - sl + 1) * lh }, acc)))
+        | Comment _c -> walk rest x line gap acc
+        | Doctype (_p, _q, _r) -> walk rest x line gap acc in
+    let (bs, x, line, _g) = walk kids 0 0 false Nil in
+    let n = if x == 0 && line == 0 then 0 else line + 1 in
+    (list_rev bs, n);
+
+
+  // How many lines this text takes at this width. Greedy, breaking at spaces, which is what the
+  // standard's line breaking reduces to for text with no hyphens and no CJK — and this corpus has
+  // neither. A word wider than the line gets its own line and overflows rather than being cut, which
+  // is also what a browser does.
+  let _line_count = fn (f: font) -> fn (text: str) -> fn (avail: int) -> fn (size: int) ->
+    if text == "" then 0
+    else if avail <= 0 then 1
+    else
+      let words = str_split text " " in
+      let space = Font.text_units f " " in
+      let cap = (avail * f.upem) / size in
+      let rec go = fn (ws: str list) -> fn (cur: int) -> fn (lines: int) ->
+        match ws with
+        | Nil -> if cur > 0 then lines + 1 else (if lines == 0 then 1 else lines)
+        | Cons (w, rest) ->
+          let wu = Font.text_units f w in
+          if cur == 0 then go rest wu lines
+          else if cur + space + wu <= cap then go rest (cur + space + wu) lines
+          // Measured in font units against a capacity in font units, so the comparison never rounds.
+          // Comparing scaled pixels would break a line one word early or late depending on where the
+          // rounding fell.
+          else go rest wu (lines + 1) in
+      go words 0 0;
+
   // A list of siblings, stacked. `cbw` is the containing block's content width; `open_mb` is the
   // bottom margin left hanging by whatever came before. `swallow_first` says that the first
   // child's top margin belongs to the PARENT and must not become a gap here — the parent asks
@@ -108,7 +245,7 @@ module Layout {
   //
   // Four things come back, and the fourth is the reason this is not a fold: the first child's
   // escaped top margin, which the parent needs to know its own.
-  let rec _stack = fn (ua: prepared list) -> fn (author: prepared list) ->
+  let rec _stack = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
                    fn (ancestors: elem list) -> fn (ns: node list) -> fn (cbw: int) ->
                    fn (y: int) -> fn (open_mb: int) -> fn (swallow_first: bool) ->
                    fn (first_mt: int) -> fn (seen: bool) -> fn (acc: box list) ->
@@ -120,24 +257,24 @@ module Layout {
         let e = _elem_of tag attrs in
         let st = style_of ua author e ancestors (_attr attrs "style") in
         if st.display == "none" then
-          _stack ua author ancestors rest cbw y open_mb swallow_first first_mt seen acc
+          _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen acc
         else
-          let (fbs, fh, fmt, fmb) = _block ua author ancestors tag attrs kids cbw st in
+          let (fbs, fh, fmt, fmb) = _block f ua author ancestors tag attrs kids cbw st in
           let is_first = not seen in
           // The gap above this box is the two margins collapsed into one, not their sum. When the
           // parent has claimed the first child's margin there is no gap at all here.
           let gap = if is_first && swallow_first then 0 else _collapse open_mb fmt in
           let top = y + gap in
           let bs = _shift fbs 0 top in
-          _stack ua author ancestors rest cbw (top + fh) fmb swallow_first
+          _stack f ua author ancestors rest cbw (top + fh) fmb swallow_first
                  (if is_first then fmt else first_mt) true
                  (list_append (list_rev bs) acc)
       // Text and comments generate no box yet. A line of text needs a font metric to have a
       // height, and there is none — zero here is the absence of a measurement, not a guess at one.
-      | _ -> _stack ua author ancestors rest cbw y open_mb swallow_first first_mt seen acc
+      | _ -> _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen acc
 
   // One block box and everything under it, at coordinates relative to its own border box.
-  and _block = fn (ua: prepared list) -> fn (author: prepared list) ->
+  and _block = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
                fn (ancestors: elem list) -> fn (tag: str) -> fn (attrs: attr list) ->
                fn (kids: node list) -> fn (cbw: int) -> fn (st: sty) ->
     // A block box fills its containing block unless it says otherwise. `width` is the CONTENT
@@ -160,8 +297,34 @@ module Layout {
     let is_root = match ancestors with Nil -> true | Cons (_x, _y) -> false in
     let sep_top = is_root || st.bt > 0 || st.pt > 0 in
     let sep_bot = is_root || st.bb > 0 || st.pb > 0 || st.h >= 0 in
+    // Inline content, if there is any, instead of a stack of blocks. A box whose children are text
+    // establishes an inline formatting context, and its height is a count of LINES rather than a sum of
+    // children. Mixing inline and block children in one parent needs the anonymous block boxes the
+    // standard describes; that is not here, and a box with both is laid out as if it were all inline —
+    // wrong for the mixture and right for everything this corpus has.
+    // Whether any child is block-level. This is the question that decides which of the two formatting
+    // contexts this box has, and it has to be asked before the text is looked at: `<html>` has
+    // whitespace text nodes between `<head>` and `<body>`, so "does it contain text" answers yes for
+    // every element in the document and laid the whole page out as one paragraph.
+    let rec has_block = fn (xs: node list) ->
+      match xs with
+      | Nil -> false
+      | Cons (k, more) ->
+        match k with
+        | Element (ktag, kattrs, _kk) ->
+          let ke = _elem_of ktag kattrs in
+          let kst = style_of ua author ke inner_ancestors (_attr kattrs "style") in
+          if kst.display == "block" then true else has_block more
+        | Text _t -> has_block more
+        | Comment _c -> has_block more
+        | Doctype (_x, _y, _z) -> has_block more in
+    // A block-level child means the white space around it is discarded, which is what the standard's
+    // anonymous block boxes come to for whitespace-only inline content.
+    let inline_only = not (has_block kids) && _collapse_ws (_inline_text kids "") != "" in
+    let (ibs, ilines) = if inline_only then _inline f kids cw font_size else (Nil, 0) in
     let (bs, used, open_mb, first_mt) =
-      _stack ua author inner_ancestors kids cw 0 0 (not sep_top) 0 false Nil in
+      if inline_only then (ibs, ilines * Font.line_height f font_size, 0, 0)
+      else _stack f ua author inner_ancestors kids cw 0 0 (not sep_top) 0 false Nil in
     // The fragment's origin is (the containing block's content left, this border box's top): x is
     // measured from outside the margin because a horizontal margin is an offset, y from the border
     // box because a vertical one collapsed into the gap above. So a child clears this box's own
@@ -180,12 +343,15 @@ module Layout {
      (if sep_top then st.mt else _collapse st.mt first_mt),
      (if sep_bot then st.mb else _collapse st.mb open_mb));
 
-  let boxes = fn (roots: node list) ->
+  // The font is a parameter and not a constant, because it is the one input to layout that is a file.
+  // Loaded once per document: reading it per box would read half a megabyte for every element.
+  let boxes = fn (font_path: str) -> fn (roots: node list) ->
+    let f = Font.load font_path in
     let ua = Style.prepare Style.ua_sheet in
     let author = Style.prepare (author_css roots "") in
     // The initial containing block is the viewport. Its own margin does not collapse out of the
     // document, so the root's top margin starts the stack rather than escaping it.
-    let (bs, _y, _mb, _fm) = _stack ua author Nil roots viewport_w 0 0 false 0 false Nil in
+    let (bs, _y, _mb, _fm) = _stack f ua author Nil roots viewport_w 0 0 false 0 false Nil in
     bs;
 
   // The canonical form the gate compares, one line per box in document order.

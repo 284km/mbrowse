@@ -22,11 +22,18 @@
 # The pass count is pinned exactly rather than as a floor: a floor lets a regression hide behind
 # a new pass.
 #
-# Five of the 126 pass, and the five are the ones with no text in normal flow. Everything else is
-# one thing: **a line of text has no height**. A line here is 22 pixels and that number is a font
-# metric, so a box holding only text comes out zero high and every box below it is short by the same
-# amount. The x coordinates and the widths already match across the corpus, and margin collapsing
-# works: a paragraph's 1em collapsing with the body's 8px to 16 is why `body` starts at y=16 in both.
+# Ten of the 126 pass. Text has a height now — a line is `(ascender - descender + lineGap)` scaled,
+# 22px for this font at 16px — and words wrap at the containing block's width, measured in font units
+# so the comparison never rounds. What is left, in the order it is worth doing:
+#
+#   font-size        not resolved, so every `em` is 16px and every line 22. Several of these documents
+#                    set it, and each one moves every number under it.
+#   float            eleven documents use it and it is a layout mode, not a value.
+#   position         thirty-five uses, same.
+#   anonymous blocks a box with both text and block children is laid out as if it were all inline. The
+#                    standard wraps the text in an anonymous block; this does not.
+#   kerning          the font gate's four failures. Text is up to 1.5px wider here than in the browser,
+#                    which is only visible when a line breaks near its limit.
 #
 # **Both sides measure with the same font, and they have to.** The expectations were first taken with
 # whatever font the browser defaulted to — on that machine a system font that cannot be
@@ -49,7 +56,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "layout_check: no mere — set MERE=..." >&2; exit 1; }
 DATA="$ROOT/test/data/layout"
-EXPECT_PASS=${EXPECT_PASS:-5}
+EXPECT_PASS=${EXPECT_PASS:-10}
 
 T="${TMPDIR:-/tmp}/mbrowse_layout.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 
