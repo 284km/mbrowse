@@ -77,6 +77,33 @@ excuses arrives. What is there is
 an `encoding` suite, which is the gate for the character-encoding sniffing that reads
 `<meta charset>`, and that is the next thing to need one.
 
+## Where the tree builder is
+
+```
+sh scripts/tree_check.sh          # html5lib tree construction: 176 of 189
+```
+
+Pinned exactly, and the 13 that fail are grouped in that script's header by **what each one
+needs** rather than by the tags it mentions. That distinction cost something to learn: a bucket
+keyed on the input's tags once said 51 cases for a rule whose fix moved 2, because the tag a
+case mentions is not the rule it is about.
+
+The single most repeated defect in this parser has been **one predicate answering two
+questions**, five times:
+
+| the predicate | the two questions |
+|---|---|
+| the walk that closes an `li` | a heading closes only the current node; an li walks, skipping address, div and p |
+| `_table_open` | is content inside a table's structure (a cell bounds it) vs is a table open at all (a cell is what `<td>` closes) |
+| `_end_tag_matches` | scope, list-item scope, and the special-category walk are three different boundaries |
+| `_is_void` | childless elements are not the same set as head elements |
+| the adoption agency's boundary | where the furthest-block walk stops is not where "in scope" stops |
+
+Every one of them looked right and passed the hand-written checks, because both readings are
+plausible and the checks were written by whoever picked one. **The corpus is what knows.** Two
+of the hand-written checks in `test/tree_check.mere` were themselves wrong and agreed with the
+code until the corpus was asked.
+
 ## CSS component values
 
 `test/data/css_*.json` is [css-parsing-tests](https://github.com/CourtBouillon/css-parsing-tests),
