@@ -234,6 +234,10 @@ module Css {
                 // else and meant it, so it is a bad-url rather than a url containing a
                 // quote.
                 else if at k == "(" || at k == "\"" || at k == "'" then (k, acc, true)
+                // A non-printable character is not something a URL contains either. The
+                // list is the standard's: the C0 controls that are not whitespace, and
+                // DEL.
+                else if ord (at k) < 32 || ord (at k) == 127 then (k, acc, true)
                 else upto (k + 1) (acc ++ at k) ws in
               let (ue0, v, bad) = upto b0 "" false in
               if bad then
@@ -250,6 +254,14 @@ module Css {
               // everything after it.
               if ue >= n then go ue (Cons (Named ("error", "eof-in-url"), Cons (u, out)))
               else go (ue + 1) (Cons (u, out))
+        // The two-character tokens. Each is one delimiter and not two, because each
+        // means something as a pair that neither half means alone — the attribute
+        // selectors and the column combinator. Writing them as pairs of delims would
+        // hand the selector parser two tokens to put back together.
+        else if (c == "~" || c == "|" || c == "^" || c == "$" || c == "*")
+                && at (i + 1) == "=" then
+          go (i + 2) (Cons (Bare (c ++ "="), out))
+        else if c == "|" && at (i + 1) == "|" then go (i + 2) (Cons (Bare "||", out))
         else go (i + 1) (Cons (Bare c, out)) in
     go 0 Nil;
 
