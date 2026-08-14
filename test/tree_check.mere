@@ -85,6 +85,13 @@ let _ = check "li closes li" "<li>a<li>b"
 // check agreeing with the code was worth nothing: they were wrong together.
 let _ = check "li closes li across a div" "<li><div><li>"
   "<html>\n  <head>\n  <body>\n    <li>\n      <div>\n    <li>";
+// A p does not reconstruct the formatting elements — only the formatting elements and the
+// tags with no rule of their own do. Reconstructing for everything put a b before every p.
+let _ = check "a p does not reopen a b in front of itself" "<p id=a><b><p id=b></b>TEST"
+  "<html>\n  <head>\n  <body>\n    <p>\n      id=\"a\"\n      <b>\n    <p>\n      id=\"b\"\n      \"TEST\"";
+// A new link is not nested in the old one: the agency runs first, as if </a> were written.
+let _ = check "a new a closes the listed one" "<a x>0<b>1<a y>2"
+  "<html>\n  <head>\n  <body>\n    <a>\n      x=\"\"\n      \"0\"\n      <b>\n        \"1\"\n    <b>\n      <a>\n        y=\"\"\n        \"2\"";
 // A raw-text element's content belongs to it, whatever insertion mode is running.
 let _ = check "style in the head keeps its own text" "<style>a\{b}</style>"
   "<html>\n  <head>\n    <style>\n      \"a\{b}\"\n  <body>";

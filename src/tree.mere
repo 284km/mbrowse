@@ -307,6 +307,24 @@ module Tree {
     || n == "i" || n == "nobr" || n == "s" || n == "small" || n == "strike"
     || n == "strong" || n == "tt" || n == "u";
 
+  // Which start tags reconstruct the active formatting elements before inserting. The
+  // standard reconstructs in exactly two places: the formatting elements themselves, and
+  // "any other start tag" — the tags that have no rule of their own. A tag WITH a rule does
+  // not, and reconstructing for all of them put a reopened `<b>` in front of every `<p>`
+  // and every `<div>`.
+  let _reconstructs = fn (n: str) ->
+    _is_formatting n
+    || not (_closes_p n || _is_heading n
+            || n == "plaintext" || n == "textarea" || n == "iframe" || n == "noembed"
+            || n == "noscript" || n == "param" || n == "source" || n == "track"
+            || n == "rb" || n == "rt" || n == "rtc" || n == "rp"
+            || n == "base" || n == "basefont" || n == "bgsound" || n == "link"
+            || n == "meta" || n == "title" || n == "style" || n == "script"
+            || n == "noframes" || n == "html" || n == "body" || n == "head"
+            || n == "frame" || n == "frameset"
+            || n == "caption" || n == "col" || n == "colgroup" || n == "tbody"
+            || n == "td" || n == "tfoot" || n == "th" || n == "thead" || n == "tr");
+
   // Entering one of these means formatting must not escape it, so a marker goes on
   // the list and leaving clears back to it.
   let _is_marker_scope = fn (n: str) ->
@@ -596,6 +614,24 @@ module Tree {
                          || name == "th" || name == "thead" || name == "tr")
                         && not (_in_table arena open_ids)) then
               go rest mode arena open_ids afe
+            // A new `<a>` while one is still listed runs the adoption agency for it first,
+            // exactly as if the author had written `</a>` — the standard says so because a
+            // nested link is not a thing, and `<a X>0<b>1<a Y>2` is where it shows: the
+            // second link is a sibling of the first, inside a reopened `<b>`.
+            //
+            // The entry is removed from the list whatever the agency did with it, or the
+            // token would find it again on the next pass round and never make progress.
+            else if name == "a" && Formatting.find afe "a" >= 0 then
+              let (a2, o2, l2, _handled, _complex) =
+                Aaa.run arena open_ids afe "a" _is_special in
+              // Every `a` entry before the marker goes, not just the one that was found.
+              // The agency clones the element it adopts and puts the clone back on the list,
+              // so removing one id leaves another `a` for the same token to find, and the
+              // token goes round for ever. Removing one was a ten-minute hang.
+              let rec strip = fn (l: afe list) ->
+                let h = Formatting.find l "a" in
+                if h < 0 then l else strip (Formatting.remove l h) in
+              go ts mode a2 o2 (strip l2)
             // A second `<select>` closes the first rather than nesting inside it, and the
             // token is consumed doing it — the standard says to treat it as `</select>`.
             // What comes after lands wherever the outer select was.
@@ -642,9 +678,11 @@ module Tree {
               // not only before text. `<select><b><option><select><option>` is where it
               // shows: the second option lands inside a reopened b.
               let (arena, open_ids, afe) =
-                let (a0, o0, l0, _p0) =
-                  Reconstruct.run arena open_ids afe (_parent open_ids) in
-                (a0, o0, l0) in
+                if not (_reconstructs name) then (arena, open_ids, afe)
+                else
+                  let (a0, o0, l0, _p0) =
+                    Reconstruct.run arena open_ids afe (_parent open_ids) in
+                  (a0, o0, l0) in
               // Where a table tag belongs: first pop back to the context it lives in, then
               // create the parts the document did not write. Both, in that order — popping
               // alone loses the implied `<tbody>`, and creating alone nests every row in
