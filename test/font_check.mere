@@ -1,0 +1,48 @@
+// The metrics reader, on the numbers everything else is scaled by.
+//
+// These are the values a wrong read produces something plausible for, which is why they are checked
+// by hand as well as against the browser: `descender` read unsigned is 65243 instead of -293, and the
+// line height that comes out of it is about a thousand pixels — a number so wrong it looks like a
+// different bug.
+
+import "../src/font.mere";
+
+let check = fn (label: str) -> fn (b: bool) ->
+  print (label ++ ": " ++ (if b then "ok" else "MISMATCH"));
+
+let f = Font.load "test/data/font/NotoSans-Regular.ttf";
+
+// The header, and each of these is independently verifiable from the file.
+let _ = check "unitsPerEm" (f.upem == 1000);
+let _ = check "ascender" (f.ascender == 1069);
+let _ = check "descender is negative" (f.descender == 0 - 293);
+let _ = check "lineGap" (f.line_gap == 0);
+let _ = check "the tables were found" (f.hmtx > 0 && f.cmap4 > 0);
+
+// The line height the whole layout gate turns on: (1069 + 293 + 0) / 1000 * 16 = 21.79, rounded.
+let _ = check "a line is 22px at 16px" (Font.line_height f 16 == 22);
+let _ = check "and 11px at 8px" (Font.line_height f 8 == 11);
+
+// The cmap, on characters that live in different segments.
+let _ = check "a capital maps to a glyph" (Font.glyph f 77 > 0);
+let _ = check "a digit maps to a glyph" (Font.glyph f 48 > 0);
+let _ = check "an accented letter maps to a glyph" (Font.glyph f 233 > 0);
+let _ = check "an em dash maps to a glyph" (Font.glyph f 8212 > 0);
+// A code point nothing covers is glyph zero, which is an answer and not a failure.
+let _ = check "an unassigned code point is the missing glyph" (Font.glyph f 1114000 == 0);
+
+// The UTF-8 decode, which `ord` cannot do on its own.
+let _ = check "one byte" (Font.codepoint "M" == 77);
+let _ = check "two bytes" (Font.codepoint "é" == 233);
+let _ = check "three bytes" (Font.codepoint "—" == 8212);
+
+// Summed in font units, scaled once. A space has an advance, which is the one easy to forget.
+let _ = check "a space has a width" (Font.text_units f " " > 0);
+let _ = check "a sum is a sum"
+  (Font.text_units f "MM" == 2 * Font.text_units f "M");
+let _ = check "the empty string is zero wide" (Font.text_units f "" == 0);
+// Scaling once rather than per glyph: a hundred glyphs of 4.13px each is 413px, and rounding each
+// one to 4 would lose 13.
+let _ = check "a hundred glyphs are not rounded a hundred times"
+  (Font.text_width f "iiiiiiiiii" 16 == 41);
+0

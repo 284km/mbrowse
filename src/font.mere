@@ -1,0 +1,174 @@
+// TrueType metrics: what layout has to know before it can put a line of text anywhere.
+//
+// Not glyph outlines. Four tables answer everything a box needs — how tall a line is and how wide a
+// string is — and the curves in `glyf` answer nothing about either. Drawing comes later and can be
+// wrong on its own without moving a single box.
+//
+//   head  unitsPerEm, the scale every other number is in
+//   hhea  ascender, descender, lineGap — the height of a line
+//   cmap  a character to a glyph index
+//   hmtx  a glyph index to its advance width
+//
+// The gate for this is the browser's own `measureText` over the same font file, which is the only
+// oracle that matters: a metrics reader that agrees with a tool nobody uses has agreed with nothing.
+
+// A parsed font, with the tables it needs already located. `cmap4_*` are the offsets of the one
+// subtable format this reads — see `_find_cmap4`.
+type font = {
+  data: bytes,
+  upem: int, ascender: int, descender: int, line_gap: int,
+  hmtx: int, num_h_metrics: int,
+  cmap4: int, seg_count: int
+};
+
+module Font {
+  // Big-endian, because every number in an OpenType file is. Written out rather than looped because
+  // there are exactly three widths in the format and a loop would need a length argument at every
+  // call site.
+  let u8 = fn (d: bytes) -> fn (i: int) ->
+    if i < 0 || i >= bytes_len d then 0 else bytes_get d i;
+
+  let u16 = fn (d: bytes) -> fn (i: int) -> u8 d i * 256 + u8 d (i + 1);
+
+  // A signed 16-bit value. `descender` is negative in every font there is, so reading it unsigned
+  // gives a line height of about a thousand pixels and a document that looks like a column.
+  let i16 = fn (d: bytes) -> fn (i: int) ->
+    let v = u16 d i in if v >= 32768 then v - 65536 else v;
+
+  let u32 = fn (d: bytes) -> fn (i: int) -> u16 d i * 65536 + u16 d (i + 2);
+
+  // The offset of a table, or -1. The directory is 12 bytes of header and then 16 bytes per entry:
+  // a four-byte tag, a checksum, an offset and a length.
+  let table = fn (d: bytes) -> fn (tag: str) ->
+    let n = u16 d 4 in
+    let rec go = fn (i: int) ->
+      if i >= n then 0 - 1
+      else
+        let o = 12 + 16 * i in
+        let t = str_of_bytes (bytes_slice d o 4) in
+        if t == tag then u32 d (o + 8) else go (i + 1) in
+    go 0;
+
+  // The `cmap` subtable for format 4, Unicode BMP. Format 4 is the one every font has and the only
+  // one this reads; a font with only format 12 would need the other. Looked for by platform and
+  // encoding rather than by taking the first, because the order of the records is not fixed.
+  let _find_cmap4 = fn (d: bytes) -> fn (cmap: int) ->
+    if cmap < 0 then 0 - 1
+    else
+      let n = u16 d (cmap + 2) in
+      let rec go = fn (i: int) -> fn (best: int) ->
+        if i >= n then best
+        else
+          let r = cmap + 4 + 8 * i in
+          let plat = u16 d r in
+          let enc = u16 d (r + 2) in
+          let off = cmap + u32 d (r + 4) in
+          let fmt = u16 d off in
+          // Windows/BMP first, then Unicode/BMP, then anything in format 4 — in that order because
+          // the Windows record is the one that is always complete.
+          if fmt != 4 then go (i + 1) best
+          else if plat == 3 && enc == 1 then off
+          else if plat == 0 then go (i + 1) (if best < 0 then off else best)
+          else go (i + 1) (if best < 0 then off else best) in
+      go 0 (0 - 1);
+
+  let load = fn (path: str) ->
+    // `read_file_bytes` hands back a vector of ints; `bytes` is what has a slice and a length, so the
+    // conversion happens once here rather than at every read.
+    let d = bytes_of_vec (read_file_bytes path) in
+    let head = table d "head" in
+    let hhea = table d "hhea" in
+    let hmtx = table d "hmtx" in
+    let cmap = table d "cmap" in
+    let c4 = _find_cmap4 d cmap in
+    font {
+      data = d,
+      upem = if head < 0 then 1000 else u16 d (head + 18),
+      ascender = if hhea < 0 then 0 else i16 d (hhea + 4),
+      descender = if hhea < 0 then 0 else i16 d (hhea + 6),
+      line_gap = if hhea < 0 then 0 else i16 d (hhea + 8),
+      hmtx = hmtx,
+      // The last field of `hhea`, and the reason `hmtx` is readable at all: the advance widths run
+      // out after this many glyphs and every glyph after it repeats the last one.
+      num_h_metrics = if hhea < 0 then 0 else u16 d (hhea + 34),
+      cmap4 = c4,
+      seg_count = if c4 < 0 then 0 else u16 d (c4 + 6) / 2
+    };
+
+  // A code point to a glyph index, through the format 4 segment lists. Zero is the missing glyph and
+  // is a real answer — every font has one and it has a width.
+  let glyph = fn (f: font) -> fn (cp: int) ->
+    if f.cmap4 < 0 || cp > 65535 then 0
+    else
+      let d = f.data in
+      let n = f.seg_count in
+      let ends = f.cmap4 + 14 in
+      let starts = ends + 2 * n + 2 in
+      let deltas = starts + 2 * n in
+      let ranges = deltas + 2 * n in
+      // The segments are sorted, so this could be a binary search. It is linear because a font has a
+      // few hundred of them and the string being measured is short — and because the corpus will say
+      // if that stops being true.
+      let rec go = fn (i: int) ->
+        if i >= n then 0
+        else if u16 d (ends + 2 * i) < cp then go (i + 1)
+        else if u16 d (starts + 2 * i) > cp then 0
+        else
+          let ro = u16 d (ranges + 2 * i) in
+          if ro == 0 then (cp + i16 d (deltas + 2 * i) + 65536) % 65536
+          else
+            // The offset is from the position of the entry itself, not from the table — the one
+            // place in this format where an offset is relative to where it was read.
+            let gi = u16 d (ranges + 2 * i + ro + 2 * (cp - u16 d (starts + 2 * i))) in
+            if gi == 0 then 0 else (gi + i16 d (deltas + 2 * i) + 65536) % 65536 in
+      go 0;
+
+  // A glyph's advance in font units. Past `num_h_metrics` every glyph repeats the last width, which
+  // is how a font with ten thousand identical-width glyphs stays small.
+  let advance = fn (f: font) -> fn (gid: int) ->
+    if f.hmtx < 0 || f.num_h_metrics == 0 then 0
+    else
+      let g = if gid < f.num_h_metrics then gid else f.num_h_metrics - 1 in
+      u16 f.data (f.hmtx + 4 * g);
+
+  // The height of a line at this size, rounded to whole pixels the way the browser rounds it. The
+  // sum is ascender minus descender plus the gap, and the descender is negative — so this is a sum
+  // of three signed numbers and not a subtraction of two.
+  let line_height = fn (f: font) -> fn (size: int) ->
+    if f.upem == 0 then 0
+    else
+      let units = f.ascender - f.descender + f.line_gap in
+      (units * size + f.upem / 2) / f.upem;
+
+  // A UTF-8 character to its code point. Written here because the language hands out characters as
+  // strings of one to four bytes and `ord` answers about one byte: a multi-byte character would come
+  // back as its first byte, which is a number and is not the character.
+  let codepoint = fn (c: str) ->
+    let n = str_len c in
+    if n == 0 then 0
+    else
+      let b0 = ord (char_at c 0) in
+      if n == 1 then b0
+      else if n == 2 then (b0 - 192) * 64 + (ord (char_at c 1) - 128)
+      else if n == 3 then
+        (b0 - 224) * 4096 + (ord (char_at c 1) - 128) * 64 + (ord (char_at c 2) - 128)
+      else
+        (b0 - 240) * 262144 + (ord (char_at c 1) - 128) * 4096
+        + (ord (char_at c 2) - 128) * 64 + (ord (char_at c 3) - 128);
+
+  // The width of a string in font units. Kept in font units because a caller that measures a run and
+  // then a piece of it must not round twice — scaling each glyph would round every one and the errors
+  // would add up to something visible on a long line.
+  let text_units = fn (f: font) -> fn (s: str) ->
+    let rec go = fn (cs: str list) -> fn (acc: int) ->
+      match cs with
+      | Nil -> acc
+      | Cons (c, rest) -> go rest (acc + advance f (glyph f (codepoint c))) in
+    go (utf8_chars s) 0;
+
+  let scale = fn (f: font) -> fn (units: int) -> fn (size: int) ->
+    if f.upem == 0 then 0 else (units * size + f.upem / 2) / f.upem;
+
+  let text_width = fn (f: font) -> fn (s: str) -> fn (size: int) ->
+    scale f (text_units f s) size;
+}

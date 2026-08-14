@@ -77,6 +77,27 @@ excuses arrives. What is there is
 an `encoding` suite, which is the gate for the character-encoding sniffing that reads
 `<meta charset>`, and that is the next thing to need one.
 
+## Font metrics
+
+```
+sh scripts/font_check.sh          # widths: 25 of 29 strings
+```
+
+`src/font.mere` reads four tables and no outlines: `head` for the scale, `hhea` for how tall a line
+is, `cmap` for a character's glyph, `hmtx` for its advance. The curves in `glyf` answer nothing about
+where a box goes, and drawing can be wrong on its own later without moving one.
+
+The oracle is `canvas.measureText` over the same font file, in hundredths of a pixel. It was chosen
+because it already draws text correctly and reads the same bytes; a metrics reader checked against a
+table somebody typed has been checked against somebody typing.
+
+**25 of 29 pass and the four that do not are kerning — measured, not assumed.** Asking the same
+browser for the same strings with `font-kerning: none` returns exactly the numbers this produces, so
+the advance sum is right to the hundredth of a pixel and what is missing is the pair adjustment. This
+font has no `kern` table, only GPOS, so that work is a lookup walk. The oracle is deliberately *not*
+regenerated with kerning off: that would fit the oracle to the implementation, which is the wrong
+direction for a gate to move.
+
 ## Layout, and its gate before it
 
 ```

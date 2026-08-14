@@ -1,0 +1,37 @@
+// Text widths for a file of escaped strings, one per line, in units of 1/100 pixel at 16px.
+//
+// The unit is the oracle's: `measureText` answers in fractional pixels and layout will use those
+// fractions, so rounding to whole pixels here would hide a disagreement of up to half a pixel per
+// glyph. Widths are summed in font units and scaled once, which is why the arithmetic below has no
+// division until the end.
+import "../src/font.mere";
+
+let unescape = fn (s: str) ->
+  let rec go = fn (i: int) -> fn (out: str) ->
+    if i >= str_len s then out
+    else
+      let c = char_at s i in
+      if c != "\\" || i + 1 >= str_len s then go (i + 1) (out ++ c)
+      else
+        let d = char_at s (i + 1) in
+        if d == "\\" then go (i + 2) (out ++ "\\")
+        else if d == "t" then go (i + 2) (out ++ "\t")
+        else if d == "n" then go (i + 2) (out ++ "\n")
+        else if d == "r" then go (i + 2) (out ++ "\r")
+        else go (i + 2) (out ++ d) in
+  go 0 "";
+
+let f = Font.load "test/data/font/NotoSans-Regular.ttf";
+
+let rec run = fn (xs: str list) ->
+  match xs with
+  | Nil -> ()
+  | Cons (line, rest) ->
+    let units = Font.text_units f (unescape line) in
+    // 16px, in hundredths, rounded to nearest: the oracle rounds the same way.
+    let _ = print (str_of_int ((units * 16 * 100 + f.upem / 2) / f.upem)) in
+    run rest;
+
+let path = match args () with Cons (p, _) -> p | Nil -> "test/data/font/widths.cases";
+let _ = run (read_lines path);
+0
