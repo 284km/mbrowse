@@ -118,4 +118,23 @@ let _ = check "an end tag matches the local name" "<svg><path></path><circle>"
   "<html>\n  <head>\n  <body>\n    <svg svg>\n      <svg path>\n      <svg circle>";
 let _ = check "and math works the same way" "<math><mi>x"
   "<html>\n  <head>\n  <body>\n    <math math>\n      <math mi>\n        \"x\"";
+// --- fragment parsing -------------------------------------------------------
+let frag = fn (label: str) -> fn (ctx: str) -> fn (src: str) -> fn (want: str) ->
+  let got = Dom.serialize (Tree.build_fragment ctx (Html.tokenize src)) in
+  print (label ++ ": " ++ (if got == want then "ok"
+    else "MISMATCH\n--- got ---\n" ++ got ++ "\n--- want ---\n" ++ want));
+
+// The result is the context's children, with no html, head or body around them.
+let _ = frag "a fragment has no document around it" "div" "<p>x"
+  "<p>\n  \"x\"";
+let _ = frag "text alone" "div" "hi" "\"hi\"";
+let _ = frag "several children" "div" "<p>a<p>b"
+  "<p>\n  \"a\"\n<p>\n  \"b\"";
+// KNOWN LIMITATION, pinned rather than hidden. The context element is really in the
+// tree here, so content that would *close* it loses it: `<div>` closes an open `<p>`,
+// the synthetic context goes with it, and its children are nowhere. The standard's
+// algorithm does not put the context in the tree at all — it only reads the mode off
+// it — so fixing this means letting the builder start with a stack rather than with a
+// token, which is the next change and not a rule.
+let _ = frag "a context the content closes loses it (limitation)" "p" "<div>x" "";
 0

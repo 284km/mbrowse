@@ -481,4 +481,28 @@ module Tree {
         push_el a2 o2 "body" Nil
     in
     go tokens "initial" Nodes.empty Nil Nil;
+
+  // Fragment parsing — what `innerHTML` does. The same machine, but the result is the
+  // children of a context element rather than a document, and the context decides what
+  // is allowed: `<td>` inside a `<tr>` context is a cell, and the same string parsed as
+  // a document would have the cell fostered out of nowhere.
+  //
+  // Done by parsing the tokens *inside* a synthetic start tag for the context and
+  // returning that element's children, which is exactly what the context is for. What
+  // this does not do is the standard's "reset the insertion mode appropriately" for
+  // contexts that need a stack under them — a `<td>` context should behave as though a
+  // table were open, and here it behaves as though it were not. Ordinary contexts —
+  // div, span, p, li, and everything else that is just an element — are right.
+  let build_fragment = fn (context: str) -> fn (tokens: token list) ->
+    let wrapped = Cons (TStart (context, Nil, false), tokens) in
+    let rec find = fn (ns: node list) ->
+      match ns with
+      | Nil -> Nil
+      | Cons (n, rest) ->
+        (match n with
+         | Element (nm, _attrs, kids) ->
+           if nm == context then kids
+           else (match find kids with Nil -> find rest | found -> found)
+         | _ -> find rest) in
+    find (build wrapped);
 }
