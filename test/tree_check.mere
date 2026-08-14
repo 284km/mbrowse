@@ -85,6 +85,21 @@ let _ = check "li closes li" "<li>a<li>b"
 // check agreeing with the code was worth nothing: they were wrong together.
 let _ = check "li closes li across a div" "<li><div><li>"
   "<html>\n  <head>\n  <body>\n    <li>\n      <div>\n    <li>";
+// A frameset replaces the body rather than living in it, and a frameset document never
+// gets a body at all.
+let _ = check "a frameset takes the body's place" "<frameset><frame>"
+  "<html>\n  <head>\n  <frameset>\n    <frame>";
+let _ = check "a frameset nests" "<frameset><frame><frameset><frame></frameset>"
+  "<html>\n  <head>\n  <frameset>\n    <frame>\n    <frameset>\n      <frame>";
+// Whitespace survives and nothing else does, per character and not per token.
+let _ = check "a frameset keeps only whitespace" "<frameset> te st"
+  "<html>\n  <head>\n  <frameset>\n    \"  \"";
+// Once the outermost frameset closes, text goes beside it and not inside.
+let _ = check "after the frameset, whitespace goes under html" "<frameset></frameset> x "
+  "<html>\n  <head>\n  <frameset>\n  \"  \"";
+// And a frame with no frameset around it is dropped, not inserted.
+let _ = check "a frame outside a frameset is dropped" "<frame>test"
+  "<html>\n  <head>\n  <body>\n    \"test\"";
 // An option closes an option; an optgroup closes an option and then an optgroup.
 let _ = check "an option closes an option" "<select><option>a<option>b"
   "<html>\n  <head>\n  <body>\n    <select>\n      <option>\n        \"a\"\n      <option>\n        \"b\"";

@@ -171,6 +171,16 @@ module Tree {
         then go (i + 1) else false in
     go 0;
 
+  // The whitespace of a string and nothing else, kept in order. Only a frameset document
+  // needs this, and it needs it per character rather than per token.
+  let _ws_only = fn (s: str) ->
+    let rec go = fn (i: int) -> fn (out: str) ->
+      if i >= str_len s then out
+      else
+        let c = char_at s i in
+        go (i + 1) (if _is_ws c then out ++ c else out) in
+    go 0 "";
+
   // --- the open elements, as ids into the arena ------------------------------
   // A popped element is not folded into anything: it stays in the arena and stays
   // addressable, which is the whole reason for the change.
@@ -370,9 +380,13 @@ module Tree {
                  fn (open_ids: int list) -> fn (afe: afe list) ->
       match ts with
       | Nil ->
-        let (a, _o) = if _open_has arena open_ids "body" then (arena, open_ids)
-                      else _open_body (mode == "after head" || mode == "in body"
-                                       || mode == "after body") arena open_ids in
+        // A frameset document never gets a body: the frameset took its place, and adding
+        // one at the end would put an empty body next to it.
+        let (a, _o) =
+          if mode == "in frameset" || mode == "after frameset" then (arena, open_ids)
+          else if _open_has arena open_ids "body" then (arena, open_ids)
+          else _open_body (mode == "after head" || mode == "in body"
+                           || mode == "after body") arena open_ids in
         Nodes.to_nodes a
       | Cons (t, rest) ->
         (match t with
@@ -385,7 +399,16 @@ module Tree {
           let (a, _id) = Nodes.comment arena (_parent open_ids) data in
           go rest mode a open_ids afe
         | TChar data ->
-          if _is_ws data && mode != "in body" then go rest mode arena open_ids afe
+          // A frameset document has no text in it. Whitespace is kept and everything else
+          // is dropped, one character at a time rather than one token at a time: the
+          // corpus has `<frameset> te st`, whose whole answer is the two spaces.
+          if mode == "in frameset" || mode == "after frameset" then
+            let ws = _ws_only data in
+            if ws == "" then go rest mode arena open_ids afe
+            else
+              let (a, _id) = Nodes.add_text arena (_parent open_ids) ws in
+              go rest mode a open_ids afe
+          else if _is_ws data && mode != "in body" then go rest mode arena open_ids afe
           else if mode == "in body" then
             let fb = _foster_target arena open_ids in
             if fb >= 0 then
@@ -423,8 +446,32 @@ module Tree {
               let (a, o) = push_el arena open_ids name attrs in
               go rest mode a (drop1 o) afe
             else go ts "after head" arena (drop1 open_ids) afe
+          // Two whole insertion modes, and they are short because a frameset document is
+          // almost nothing: frames, nested framesets, and `<noframes>`. Everything else is
+          // dropped rather than misplaced.
+          else if mode == "in frameset" then
+            if name == "frameset" then
+              let (a, o) = push_el arena open_ids "frameset" attrs in
+              go rest mode a o afe
+            else if name == "frame" then
+              let (a, o) = push_el arena open_ids "frame" attrs in
+              go rest mode a (drop1 o) afe
+            else if name == "noframes" then
+              let (a, o) = push_el arena open_ids "noframes" attrs in
+              go rest mode a o afe
+            else go rest mode arena open_ids afe
+          else if mode == "after frameset" then
+            if name == "noframes" then
+              let (a, o) = push_el arena open_ids "noframes" attrs in
+              go rest mode a o afe
+            else go rest mode arena open_ids afe
           else if mode == "after head" then
-            if name == "body" then
+            // A frameset is not in the body, it replaces it — so this is asked here, where
+            // the body has not been opened yet, and the element goes under html.
+            if name == "frameset" then
+              let (a, o) = push_el arena open_ids "frameset" attrs in
+              go rest "in frameset" a o afe
+            else if name == "body" then
               let (a, o) = push_el arena open_ids "body" attrs in
               go rest "in body" a o afe
             else
@@ -449,6 +496,12 @@ module Tree {
             // out loud rather than left as a silence, because implementing the corpus's
             // older behaviour on purpose and not knowing it is older are different states.
             //
+            // A `<frame>` outside a frameset is dropped, not inserted: `<frame>test` is a
+            // body with the text in it and no frame at all. The standard has a list of tags
+            // ignored in the body — caption, col, colgroup, frame, head and the table
+            // sections — and only `frame` is safe to add here, because this builder decides
+            // the table tags by whether a table is open rather than by an insertion mode.
+            else if name == "frame" then go rest mode arena open_ids afe
             // A second `<select>` closes the first rather than nesting inside it, and the
             // token is consumed doing it — the standard says to treat it as `</select>`.
             // What comes after lands wherever the outer select was.
@@ -542,6 +595,15 @@ module Tree {
                 | Nil -> Nil
                 | Cons (x, r) -> if x == hit then r else pop r in
               go rest mode arena (pop open_ids) afe
+          else if mode == "in frameset" && name == "frameset" then
+            // The outermost frameset does not close into a body: when what is left is the
+            // html element alone, the document is after the frameset and only whitespace,
+            // comments and `<noframes>` may still arrive.
+            let o = drop1 open_ids in
+            go rest (if _cur_is arena o "html" then "after frameset" else mode) arena o afe
+          else if mode == "in frameset" || mode == "after frameset" then
+            if name == "noframes" then go rest mode arena (drop1 open_ids) afe
+            else go rest mode arena open_ids afe
           else if name == "html" || name == "body" then
             if mode == "in body" then go rest "after body" arena open_ids afe
             else go rest mode arena open_ids afe
