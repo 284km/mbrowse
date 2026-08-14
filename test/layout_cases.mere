@@ -1,0 +1,12 @@
+// Lays out one document — a whole file, not a line — and prints its boxes.
+//
+// One document per run rather than a batch, because these are real files with newlines in them
+// and escaping a whole reftest onto one line would put the escaping between the corpus and the
+// thing being tested. The harness loops instead.
+import "../src/layout.mere";
+import "../src/tree.mere";
+
+let path = match args () with Cons (p, _) -> p | Nil -> "";
+let src = str_join "\n" (read_lines path);
+let _ = print (Layout.render (Layout.boxes (Tree.build (Html.tokenize src))));
+0

@@ -1,0 +1,68 @@
+// Layout: a DOM in, a box per element out.
+//
+// This is the first slice and it is deliberately the whole of one thing rather than a bit of
+// everything: **normal flow for block boxes, at the widths the containing block gives them.**
+// There is no style resolution yet, so every element is a block and no margin, border or
+// padding exists; there is no text measurement, so a box with only text in it has no height.
+// Both are the next two slices, and the gate says how much they are worth before either is
+// written, which is the point of having built the gate first.
+//
+// What is here is the recursion the rest hangs off: a box's width comes from its parent, its
+// children stack downward, and its height is what they add up to. Getting that shape right and
+// checked is worth more than getting one property right in a shape that has to change.
+
+import "dom.mere";
+
+// A laid-out box. `x` and `y` are document coordinates, not offsets from the parent — the gate
+// compares against `getBoundingClientRect`, which is absolute, and converting at the boundary
+// would put the conversion somewhere the tests cannot see it.
+type box = { tag: str, x: int, y: int, w: int, h: int };
+
+module Layout {
+  // The viewport the gate's expectations were taken in. It is a constant here rather than a
+  // parameter because it is part of what the expected values MEAN: change it and every number
+  // in `test/data/layout/*.expected` is wrong, so it has to be changed in both places at once
+  // and a default hides that.
+  let viewport_w = 800;
+
+  // The elements that generate no box. Not a style question yet — with no style resolution
+  // there is nowhere to put `display: none`, and these are the ones the standard's own UA
+  // stylesheet hides. The gate's expectations skip exactly this set.
+  let _no_box = fn (n: str) ->
+    n == "head" || n == "style" || n == "script" || n == "meta" || n == "link"
+    || n == "title" || n == "base";
+
+  // One pass, depth first, in document order. `y` is where this box starts; the return is the
+  // boxes produced and the y the next sibling starts at.
+  //
+  // The width is the parent's, unconditionally. That is wrong for anything with a margin or an
+  // explicit width, and it is the right first answer: block boxes fill their containing block,
+  // and everything that narrows one is a property this does not have yet.
+  let rec _flow = fn (ns: node list) -> fn (x: int) -> fn (y: int) -> fn (w: int) ->
+    match ns with
+    | Nil -> (Nil, y)
+    | Cons (n, rest) ->
+      match n with
+      | Element (tag, _attrs, kids) ->
+        if _no_box tag then _flow rest x y w
+        else
+          let (inner, y2) = _flow kids x y w in
+          let me = box { tag = tag, x = x, y = y, w = w, h = y2 - y } in
+          let (after, y3) = _flow rest x y2 w in
+          (Cons (me, list_append inner after), y3)
+      // Text has no height until something can measure it. Saying zero is not a guess about
+      // fonts, it is the absence of one: a line box needs metrics, and there are none here.
+      | Text _s -> _flow rest x y w
+      | Comment _s -> _flow rest x y w
+      | Doctype (_a, _b, _c) -> _flow rest x y w;
+
+  let boxes = fn (roots: node list) ->
+    let (bs, _y) = _flow roots 0 0 viewport_w in bs;
+
+  // The canonical form the gate compares, one line per box in document order.
+  let render = fn (bs: box list) ->
+    let one = fn (b: box) ->
+      b.tag ++ "\t" ++ str_of_int b.x ++ "\t" ++ str_of_int b.y
+      ++ "\t" ++ str_of_int b.w ++ "\t" ++ str_of_int b.h in
+    str_join "\n" (list_map bs one);
+}

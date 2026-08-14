@@ -77,6 +77,32 @@ excuses arrives. What is there is
 an `encoding` suite, which is the gate for the character-encoding sniffing that reads
 `<meta charset>`, and that is the next thing to need one.
 
+## Layout, and its gate before it
+
+```
+sh scripts/layout_check.sh        # geometry: 0 of 126, box sequence: 126 of 126
+```
+
+The gate exists and the engine does not, which is the same order the CSS corpus arrived in. Both
+halves of it come from somewhere other than here: the 126 documents are web-platform-tests' CSS 2
+normal-flow reftests, self-contained with their CSS inline, chosen by the people who wrote the
+specification; the expected geometry is `getBoundingClientRect` from a real browser, taken once
+at vendoring time and committed.
+
+**Reftests are the wrong gate to start with.** The plan for this layer said WPT reftests, and a
+reftest compares two of *your own* renderings — so an engine that draws nothing passes every one.
+That is the trap the window capability hit, where a readback handed back the pixels just written
+and every comparison passed; it took poisoning the buffer to see it. Geometry from another engine
+cannot be passed by drawing nothing, because the numbers are specific. Reftests are still worth
+running later, for what geometry does not check: colour, stacking, and where the ink lands.
+
+Two numbers are reported, because they fail for different reasons. The **box sequence** — which
+elements generate boxes, in what order — is the parser and the box tree, and it is already right
+for all 126. The **geometry** is layout, and it is right for none of them: there is no style
+resolution, so the 8px margin on `body` and the 1em on a `<p>` that are in every expectation are
+missing, and no text measurement, so a box holding only text has no height. Reporting one number
+would hide a broken parse behind a missing property, or call a blank page a success.
+
 ## Where the tree builder is
 
 ```

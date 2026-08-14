@@ -12,4 +12,5 @@ echo "$out" | grep -q MISMATCH && { echo "check: failed" >&2; exit 1; }
 sh "$ROOT/scripts/css_check.sh"
 sh "$ROOT/scripts/tree_check.sh"
 sh "$ROOT/scripts/encoding_check.sh"
+sh "$ROOT/scripts/layout_check.sh"
 echo "check: ok"
