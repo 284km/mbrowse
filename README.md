@@ -62,8 +62,14 @@ comment. **All 81 pass** since two more: an unrecognised label does not end the 
 has a declaration), and a tag with no `>` is not a tag — the input ended in the middle
 of it.
 
-Finding a normative suite for tree construction — web-platform-tests is the obvious
-place to look next — comes before writing many more of these by hand. What is there is
+Found, and vendored: html5lib-tests **moved** its tree-construction data to
+web-platform-tests on 2026-06-26, which is why looking for it at its old path returns
+a 404 that reads like a wrong path. `scripts/vendor_tests.sh` takes it from the last
+commit before that move, **by SHA** — 199 cases in `test/data/tree_tests*.dat`. An
+oracle is a versioned dependency; pinning is the correct form rather than a
+workaround. Wiring it to a harness is the next step, and it needs the
+tokenizer/tree-builder loop first, because many of its cases start in a non-Data
+state. What is there is
 an `encoding` suite, which is the gate for the character-encoding sniffing that reads
 `<meta charset>`, and that is the next thing to need one.
 
