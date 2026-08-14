@@ -91,6 +91,35 @@ module Nodes {
         go rest (i + 1) (Cons (y, out)) in
     go a 0 Nil;
 
+  // The children of a node, oldest first. Insertion order is id order, so this is a
+  // scan — the same reason last_child is one.
+  let children_of = fn (a: anode list) -> fn (parent: int) ->
+    let n = len a in
+    let rec go = fn (i: int) -> fn (out: int list) ->
+      if i >= n then list_rev out
+      else go (i + 1) (if (_nth a i).parent == parent then Cons (i, out) else out) in
+    go 0 Nil;
+
+  // Move every child of `from` under `to`, keeping their order.
+  //
+  // The adoption agency needs exactly this: the furthest block's children go into a
+  // clone of the formatting element, and the clone becomes the block's only child.
+  // In the nested representation it was not expressible at all — the children were
+  // values inside their parent — and here it is a fold over reparent.
+  let move_children = fn (a: anode list) -> fn (from: int) -> fn (to_: int) ->
+    let rec go = fn (ids: int list) -> fn (acc: anode list) ->
+      match ids with
+      | Nil -> acc
+      | Cons (id, rest) -> go rest (reparent acc id to_) in
+    go (children_of a from) a;
+
+  // A copy of an element under a new parent: same name, same attributes, no children.
+  // The algorithm clones rather than moves because the original is still in the tree
+  // and still referred to by the list of active formatting elements.
+  let clone = fn (a: anode list) -> fn (id: int) -> fn (parent: int) ->
+    let x = _nth a id in
+    element a parent x.name x.attrs;
+
   // Back to the nested form, which is what the conformance harness compares.
   let rec _kids_of = fn (a: anode list) -> fn (parent: int) ->
     let n = len a in
