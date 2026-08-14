@@ -12,11 +12,12 @@ MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "encoding_check: no mere — set MERE=..." >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "encoding_check: python3 needed to read the .dat" >&2; exit 0; }
 
-# Most of what fails is one thing: the vendored label table lists only the encodings
-# it can decode, so a page declaring iso-8859-2 reads as undeclared. Sniffing needs a
-# label table that is complete whether or not a decoder exists for each entry — the
-# same gap `utf-16` was, and larger.
-EXPECT_PASS=${EXPECT_PASS:-46}
+# That gap is closed upstream (the label table is the Standard's full 228 now), which
+# moved this from 46 to 54. What fails now is the other direction: the prescan finds a
+# declaration the suite says should not count — a `charset` that is not in a meta
+# element, or one past the first 1024 bytes. The scanner is too willing, not too
+# blind, which is a different fix.
+EXPECT_PASS=${EXPECT_PASS:-54}
 
 T="${TMPDIR:-/tmp}/mbrowse_enc.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 python3 "$ROOT/scripts/encoding_cases.py" "$ROOT/test/data" "$T/cases.txt" "$T/meta.txt"

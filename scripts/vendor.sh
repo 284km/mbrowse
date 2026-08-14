@@ -22,3 +22,17 @@ for f in tokenizer.mere entities.mere; do
   cp "$MERE_SRC/contrib/html/$f" "$ROOT/.mere_modules/mere-html/$f"
   echo "vendored mere-html/$f"
 done
+
+mkdir -p "$ROOT/.mere_modules/mere-encoding"
+for f in decode.mere labels.mere jis.mere jis_index.mere; do
+  cp "$MERE_SRC/contrib/encoding/$f" "$ROOT/.mere_modules/mere-encoding/$f"
+  echo "vendored mere-encoding/$f"
+done
+
+# Imports inside a vendored module name the package, not a sibling file.
+for f in "$ROOT"/.mere_modules/mere-html/*.mere; do
+  sed -i.bak -E 's|import "(entities|tokenizer)\.mere"|import "mere-html/.mere"|' "$f" && rm -f "$f.bak"
+done
+for f in "$ROOT"/.mere_modules/mere-encoding/*.mere; do
+  sed -i.bak -E 's|import "(decode|labels|jis|jis_index)\.mere"|import "mere-encoding/.mere"|' "$f" && rm -f "$f.bak"
+done
