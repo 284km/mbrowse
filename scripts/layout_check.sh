@@ -22,18 +22,22 @@
 # The pass count is pinned exactly rather than as a floor: a floor lets a regression hide behind
 # a new pass.
 #
-# Ten of the 126 pass. Text has a height now — a line is `(ascender - descender + lineGap)` scaled,
-# 22px for this font at 16px — and words wrap at the containing block's width, measured in font units
-# so the comparison never rounds. What is left, in the order it is worth doing:
+# Eleven of the 126 pass, and what is left is measured rather than guessed. The failures are grouped by
+# the first box whose geometry differs:
 #
-#   font-size        not resolved, so every `em` is 16px and every line 22. Several of these documents
-#                    set it, and each one moves every number under it.
-#   float            eleven documents use it and it is a layout mode, not a value.
-#   position         thirty-five uses, same.
-#   anonymous blocks a box with both text and block children is laid out as if it were all inline. The
-#                    standard wraps the text in an anonymous block; this does not.
-#   kerning          the font gate's four failures. Text is up to 1.5px wider here than in the browser,
-#                    which is only visible when a line breaks near its limit.
+#   83  `html` is 8 pixels too tall — want 54, got 62, in every one of them. The body's own bottom
+#       margin is being counted as well as the collapsed one, so this is one arithmetic error and not
+#       eighty-three documents' worth of features. It is the next thing.
+#   13  an inline element's x or width: `<strong>` 39px to the right of where it belongs, which is a
+#       float beside it that this does not shorten the line for.
+#    6  a `<div>` at the wrong x AND y — floats again, placed beside rather than below.
+#    4  a `<div>` whose height does not include the float inside it.
+#    2  an `<svg>` reported 288 wide where the browser says 0 — a replaced element with no intrinsic
+#       size, which is not a box-model question.
+#
+# **The ordering in this header used to say `font-size` first. Not one of the 126 documents sets it.**
+# That was written from what a layout engine usually needs rather than from what this corpus asks, and
+# the corpus was one grep away. The list above is from the failures themselves.
 #
 # **Both sides measure with the same font, and they have to.** The expectations were first taken with
 # whatever font the browser defaulted to — on that machine a system font that cannot be
@@ -56,7 +60,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "layout_check: no mere — set MERE=..." >&2; exit 1; }
 DATA="$ROOT/test/data/layout"
-EXPECT_PASS=${EXPECT_PASS:-10}
+EXPECT_PASS=${EXPECT_PASS:-11}
 
 T="${TMPDIR:-/tmp}/mbrowse_layout.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 

@@ -17,7 +17,7 @@ import "css_rules.mere";
 // where a length cannot be resolved without knowing the containing block, which is what `-1`
 // means for width and height: auto.
 type sty = {
-  display: str,
+  display: str, position: str, float_: str,
   w: int, h: int,                      // -1 for auto
   w_pct: int, h_pct: int,              // -1 when not a percentage
   mt: int, mr: int, mb: int, ml: int,
@@ -431,6 +431,10 @@ module Style {
     let hv = get "height" in
     sty {
       display = disp,
+      // Two properties that are layout MODES rather than values: an out-of-flow box does not advance
+      // its parent's cursor and does not add to its height, whatever its own numbers say.
+      position = let v = to_lower (get "position") in if v == "" then "static" else v,
+      float_ = let v = to_lower (get "float") in if v == "" then "none" else v,
       w = if wv == "" || to_lower wv == "auto" then 0 - 1
           else let q = px_of wv in if q == 0 - 2 then 0 - 1 else q,
       h = if hv == "" || to_lower hv == "auto" then 0 - 1

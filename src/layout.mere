@@ -258,6 +258,15 @@ module Layout {
         let st = style_of ua author e ancestors (_attr attrs "style") in
         if st.display == "none" then
           _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen acc
+        // Out of flow: the box is laid out where it would have been — its static position, which is
+        // what `top` and `left` of `auto` mean — and then the cursor does not move and the height does
+        // not grow. `<div style="position:absolute">` inside a page made the page as tall as if it were
+        // in flow, and 94 of the 116 layout failures were that one thing.
+        else if st.position == "absolute" || st.position == "fixed" then
+          let (fbs, _fh, _fmt, _fmb) = _block f ua author ancestors tag attrs kids cbw st in
+          let bs = _shift fbs 0 (y + _collapse open_mb 0) in
+          _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen
+                 (list_append (list_rev bs) acc)
         else
           let (fbs, fh, fmt, fmb) = _block f ua author ancestors tag attrs kids cbw st in
           let is_first = not seen in

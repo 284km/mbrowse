@@ -122,9 +122,16 @@ with the box model, collapsing margins, and inline formatting. Ten of the 126 pa
 now — a line is `(ascender - descender + lineGap)` scaled, 22px for this font at 16px — and words wrap
 at the containing block's width, compared in font units so the wrap point never turns on a rounding.
 
-What is left is listed in the gate's header, in the order it is worth doing: `font-size` (not resolved,
-so every em is 16px), `float` and `position` (layout modes, not values), anonymous block boxes (a box
-with both text and block children is laid out as if it were all inline), and kerning.
+An absolutely positioned box is out of flow: laid out at its static position, but the cursor does not
+move past it and the parent's height does not grow. That was 94 of the 116 failures at the time —
+`html` came out as tall as if the box were in flow.
+
+What is left is in the gate's header, grouped by **the first box whose geometry differs** rather than by
+what a layout engine usually needs. That distinction cost something: the header used to name `font-size`
+as the next thing, and **not one of the 126 documents sets it**. The corpus was one grep away. What the
+failures actually say: 83 documents are `html` exactly 8 pixels too tall — one arithmetic error in
+margin collapsing, not eighty-three features — then floats, then a replaced element with no intrinsic
+size.
 
 The UA stylesheet is written as CSS and parsed by the same parser as everything else, rather than as
 a table of constants. A table would be a second place where "what a `<p>` is" is written down, and
