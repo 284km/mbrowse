@@ -22,7 +22,7 @@
 # The pass count is pinned exactly rather than as a floor: a floor lets a regression hide behind
 # a new pass.
 #
-# Thirteen of the 126 pass, and what is left is measured rather than guessed. The failures are grouped by
+# Fourteen of the 126 pass, and what is left is measured rather than guessed. The failures are grouped by
 # the first box whose geometry differs:
 #
 # The 8-pixel error that was in 83 of them is gone, and it was not the body's own margin: the cursor and
@@ -68,7 +68,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "layout_check: no mere — set MERE=..." >&2; exit 1; }
 DATA="$ROOT/test/data/layout"
-EXPECT_PASS=${EXPECT_PASS:-13}
+EXPECT_PASS=${EXPECT_PASS:-14}
 
 T="${TMPDIR:-/tmp}/mbrowse_layout.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 

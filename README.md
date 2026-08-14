@@ -133,9 +133,12 @@ were one number.** `y` includes the margin still hanging after the last child, b
 the next child goes; the height is measured to the last child's border box. And a box with nothing in it
 and no border or padding lets margins collapse *through* — an empty `<div>` after a paragraph is placed
 after the collapsed margin, which puts it below its own parent's bottom edge and adds nothing to that
-parent's height. What is left is **table layout** — 65 of the 113 remaining failures. A table shrinks to fit rather than
-filling its container, rows share a column's width, and `border-spacing` insets every cell. Floats are
-12, and a replaced element with no intrinsic size is 3.
+parent's height. Table layout is in: a table shrinks to fit its content rather than filling its container, rows share a
+column's width, and `border-spacing` insets every cell including at the edges. Columns are measured in
+**font units**, not pixels — rounding a column's width first and then asking whether the text fits wraps
+a line whose text is 71.2 wide into a column of 71, and that column was sized from that very text.
+
+What is left is floats, and a replaced element with no intrinsic size.
 
 That list is re-derived from the failures each time rather than carried forward, because it has been
 wrong twice: it once named `font-size`, which **not one of the 126 documents sets**, and then floats,

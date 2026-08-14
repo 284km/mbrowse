@@ -238,6 +238,29 @@ module Layout {
           else go rest wu (lines + 1) in
       go words 0 0;
 
+  // How many lines a text takes in a capacity given in FONT UNITS. The pixel version rounds the
+  // capacity first, which is wrong wherever the capacity was derived from the same text.
+  let _lines_in_units = fn (f: font) -> fn (text: str) -> fn (cap: int) ->
+    if text == "" then 0
+    else if cap <= 0 then 1
+    else
+      let space = Font.text_units f " " in
+      let rec go = fn (ws: str list) -> fn (cur: int) -> fn (lines: int) ->
+        match ws with
+        | Nil -> if cur > 0 then lines + 1 else (if lines == 0 then 1 else lines)
+        | Cons (w, rest) ->
+          let wu = Font.text_units f w in
+          if cur == 0 then go rest wu lines
+          else if cur + space + wu <= cap then go rest (cur + space + wu) lines
+          else go rest wu (lines + 1) in
+      go (str_split text " ") 0 0;
+
+  // What `b` has that `a` does not, when `b` was built by appending to `a`.
+  let rec _drop = fn (a: box list) -> fn (b: box list) ->
+    match a with
+    | Nil -> b
+    | Cons (_x, ra) -> match b with Nil -> Nil | Cons (_y, rb) -> _drop ra rb;
+
   // A list of siblings, stacked. `cbw` is the containing block's content width; `open_mb` is the
   // bottom margin left hanging by whatever came before. `swallow_first` says that the first
   // child's top margin belongs to the PARENT and must not become a gap here — the parent asks
@@ -295,6 +318,142 @@ module Layout {
       // height, and there is none — zero here is the absence of a measurement, not a guess at one.
       | _ -> _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom acc
 
+  // The element children of a node, with their resolved styles. Tables ask this three times — for row
+  // groups, rows and cells — and the white space between them is not a row.
+  and _kids_of = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
+                 fn (anc: elem list) -> fn (ns: node list) ->
+    let rec go = fn (xs: node list) -> fn (acc: (str * attr list * node list * sty) list) ->
+      match xs with
+      | Nil -> list_rev acc
+      | Cons (n, rest) ->
+        match n with
+        | Element (tag, attrs, kids) ->
+          let e = _elem_of tag attrs in
+          let st = style_of ua author e anc (_attr attrs "style") in
+          if st.display == "none" then go rest acc
+          else go rest (Cons ((tag, attrs, kids, st), acc))
+        | Text _t -> go rest acc
+        | Comment _c -> go rest acc
+        | Doctype (_x, _y, _z) -> go rest acc in
+    go ns Nil
+
+  // A table, which is its own algorithm and not a stack of blocks. Rows share their columns' widths, a
+  // table shrinks to fit its content rather than filling its container, and `border-spacing` insets
+  // every cell — including at the edges, which is why a table is wider than the sum of its columns.
+  //
+  // What is NOT here: colspan and rowspan, column groups, captions, and collapsed borders. Each would
+  // change which cell owns which width, and the corpus will say when one is needed.
+  and _table = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
+               fn (anc: elem list) -> fn (kids: node list) -> fn (st: sty) -> fn (avail: int) ->
+    let sp = st.spacing in
+    let lh = Font.line_height f font_size in
+    let groups = _kids_of f ua author anc kids in
+    let rows_of = fn (g: (str * attr list * node list * sty)) ->
+      let (_gt, _ga, gk, _gs) = g in _kids_of f ua author anc gk in
+    // A column is measured in FONT UNITS, not pixels. Rounding the width first and then asking whether
+    // the text fits in it wraps a line whose text is 71.2 wide into a column of 71 — the column was
+    // sized from that very text, so it has to be compared against it at the same precision.
+    let cell_units = fn (c: (str * attr list * node list * sty)) ->
+      let (_ct, _ca, ck, _cs) = c in
+      Font.text_units f (_collapse_ws (_inline_text ck "")) in
+    let extra = fn (c: (str * attr list * node list * sty)) ->
+      let (_ct, _ca, _ck, cs) = c in cs.pl + cs.pr + cs.bl + cs.br in
+    let rec col_widths = fn (gs: (str * attr list * node list * sty) list) -> fn (acc: int list) ->
+      match gs with
+      | Nil -> acc
+      | Cons (g, more) ->
+        let rec per_row = fn (rs: (str * attr list * node list * sty) list) -> fn (a: int list) ->
+          match rs with
+          | Nil -> a
+          | Cons (r, rest) ->
+            let (_rt, _ra, rk, _rs) = r in
+            let rec merge = fn (cs: (str * attr list * node list * sty) list) ->
+                            fn (old: int list) -> fn (out: int list) ->
+              match cs with
+              | Nil -> list_append (list_rev out) old
+              | Cons (c, more2) ->
+                let w = cell_units c in
+                match old with
+                | Nil -> merge more2 Nil (Cons (w, out))
+                | Cons (o, orest) -> merge more2 orest (Cons ((if w > o then w else o), out)) in
+            per_row rest (merge (_kids_of f ua author anc rk) a Nil) in
+        col_widths more (per_row (rows_of g) acc) in
+    let cols = col_widths groups Nil in
+    let ncols = list_len cols in
+    // The box widths, one per column, in pixels: the content scaled once plus what the box model adds.
+    // The padding is taken from the first row's cells, which is where a table with a colgroup would
+    // need something better.
+    let pad0 =
+      match groups with
+      | Nil -> 0
+      | Cons (g, _m) ->
+        match rows_of g with
+        | Nil -> 0
+        | Cons (r, _mm) ->
+          let (_rt, _ra, rk, _rs) = r in
+          match _kids_of f ua author anc rk with
+          | Nil -> 0
+          | Cons (c, _m2) -> extra c in
+    let px_cols = list_map cols (fn (u: int) -> Font.scale f u font_size + pad0) in
+    let sum_cols = let rec go = fn (xs: int list) -> fn (a: int) ->
+                     match xs with Nil -> a | Cons (x, r) -> go r (a + x) in
+                   go px_cols 0 in
+    let inner = if ncols == 0 then 0 else sum_cols + sp * (ncols + 1) in
+    let table_w = if st.w >= 0 then st.w else if inner > avail then avail else inner in
+    // Document order, built forwards. A table's boxes are a group, then its rows, and each row's cells
+    // straight after it — an accumulator that is reversed at the end puts the cells before their row.
+    let rec lay = fn (gs: (str * attr list * node list * sty) list) -> fn (y: int) ->
+                  fn (acc: box list) ->
+      match gs with
+      | Nil -> (acc, y)
+      | Cons (g, more) ->
+        let (gt, _ga, _gk, _gs) = g in
+        let rec lay_rows = fn (rs: (str * attr list * node list * sty) list) -> fn (ry: int) ->
+                           fn (a: box list) ->
+          match rs with
+          | Nil -> (a, ry)
+          | Cons (r, rest) ->
+            let (rt, _ra, rk, _rs) = r in
+            let cells = _kids_of f ua author anc rk in
+            // Every cell in a row is as tall as the tallest, which is what makes a row a row.
+            let rec cell_h = fn (cs: (str * attr list * node list * sty) list) -> fn (us: int list) ->
+                             fn (best: int) ->
+              match cs with
+              | Nil -> best
+              | Cons (c, more2) ->
+                let (_ct, _ca, ck, cst) = c in
+                let cap = match us with Nil -> 0 | Cons (u, _r) -> u in
+                let txt = _collapse_ws (_inline_text ck "") in
+                let n = if txt == "" then 0 else _lines_in_units f txt cap in
+                let h = (if cst.h >= 0 then cst.h else n * lh) + cst.pt + cst.pb + cst.bt + cst.bb in
+                cell_h more2 (match us with Nil -> Nil | Cons (_u, rr) -> rr)
+                       (if h > best then h else best) in
+            let rh = cell_h cells cols 0 in
+            let rec place = fn (cs: (str * attr list * node list * sty) list) -> fn (ws: int list) ->
+                            fn (x: int) -> fn (a2: box list) ->
+              match cs with
+              | Nil -> a2
+              | Cons (c, more2) ->
+                let (ct, _ca, _ck, _cs) = c in
+                let cw2 = match ws with Nil -> 0 | Cons (w, _r) -> w in
+                place more2 (match ws with Nil -> Nil | Cons (_w, rr) -> rr) (x + cw2 + sp)
+                      (list_append a2
+                         (Cons (box { tag = to_lower ct, x = x, y = ry, w = cw2, h = rh }, Nil))) in
+            let row_box = box { tag = to_lower rt, x = sp, y = ry, w = sum_cols, h = rh } in
+            lay_rows rest (ry + rh + sp)
+                     (place cells px_cols sp (list_append a (Cons (row_box, Nil)))) in
+        let gy = y + sp in
+        let (a2, gy2) = lay_rows (rows_of g) gy acc in
+        // The group's own box is placed before its rows, so it is spliced in rather than appended: its
+        // height is not known until the rows are laid out, and document order does not wait for that.
+        let gbox = box { tag = to_lower gt, x = sp, y = gy, w = sum_cols, h = gy2 - sp - gy } in
+        lay more (gy2 - sp)
+            (list_append acc (Cons (gbox, _drop acc a2))) in
+    let (bs, endy) = lay groups 0 Nil in
+    // The last row already left a spacing behind it, so one more closes the table and two would count
+    // the gap after the final row twice.
+    (bs, table_w, endy + sp)
+
   // One block box and everything under it, at coordinates relative to its own border box.
   and _block = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
                fn (ancestors: elem list) -> fn (tag: str) -> fn (attrs: attr list) ->
@@ -307,9 +466,15 @@ module Layout {
       if pct >= 0 then pct
       else if st.w >= 0 then st.w
       else cbw - st.ml - st.mr - st.bl - st.br - st.pl - st.pr in
-    let cw = if content_w < 0 then 0 else content_w in
+    let cw0 = if content_w < 0 then 0 else content_w in
     let e = _elem_of tag attrs in
     let inner_ancestors = Cons (e, ancestors) in
+    // A table's width is decided by its own contents rather than handed down from the containing block,
+    // so the table is laid out before the box is sized and not after.
+    let is_table = st.display == "table" in
+    let (tbs, tw, th) = if is_table then _table f ua author inner_ancestors kids st cw0
+                        else (Nil, 0, 0) in
+    let cw = if is_table then tw else cw0 in
     // A parent's margin collapses with its first or last child's when nothing separates them —
     // no border and no padding on that side, and for the bottom, no stated height either. When
     // something does separate them the child's margin stays inside.
@@ -342,10 +507,12 @@ module Layout {
         | Doctype (_x, _y, _z) -> has_block more in
     // A block-level child means the white space around it is discarded, which is what the standard's
     // anonymous block boxes come to for whitespace-only inline content.
-    let inline_only = not (has_block kids) && _collapse_ws (_inline_text kids "") != "" in
+    let inline_only = not is_table && not (has_block kids)
+                      && _collapse_ws (_inline_text kids "") != "" in
     let (ibs, ilines) = if inline_only then _inline f kids cw font_size else (Nil, 0) in
     let (bs, used, open_mb, first_mt, bottom) =
-      if inline_only then
+      if is_table then (tbs, th, 0, 0, th)
+      else if inline_only then
         let h = ilines * Font.line_height f font_size in (ibs, h, 0, 0, h)
       else _stack f ua author inner_ancestors kids cw 0 0 (not sep_top) 0 false 0 Nil in
     // The fragment's origin is (the containing block's content left, this border box's top): x is

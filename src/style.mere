@@ -17,7 +17,7 @@ import "css_rules.mere";
 // where a length cannot be resolved without knowing the containing block, which is what `-1`
 // means for width and height: auto.
 type sty = {
-  display: str, position: str, float_: str,
+  display: str, position: str, float_: str, spacing: int,
   w: int, h: int,                      // -1 for auto
   w_pct: int, h_pct: int,              // -1 when not a percentage
   mt: int, mr: int, mb: int, ml: int,
@@ -58,10 +58,9 @@ module Style {
   let ua_sheet =
     "html, body, div, p, blockquote, figure, figcaption, ol, ul, li, dl, dd, dt,"
     ++ " h1, h2, h3, h4, h5, h6, pre, address, article, aside, footer, header,"
-    ++ " hgroup, main, nav, section, table, form, fieldset, legend, hr, center,"
+    ++ " hgroup, main, nav, section, form, fieldset, legend, hr, center,"
     ++ " dir, menu, details, summary, listing, plaintext, xmp, marquee, optgroup,"
-    ++ " option, frameset, frame, noframes, tbody, thead, tfoot, tr, td, th, caption,"
-    ++ " colgroup, col \{ display: block }\n"
+    ++ " option, frameset, frame, noframes \{ display: block }\n"
     ++ "head, style, script, meta, link, title, base \{ display: none }\n"
     ++ "body \{ margin: 8px }\n"
     ++ "p, blockquote, figure, dl, dd, ol, ul, dir, menu \{ margin-top: 1em; margin-bottom: 1em }\n"
@@ -74,7 +73,16 @@ module Style {
     ++ "h6 \{ margin-top: 2.33em; margin-bottom: 2.33em }\n"
     ++ "ol, ul, dir, menu \{ padding-left: 40px }\n"
     ++ "blockquote, figure \{ margin-left: 40px; margin-right: 40px }\n"
-    ++ "table \{ border-spacing: 2px }\n";
+    // The table families. `display` is what tells layout to run a different algorithm, and the two
+    // lengths here are in every table in the corpus: the browser insets each cell by the spacing and
+    // gives it a pixel of padding, which is why a cell is two pixels wider and two taller than its text.
+    ++ "table \{ display: table; border-spacing: 2px }\n"
+    ++ "tbody, thead, tfoot \{ display: table-row-group }\n"
+    ++ "tr \{ display: table-row }\n"
+    ++ "td, th \{ display: table-cell; padding: 1px }\n"
+    ++ "caption \{ display: table-caption }\n"
+    ++ "colgroup \{ display: table-column-group }\n"
+    ++ "col \{ display: table-column }\n";
 
   // The font size everything `em` is relative to. One number, because `font-size` is not
   // resolved yet: an em here is always the initial size. When font-size lands this becomes the
@@ -435,6 +443,7 @@ module Style {
       // its parent's cursor and does not add to its height, whatever its own numbers say.
       position = let v = to_lower (get "position") in if v == "" then "static" else v,
       float_ = let v = to_lower (get "float") in if v == "" then "none" else v,
+      spacing = let v = get "border-spacing" in if v == "" then 0 else px_of v,
       w = if wv == "" || to_lower wv == "auto" then 0 - 1
           else let q = px_of wv in if q == 0 - 2 then 0 - 1 else q,
       h = if hv == "" || to_lower hv == "auto" then 0 - 1
