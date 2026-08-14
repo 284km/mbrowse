@@ -244,6 +244,26 @@ module Tree {
     | Nil -> false
     | Cons (x, _rest) -> _name_of arena x == name;
 
+  // The standard's "clear the stack back to a table context", in the three flavours it
+  // has. This is what makes a second `<tr>` a sibling of the first rather than a child:
+  // nothing about a `<tr>` start tag says "close the open row" — the context does, and a
+  // builder without contexts nests every row inside the last one.
+  let rec _clear_to = fn (arena: anode list) -> fn (open_ids: int list) ->
+                      fn (stop: str -> bool) ->
+    match open_ids with
+    | Nil -> Nil
+    | Cons (x, rest) ->
+      if stop (_name_of arena x) then open_ids
+      else _clear_to arena rest stop;
+
+  // `table` and `html` are in all three, as the floor. The standard stops a body context at
+  // a section and a row context at a row; stopping at the table as well means a malformed
+  // document pops to the table instead of past it and out of the document.
+  let _tbl_stop = fn (n: str) -> n == "table" || n == "html";
+  let _sec_stop = fn (n: str) ->
+    n == "tbody" || n == "thead" || n == "tfoot" || _tbl_stop n;
+  let _row_stop = fn (n: str) -> n == "tr" || _sec_stop n;
+
   // The id of the nearest open element with this name. `_open_has` answers whether, and
   // three places also need which.
   let rec _open_id_of = fn (arena: anode list) -> fn (open_ids: int list) ->
@@ -290,6 +310,21 @@ module Tree {
         if n == "table" then true
         else if n == "td" || n == "th" || n == "caption" then false
         else go rest in
+    go open_ids;
+
+  // Whether a table is open at all — which is NOT the question `_table_open` answers.
+  // That one stops at a cell, because a cell is a scope boundary for CONTENT: text and
+  // elements inside a cell are ordinary and need no fostering. This one does not stop at a
+  // cell, because a cell is exactly what a `<td>` or `<tr>` start tag has to close. One
+  // function answering both questions is why every cell ended up inside the last one, and
+  // it is the second time in this file that two questions wore one name.
+  let _in_table = fn (arena: anode list) -> fn (open_ids: int list) ->
+    let rec go = fn (xs: int list) ->
+      match xs with
+      | Nil -> false
+      | Cons (x, rest) ->
+        let n = _name_of arena x in
+        if n == "table" then true else if n == "html" then false else go rest in
     go open_ids;
 
   let _section_open = fn (arena: anode list) -> fn (open_ids: int list) ->
@@ -496,12 +531,21 @@ module Tree {
             // out loud rather than left as a silence, because implementing the corpus's
             // older behaviour on purpose and not knowing it is older are different states.
             //
-            // A `<frame>` outside a frameset is dropped, not inserted: `<frame>test` is a
-            // body with the text in it and no frame at all. The standard has a list of tags
-            // ignored in the body — caption, col, colgroup, frame, head and the table
-            // sections — and only `frame` is safe to add here, because this builder decides
-            // the table tags by whether a table is open rather than by an insertion mode.
-            else if name == "frame" then go rest mode arena open_ids afe
+            // The standard's list of start tags ignored in the body: a `<td>` or a `<col>`
+            // with no table around it is dropped, not inserted, and so is a `<frame>` with
+            // no frameset. `<table><col></table><col>` keeps the first and drops the second,
+            // which is the case that asked for this.
+            //
+            // This needs `_in_table` rather than an insertion mode, and could not be written
+            // until the two table questions were separated: with `_table_open`, a `<td>`
+            // inside a cell reads as "no table open" and would be dropped instead of
+            // closing the cell.
+            else if name == "frame"
+                    || ((name == "caption" || name == "col" || name == "colgroup"
+                         || name == "tbody" || name == "td" || name == "tfoot"
+                         || name == "th" || name == "thead" || name == "tr")
+                        && not (_in_table arena open_ids)) then
+              go rest mode arena open_ids afe
             // A second `<select>` closes the first rather than nesting inside it, and the
             // token is consumed doing it — the standard says to treat it as `</select>`.
             // What comes after lands wherever the outer select was.
@@ -531,9 +575,12 @@ module Tree {
             else if name == "svg" || name == "math" then
               let (a2, id) = Nodes.element_ns arena (_parent open_ids) name name attrs in
               go rest mode a2 (if selfc then open_ids else Cons (id, open_ids)) afe
-            else if _is_void name || selfc then
-              let (a, o) = push_el arena open_ids name attrs in
-              go rest mode a (drop1 o) afe
+            // There is no fast path for void elements, and there was one. A void element
+            // still has to be PLACED: `<hr>` closes an open `<p>`, `<col>` needs the column
+            // group nobody wrote, and both are decided below. Pushing them straight away
+            // skipped all of it, which is how `<p><hr></p>` came out as one paragraph
+            // instead of a paragraph, a rule and another paragraph. Being childless says
+            // nothing about where the element goes; it is only popped at the end.
             else if _open_same_kind arena open_ids name != "" then
               go ts mode arena
                 (_pop_through arena open_ids (_open_same_kind arena open_ids name)) afe
@@ -548,19 +595,34 @@ module Tree {
                 let (a0, o0, l0, _p0) =
                   Reconstruct.run arena open_ids afe (_parent open_ids) in
                 (a0, o0, l0) in
-              // The elements a table needs and the document did not write. Asked
-              // before the push so that the cell lands under a row that exists.
+              // Where a table tag belongs: first pop back to the context it lives in, then
+              // create the parts the document did not write. Both, in that order — popping
+              // alone loses the implied `<tbody>`, and creating alone nests every row in
+              // the last one.
               let (ai, oi) =
-                if not (_table_open arena open_ids) then (arena, open_ids)
-                else if name == "tr" then
-                  if _section_open arena open_ids then (arena, open_ids)
-                  else push_el arena open_ids "tbody" Nil
+                if not (_in_table arena open_ids) then (arena, open_ids)
                 else if name == "td" || name == "th" then
-                  if _row_open arena open_ids then (arena, open_ids)
+                  let o1 = _clear_to arena open_ids _row_stop in
+                  if _cur_is arena o1 "tr" then (arena, o1)
                   else
-                    let (a1, o1) = if _section_open arena open_ids then (arena, open_ids)
-                                   else push_el arena open_ids "tbody" Nil in
-                    push_el a1 o1 "tr" Nil
+                    let (a1, o2) =
+                      if _cur_is arena o1 "tbody" || _cur_is arena o1 "thead"
+                         || _cur_is arena o1 "tfoot" then (arena, o1)
+                      else push_el arena o1 "tbody" Nil in
+                    push_el a1 o2 "tr" Nil
+                else if name == "tr" then
+                  let o1 = _clear_to arena open_ids _sec_stop in
+                  if _cur_is arena o1 "table" || _cur_is arena o1 "html"
+                  then push_el arena o1 "tbody" Nil else (arena, o1)
+                // A `<col>` stays in the column group it is already in; anywhere else it
+                // gets one of its own, which is why `<table><col>` has a colgroup nobody
+                // wrote.
+                else if name == "col" then
+                  if _cur_is arena open_ids "colgroup" then (arena, open_ids)
+                  else push_el arena (_clear_to arena open_ids _tbl_stop) "colgroup" Nil
+                else if name == "tbody" || name == "thead" || name == "tfoot"
+                        || name == "caption" || name == "colgroup" then
+                  (arena, _clear_to arena open_ids _tbl_stop)
                 else (arena, open_ids) in
               let fb = _foster_target ai oi in
               let (a, o) =
@@ -574,7 +636,8 @@ module Tree {
               let l = if _is_formatting name then Formatting.push afe id name attrs
                       else if _is_marker_scope name then Formatting.push_marker afe
                       else afe in
-              go (if _eats_newline name then _drop_lf rest else rest) mode a o l
+              go (if _eats_newline name then _drop_lf rest else rest) mode a
+                 (if _is_void name || selfc then drop1 o else o) l
         | TEnd name ->
           if _cur_ns arena open_ids != "" then
             // Match on the local name: the element is called "svg path" and the tag
@@ -604,6 +667,16 @@ module Tree {
           else if mode == "in frameset" || mode == "after frameset" then
             if name == "noframes" then go rest mode arena (drop1 open_ids) afe
             else go rest mode arena open_ids afe
+          // `</br>` is a `<br>`. The standard says to drop the attributes and act as the
+          // start tag, so a stray closing break makes a break rather than nothing.
+          else if name == "br" then
+            go (Cons (TStart ("br", Nil, false), rest)) mode arena open_ids afe
+          // `</p>` with no p open makes an empty one. This looks like a mistake and is the
+          // rule: the standard inserts a `<p>` start tag and then closes it, so
+          // `<p><hr></p>` ends with two paragraphs — the hr closed the first, and the stray
+          // end tag is what the second is made of.
+          else if name == "p" && not (_open_has arena open_ids "p") then
+            go (Cons (TStart ("p", Nil, false), rest)) mode arena open_ids afe
           else if name == "html" || name == "body" then
             if mode == "in body" then go rest "after body" arena open_ids afe
             else go rest mode arena open_ids afe

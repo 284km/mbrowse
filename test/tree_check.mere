@@ -85,6 +85,20 @@ let _ = check "li closes li" "<li>a<li>b"
 // check agreeing with the code was worth nothing: they were wrong together.
 let _ = check "li closes li across a div" "<li><div><li>"
   "<html>\n  <head>\n  <body>\n    <li>\n      <div>\n    <li>";
+// A void element still has to be placed: an <hr> closes an open <p>.
+let _ = check "hr closes p and a stray end tag makes another" "<p><hr></p>"
+  "<html>\n  <head>\n  <body>\n    <p>\n    <hr>\n    <p>";
+// A row and a cell close the open one rather than nesting inside it.
+let _ = check "a row closes a row" "<table><tr><tr>"
+  "<html>\n  <head>\n  <body>\n    <table>\n      <tbody>\n        <tr>\n        <tr>";
+let _ = check "a cell closes a cell through its content" "<table><tr><td><span><td>"
+  "<html>\n  <head>\n  <body>\n    <table>\n      <tbody>\n        <tr>\n          <td>\n            <span>\n          <td>";
+// A col gets the column group nobody wrote, and keeps the one it is in.
+let _ = check "col gets a colgroup" "<table><col><col>"
+  "<html>\n  <head>\n  <body>\n    <table>\n      <colgroup>\n        <col>\n        <col>";
+// And a table tag with no table around it is dropped.
+let _ = check "a cell with no table is dropped" "<td>x"
+  "<html>\n  <head>\n  <body>\n    \"x\"";
 // A frameset replaces the body rather than living in it, and a frameset document never
 // gets a body at all.
 let _ = check "a frameset takes the body's place" "<frameset><frame>"
