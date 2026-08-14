@@ -1,0 +1,135 @@
+// CSS component values: the level css-parsing-tests calls a component value list.
+//
+// Comments are removed before anything else, which is why `red/* CDC */-->` has a CDC
+// in it and `red-->` does not: in the second the dashes are still part of the
+// identifier when the tokenizer reaches them, and what is left over is a lone `>`.
+//
+// What is here: whitespace, identifiers, functions, at-keywords, hashes, strings,
+// numbers with their dimensions and percentages, the CDO and CDC, and everything else
+// as a delimiter. What is not: `url()`, escapes, and the nested block structures
+// (`{}`, `[]`, `()`), which the higher levels of the suite need and this level mostly
+// does not.
+
+type cval =
+  | Bare of str            // a token that is only itself: a delim, whitespace, a CDC
+  | Named of (str * str);  // a kind and its value: ident, number, string, ...
+
+module Css {
+  let _is_ws = fn (c: str) ->
+    c == " " || c == "\t" || c == "\n" || c == "\r" || c == chr 12;
+
+  let _is_digit = fn (c: str) -> c >= "0" && c <= "9";
+
+  // Identifiers may start with a letter, an underscore, a dash, or anything non-ASCII —
+  // the last because CSS decided that a name is what is not punctuation.
+  let _is_name_start = fn (c: str) ->
+    (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_" || ord c > 127;
+
+  let _is_name = fn (c: str) -> _is_name_start c || _is_digit c || c == "-";
+
+  // Kept because the higher levels of the suite have a case for it, but NOT used by
+  // the tokenizer: see the note in `go`.
+  let strip_comments = fn (s: str) ->
+    let n = str_len s in
+    let at = fn (i: int) -> if i >= n then "" else char_at s i in
+    let rec go = fn (i: int) -> fn (out: str) ->
+      if i >= n then out
+      else if at i == "/" && at (i + 1) == "*" then
+        let rec skip = fn (k: int) ->
+          if k + 1 >= n then n
+          else if at k == "*" && at (k + 1) == "/" then k + 2
+          else skip (k + 1) in
+        go (skip (i + 2)) out
+      else go (i + 1) (out ++ at i) in
+    go 0 "";
+
+  let tokenize = fn (src: str) ->
+    let n = str_len src in
+    let at = fn (i: int) -> if i >= n then "" else char_at src i in
+
+    let rec name_end = fn (i: int) -> if i < n && _is_name (at i) then name_end (i + 1) else i in
+
+    let rec go = fn (i: int) -> fn (out: cval list) ->
+      if i >= n then list_rev out
+      else
+        let c = at i in
+        // A comment is skipped between tokens, not deleted from the text. Those are
+        // different: `red/* */-->` is an ident and a CDC, because the comment ends the
+        // identifier, while deleting it first gives `red-->` — an ident `red--` and a
+        // lone `>`. The suite has both spellings next to each other, which is how this
+        // was caught, and it was the wrong way round in this file's own notes first.
+        if c == "/" && at (i + 1) == "*" then
+          let rec skip = fn (k: int) ->
+            if k + 1 >= n then n
+            else if at k == "*" && at (k + 1) == "/" then k + 2
+            else skip (k + 1) in
+          go (skip (i + 2)) out
+        else if _is_ws c then
+          // Any run of whitespace is one token, and the suite writes it as a space.
+          let rec ws = fn (k: int) -> if k < n && _is_ws (at k) then ws (k + 1) else k in
+          go (ws i) (Cons (Bare " ", out))
+        else if c == "\"" || c == "'" then
+          let rec str_end = fn (k: int) -> fn (acc: str) ->
+            if k >= n then (k, acc)
+            else if at k == c then (k + 1, acc)
+            else str_end (k + 1) (acc ++ at k) in
+          let (e, v) = str_end (i + 1) "" in
+          go e (Cons (Named ("string", v), out))
+        else if c == "@" && _is_name_start (at (i + 1)) then
+          let e = name_end (i + 1) in
+          go e (Cons (Named ("at-keyword", substring src (i + 1) e), out))
+        else if c == "#" && _is_name (at (i + 1)) then
+          let e = name_end (i + 1) in
+          go e (Cons (Named ("hash", substring src (i + 1) e), out))
+        else if _is_digit c
+                || ((c == "+" || c == "-") && _is_digit (at (i + 1)))
+                || (c == "." && _is_digit (at (i + 1)))
+                || ((c == "+" || c == "-") && at (i + 1) == "." && _is_digit (at (i + 2))) then
+          let rec digits = fn (k: int) -> if _is_digit (at k) then digits (k + 1) else k in
+          let k1 = if c == "+" || c == "-" then digits (i + 1) else digits i in
+          let k2 = if at k1 == "." && _is_digit (at (k1 + 1)) then digits (k1 + 1) else k1 in
+          let k3 =
+            if (at k2 == "e" || at k2 == "E")
+               && (_is_digit (at (k2 + 1))
+                   || ((at (k2 + 1) == "+" || at (k2 + 1) == "-") && _is_digit (at (k2 + 2))))
+            then digits (if _is_digit (at (k2 + 1)) then k2 + 1 else k2 + 2)
+            else k2 in
+          let num = substring src i k3 in
+          if at k3 == "%" then go (k3 + 1) (Cons (Named ("percentage", num), out))
+          else if _is_name_start (at k3) then
+            let e = name_end k3 in
+            go e (Cons (Named ("dimension", num), out))
+          else go k3 (Cons (Named ("number", num), out))
+        // Before the identifier rules, not after: `-->` has to win over the `-` that
+        // starts a name, or `--` is taken as an identifier and the CDC never happens.
+        // The standard checks it first for exactly that reason.
+        else if c == "<" && at (i + 1) == "!" && at (i + 2) == "-" && at (i + 3) == "-" then
+          go (i + 4) (Cons (Bare "<!--", out))
+        else if c == "-" && at (i + 1) == "-" && at (i + 2) == ">" then
+          go (i + 3) (Cons (Bare "-->", out))
+        else if _is_name_start c || (c == "-" && (_is_name_start (at (i + 1)) || at (i + 1) == "-")) then
+          let e = name_end i in
+          // A name followed by `(` is a function, and the parenthesis belongs to it.
+          if at e == "(" then go (e + 1) (Cons (Named ("function", substring src i e), out))
+          else go e (Cons (Named ("ident", substring src i e), out))
+        else go (i + 1) (Cons (Bare c, out)) in
+    go 0 Nil;
+
+  // One line per component value, in the shape the harness compares — the two shapes
+  // the suite uses, kept apart.
+  let render = fn (vs: cval list) ->
+    let esc = fn (s: str) ->
+      let rec e = fn (i: int) -> fn (o: str) ->
+        if i >= str_len s then o
+        else
+          let c = char_at s i in
+          e (i + 1) (o ++ (if c == "\\" then "\\\\" else if c == "\t" then "\\t"
+                           else if c == "\n" then "\\n" else if c == "\r" then "\\r"
+                           else c)) in
+      e 0 "" in
+    let one = fn (v: cval) ->
+      match v with
+      | Bare s -> "B\t" ++ esc s
+      | Named (k, s) -> "N\t" ++ k ++ "\t" ++ esc s in
+    str_join "\n" (list_map vs one);
+}

@@ -38,7 +38,11 @@ renderer that emits only one shape cannot match:
 'red-->/* Not CDC */'  => [["ident", "red--"], ">"]
 ```
 
-The second is not a CDC. `-->` only ends a comment-like construct at the start of a
-component value; inside an identifier the dashes belong to the name, and what is left
-is a lone `>` delim. Comments are removed before any of this, which is why the first
-case has a CDC at all and why `/*/*///** /* **/*//* ` is `["/", "*", "/"]`.
+The second is not a CDC: inside an identifier the dashes belong to the name, and what
+is left is a lone `>` delim.
+
+The first one is, and the reason is the thing to get right: **a comment is skipped
+between tokens, not deleted from the text.** The comment ends the identifier, so what
+follows it starts a new component value and `-->` is a CDC. Deleting comments first
+turns the first case into the second — which is what this file said to do when it was
+written, and what the corpus corrected on the first run.
