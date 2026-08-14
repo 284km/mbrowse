@@ -110,7 +110,12 @@ module Tree {
     let rec go = fn (ts: token list) -> fn (mode: str) ->
                  fn (stack: frame list) -> fn (roots: node list) ->
       match ts with
-      | Nil -> _pop_all stack roots
+      // Even a document that opened nothing has an html, a head and a body.
+      | Nil ->
+        let (s, r) = if _open_has stack "body" then (stack, roots)
+                     else _open_body (mode == "after head" || mode == "in body"
+                                      || mode == "after body") stack roots in
+        _pop_all s r
       | Cons (t, rest) ->
         (match t with
         | TDoctype (name, pub, has_pub, sys, has_sys, ok) ->
@@ -129,7 +134,9 @@ module Tree {
           else if mode == "in body" then
             let (s, r) = _add stack roots (Text data) in go rest mode s r
           else
-            go ts "in body" (_open_body stack) roots
+            let (s, r) = _open_body (mode == "after head" || mode == "in body"
+                                     || mode == "after body") stack roots in
+            go ts "in body" s r
         | TStart (name, attrs, selfc) ->
           if mode == "initial" || mode == "before html" then
             if name == "html" then go rest "before head" (_push stack "html" attrs) roots
@@ -148,7 +155,7 @@ module Tree {
               go ts "after head" s r
           else if mode == "after head" then
             if name == "body" then go rest "in body" (_push stack "body" attrs) roots
-            else go ts "in body" (_push stack "body" Nil) roots
+            else let (s, r) = _open_body true stack roots in go ts "in body" s r
           else
             // in body
             if _is_void name || selfc then
@@ -173,12 +180,23 @@ module Tree {
           else go rest mode stack roots)
     // Everything before the body is optional in the source and required in the
     // tree; this is the one place that fills all of it in at once.
-    and _open_body = fn (stack: frame list) ->
-      if _open_has stack "body" then stack
-      else if _open_has stack "html" then
-        if _open_has stack "head" then _push stack "body" Nil
-        else _push (_push stack "head" Nil) "body" Nil
-      else _push (_push (_push stack "html" Nil) "head" Nil) "body" Nil
+    // `head_done` because a closed head is not on the stack: asking the stack
+    // whether one exists cannot tell "never created" from "created and finished",
+    // and guessing gave documents two of them. The mode knows.
+    and _open_body = fn (head_done: bool) -> fn (stack: frame list) -> fn (roots: node list) ->
+      if _open_has stack "body" then (stack, roots)
+      else
+        // The head has to be *closed*, not merely present: it was being left open,
+        // so the body became its child instead of its sibling and every document in
+        // the suite came out one level too deep.
+        let (s1, r1) =
+          if _open_has stack "html" then (stack, roots)
+          else (_push stack "html" Nil, roots) in
+        let (s2, r2) =
+          if _open_has s1 "head" then _pop_through s1 r1 "head"
+          else if head_done then (s1, r1)
+          else _pop (_push s1 "head" Nil) r1 in
+        (_push s2 "body" Nil, r2)
     in
     go tokens "initial" Nil Nil;
 }

@@ -67,9 +67,13 @@ web-platform-tests on 2026-06-26, which is why looking for it at its old path re
 a 404 that reads like a wrong path. `scripts/vendor_tests.sh` takes it from the last
 commit before that move, **by SHA** — 199 cases in `test/data/tree_tests*.dat`. An
 oracle is a versioned dependency; pinning is the correct form rather than a
-workaround. Wiring it to a harness is the next step, and it needs the
-tokenizer/tree-builder loop first, because many of its cases start in a non-Data
-state. What is there is
+workaround. `scripts/tree_check.sh` runs it: **83 of 189**, pinned exactly.
+
+Most of what fails needs things that are not here yet — a tokenizer state chosen by
+the builder (many cases start in one), the table insertion modes, foreign content,
+the adoption agency algorithm. None of it is excused: every case is a pass or a
+failure, because an exemption bucket hides real failures the moment the feature it
+excuses arrives. What is there is
 an `encoding` suite, which is the gate for the character-encoding sniffing that reads
 `<meta charset>`, and that is the next thing to need one.
 
