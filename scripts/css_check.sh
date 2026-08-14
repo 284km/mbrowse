@@ -16,7 +16,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "css_check: no mere — set MERE=..." >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "css_check: python3 needed to read the JSON" >&2; exit 0; }
-EXPECT_PASS=${EXPECT_PASS:-12}
+EXPECT_PASS=${EXPECT_PASS:-13}
 T="${TMPDIR:-/tmp}/mbrowse_css.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 python3 "$ROOT/scripts/css_cases.py" "$ROOT/test/data/css_component_value_list.json" \
   "$T/cases.txt" "$T/meta.txt"

@@ -76,7 +76,13 @@ module Css {
           if cnt >= 6 || not (_is_hex (at k)) then (k, v)
           else hx (k + 1) (v * 16 + _hexval (at k)) (cnt + 1) in
         let (k, v) = hx (i + 1) 0 0 in
-        let k2 = if _is_ws (at k) then k + 1 else k in
+        // One whitespace is consumed after an escape, and CRLF is one whitespace — not
+        // two. Consuming only the CR left the LF behind as its own token, which split
+        // `\30<CRLF>red` into an identifier, a space and another identifier instead of
+        // the one identifier `0red`.
+        let k2 =
+          if at k == "\r" && at (k + 1) == "\n" then k + 2
+          else if _is_ws (at k) then k + 1 else k in
         (str_of_codepoint (if v == 0 || v > 1114111 then 65533 else v), k2) in
 
     // A name, built as it is scanned because an escape inside it stands for something
