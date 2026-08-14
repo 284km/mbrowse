@@ -77,6 +77,20 @@ excuses arrives. What is there is
 an `encoding` suite, which is the gate for the character-encoding sniffing that reads
 `<meta charset>`, and that is the next thing to need one.
 
+## The CSS gate, before the CSS
+
+`test/data/css_*.json` is [css-parsing-tests](https://github.com/CourtBouillon/css-parsing-tests),
+126 cases across every level from component values to a whole stylesheet — what
+css-parsing-tests is to CSS is what html5lib-tests is to HTML. It is vendored, pinned by
+SHA, and **here before any parser is**.
+
+That order is deliberate. Encoding sniffing in this repository went from 43 of 81 to all
+81 against a normative corpus, and along the way it was wrong in both directions
+alternately — too willing to read a declaration, then too blind to find one, then too
+willing again. Without the corpus there was no way to know which side it was out on, only
+that it was out. A CSS parser fails the same way, and the guessing is more expensive there
+because the output is not a number but a page that looks nearly right.
+
 ## Building
 
 Needs a built `mere`. See that repository for how; then:
