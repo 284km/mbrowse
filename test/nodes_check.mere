@@ -91,4 +91,15 @@ let _ = check "and again, between the two" (Nodes.serialize e5)
   (Dom.serialize (Cons (Element ("div", Nil,
      Cons (Text "before", Cons (Text "mid",
        Cons (Element ("table", Nil, Nil), Cons (Text "after", Nil))))), Nil)));
+// --- namespaces, which the suite writes into the name -----------------------
+let (g1, sv) = Nodes.element_ns Nodes.empty 0 "svg" "svg" Nil;
+let (g2, pa) = Nodes.element_ns g1 sv "svg" "path" Nil;
+let (g3, hp) = Nodes.element g2 sv "p" Nil;
+let _ = check "a namespaced element serializes with its prefix" (Nodes.serialize g3)
+  (Dom.serialize (Cons (Element ("svg svg", Nil,
+     Cons (Element ("svg path", Nil, Nil), Cons (Element ("p", Nil, Nil), Nil))), Nil)));
+let _ = check "the namespace reads back" (Nodes.ns_of g3 pa) "svg";
+let _ = check "and so does the local name" (Nodes.local_of g3 pa) "path";
+let _ = check "an HTML element has no namespace" (Nodes.ns_of g3 hp) "";
+let _ = check "whose local name is itself" (Nodes.local_of g3 hp) "p";
 0

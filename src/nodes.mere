@@ -57,6 +57,29 @@ module Nodes {
   let doctype = fn (a: anode list) -> fn (parent: int) -> fn (s: str) ->
     add a (_mk 3 s Nil "" parent (float_of_int (len a)));
 
+  // An element in a namespace. The suite's tree format writes one as `<svg path>` and
+  // `<math mi>`, so the namespace lives in the name: nothing else has to know about it
+  // — not the node type, not the serializer, not the comparison.
+  //
+  // The consequence, and it is the reason this is a separate function rather than a
+  // parameter on `element`: code that asks an element its name gets `svg path` back.
+  // Anything matching on tag names has to say which namespace it means, which is what
+  // the standard requires anyway — `<title>` inside SVG is not the HTML `<title>`.
+  let element_ns = fn (a: anode list) -> fn (parent: int) -> fn (ns: str) ->
+                   fn (name: str) -> fn (attrs: attr list) ->
+    element a parent (if ns == "" then name else ns ++ " " ++ name) attrs;
+
+  // The namespace an element is in, or "" for HTML — the name read back.
+  let ns_of = fn (a: anode list) -> fn (id: int) ->
+    let n = (_nth a id).name in
+    let i = str_index_of n " " in
+    if i < 0 then "" else substring n 0 i;
+
+  let local_of = fn (a: anode list) -> fn (id: int) ->
+    let n = (_nth a id).name in
+    let i = str_index_of n " " in
+    if i < 0 then n else substring n (i + 1) (str_len n);
+
   // The one operation the nested representation cannot do.
   let reparent = fn (a: anode list) -> fn (id: int) -> fn (new_parent: int) ->
     let rec go = fn (xs: anode list) -> fn (i: int) -> fn (out: anode list) ->
