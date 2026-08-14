@@ -29,10 +29,17 @@ for f in decode.mere labels.mere jis.mere jis_index.mere; do
   echo "vendored mere-encoding/$f"
 done
 
-# Imports inside a vendored module name the package, not a sibling file.
-for f in "$ROOT"/.mere_modules/mere-html/*.mere; do
-  sed -i.bak -E 's|import "(entities|tokenizer)\.mere"|import "mere-html/.mere"|' "$f" && rm -f "$f.bak"
-done
-for f in "$ROOT"/.mere_modules/mere-encoding/*.mere; do
-  sed -i.bak -E 's|import "(decode|labels|jis|jis_index)\.mere"|import "mere-encoding/.mere"|' "$f" && rm -f "$f.bak"
-done
+# Imports inside a vendored module name the package, not a sibling file. Done in
+# python because the obvious `sed -E` for it is one of the places BSD and GNU differ.
+python3 - "$ROOT" <<'REWIRE'
+import os, re, sys
+root = sys.argv[1]
+for pkg in ("mere-html", "mere-encoding"):
+    d = os.path.join(root, ".mere_modules", pkg)
+    for f in os.listdir(d):
+        p = os.path.join(d, f); s = open(p).read()
+        s2 = re.sub(r'import "(?!mere-)([a-z_]+\.mere)"', r'import "%s/\1"' % pkg, s)
+        if s2 != s:
+            open(p, "w").write(s2)
+            print("rewired " + pkg + "/" + f)
+REWIRE
