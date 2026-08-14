@@ -48,6 +48,37 @@ module Nodes {
   let doctype = fn (a: anode list) -> fn (parent: int) -> fn (s: str) ->
     add a (anode { kind = 3, name = s, attrs = Nil, text = "", parent = parent });
 
+  // The last child of a parent, or -1. Insertion order is id order, so this is the
+  // highest id with that parent — no sibling links needed, which is the same reason
+  // _kids_of works by scanning.
+  let last_child = fn (a: anode list) -> fn (parent: int) ->
+    let n = len a in
+    let rec go = fn (i: int) -> fn (best: int) ->
+      if i >= n then best
+      else go (i + 1) (if (_nth a i).parent == parent then i else best) in
+    go 0 (0 - 1);
+
+  let is_text = fn (a: anode list) -> fn (id: int) ->
+    if id < 0 then false else (_nth a id).kind == 1;
+
+  // Adjacent text is one node, so inserting text next to text extends it instead of
+  // adding a second. In the nested representation this was a merge on the way in;
+  // here it is an edit in place, which is what the arena is for.
+  let append_text = fn (a: anode list) -> fn (id: int) -> fn (s: str) ->
+    let rec go = fn (xs: anode list) -> fn (i: int) -> fn (out: anode list) ->
+      match xs with
+      | Nil -> list_rev out
+      | Cons (x, rest) ->
+        let y = if i == id then anode { kind = x.kind, name = x.name, attrs = x.attrs,
+                                        text = x.text ++ s, parent = x.parent } else x in
+        go rest (i + 1) (Cons (y, out)) in
+    go a 0 Nil;
+
+  // Text under `parent`, joined to whatever text is already last there.
+  let add_text = fn (a: anode list) -> fn (parent: int) -> fn (s: str) ->
+    let l = last_child a parent in
+    if is_text a l then (append_text a l s, l) else text a parent s;
+
   // The one operation the nested representation cannot do.
   let reparent = fn (a: anode list) -> fn (id: int) -> fn (new_parent: int) ->
     let rec go = fn (xs: anode list) -> fn (i: int) -> fn (out: anode list) ->

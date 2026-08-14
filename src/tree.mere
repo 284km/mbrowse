@@ -47,10 +47,27 @@
 // rewrite the tree, plus a furthest block *reported* rather than guessed at, so a
 // caller can tell "done" from "not attempted".
 //
-// What is left is the half that rewrites the tree — the bookmark and the cloned
-// element — and then this builder moves onto the arena. The four pieces under it are
-// each checked on their own, which is the point of having built them separately: when
-// the rewrite is wrong, what it is standing on will not be.
+// What is left is two things, in this order:
+//
+// 1. **This builder moves onto the arena.** A frame stack becomes an arena plus a
+//    stack of ids, and `_close` disappears — a node that is popped stays where it is
+//    instead of being folded into its parent. That is the whole change, and it is the
+//    one piece of work here whose success looks like *nothing happening*: 95 of 189
+//    before and 95 of 189 after, because it is a change of representation and not of
+//    behaviour. Doing it alone is what makes that evidence; doing it together with
+//    the rewrite would make both unfalsifiable at once.
+//
+//    The arena has what this needs for it: `Nodes.add_text` joins text to text and
+//    `Nodes.last_child` is how it knows, which was the one thing the nested form did
+//    on the way in and the arena has to do in place.
+//
+// 2. **The adoption agency's other half** — the bookmark and the cloned element —
+//    which can only be written on top of 1, because moving a node between parents is
+//    what it does and the nested form cannot.
+//
+// The four pieces under both are each checked on their own, which is the point of
+// having built them separately: when the rewrite is wrong, what it is standing on
+// will not be.
 
 import "mere-html/tokenizer.mere";
 import "dom.mere";

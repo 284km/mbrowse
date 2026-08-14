@@ -38,4 +38,22 @@ let _ = check "reparent moves a subtree" (Nodes.serialize moved)
      Cons (Element ("body", Nil,
        Cons (Element ("p", Cons (attr { name = "class", value = "x" }, Nil), Nil),
        Cons (Text "hi", Cons (Comment "c", Nil)))), Nil))), Nil))));
+// Adjacent text is one node — the rule the corpus taught, now an edit in place.
+let (b1, root) = Nodes.element Nodes.empty 0 "p" Nil;
+let (b2, t1) = Nodes.add_text b1 root "a";
+let (b3, t2) = Nodes.add_text b2 root "b";
+let _ = check "text next to text is the same node"
+  (if t1 == t2 then Nodes.serialize b3 else "different ids")
+  (Dom.serialize (Cons (Element ("p", Nil, Cons (Text "ab", Nil)), Nil)));
+
+// ...but not across an element between them.
+let (c1, _e) = Nodes.element b3 root "br" Nil;
+let (c2, t3) = Nodes.add_text c1 root "c";
+let _ = check "text after an element is a new node"
+  (if t3 != t2 then Nodes.serialize c2 else "merged across br")
+  (Dom.serialize (Cons (Element ("p", Nil,
+     Cons (Text "ab", Cons (Element ("br", Nil, Nil), Cons (Text "c", Nil)))), Nil)));
+
+let _ = check "last_child is the newest"
+  (show (Nodes.last_child c2 root)) (show t3);
 0
