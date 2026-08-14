@@ -1,0 +1,59 @@
+// Tree construction, on the behaviours that are the reason it has insertion modes
+// at all. Every case here is a document that leaves something out or gets
+// something wrong, because a document that does neither would be checking the
+// tokenizer.
+//
+// The real suite (html5lib-tests tree-construction) is not vendored yet: its files
+// are not where the tokenizer's are and the path has to be found first. These are
+// hand-written until then, and that is a weaker kind of evidence — they are the
+// cases we thought of.
+
+import "../src/tree.mere";
+
+let pass = fn (b: bool) -> if b then "ok" else "MISMATCH";
+
+let check = fn (label: str) -> fn (src: str) -> fn (want: str) ->
+  let got = Dom.serialize (Tree.build (Html.tokenize src)) in
+  print (label ++ ": " ++ pass (got == want)
+         ++ (if got == want then "" else "\n--- got ---\n" ++ got
+                                        ++ "\n--- want ---\n" ++ want));
+
+// Nobody wrote html, head or body. All three are in the tree.
+let _ = check "implied elements" "<p>hi"
+  "<html>\n  <head>\n  <body>\n    <p>\n      \"hi\"";
+
+// A paragraph is closed by the next one, so these are siblings and not nested.
+let _ = check "p closes p" "<p>a<p>b"
+  "<html>\n  <head>\n  <body>\n    <p>\n      \"a\"\n    <p>\n      \"b\"";
+
+// An end tag with nothing open to match is ignored rather than fatal.
+let _ = check "stray end tag" "<p>a</div>b"
+  "<html>\n  <head>\n  <body>\n    <p>\n      \"a\"\n      \"b\"";
+
+// A void element takes no children even when the source implies some.
+let _ = check "void element" "<p>a<br>b"
+  "<html>\n  <head>\n  <body>\n    <p>\n      \"a\"\n      <br>\n      \"b\"";
+
+// Attributes survive, and so does the doctype's name.
+let _ = check "doctype and attributes" "<!DOCTYPE html><div id=x>y</div>"
+  "<!DOCTYPE html>\n<html>\n  <head>\n  <body>\n    <div>\n      id=\"x\"\n      \"y\"";
+
+// Whitespace before the body is dropped; whitespace inside it is not.
+let _ = check "leading whitespace" "  <p>a b"
+  "<html>\n  <head>\n  <body>\n    <p>\n      \"a b\"";
+
+// head content goes in the head, and the first thing that cannot opens the body.
+let _ = check "head then body" "<head><meta charset=utf-8></head><p>x"
+  "<html>\n  <head>\n    <meta>\n      charset=\"utf-8\"\n  <body>\n    <p>\n      \"x\"";
+
+// NOT here, and it is the finding of this slice: `<title>t</title>`.
+//
+// A title's content is RCDATA, and **which state the tokenizer is in is decided by
+// the tree builder** — it is the element being opened that says so. So the two are
+// not two passes over the document: `Tree.build : token list -> node list` cannot
+// express it, because by the time it sees the tokens the choice has been made.
+//
+// The standard has them as one loop for exactly this reason. Changing the shape to
+// match is the next piece of work, and it is a change to the signature rather than
+// to any of the rules above.
+0

@@ -1,0 +1,169 @@
+// Tree construction: a stream of tokens becomes a document.
+//
+// This is the part that is a browser. The tokenizer is a state machine that can be
+// read top to bottom; this is not — it is a set of *insertion modes*, and the same
+// token means different things in each. `<p>` in "in body" opens a paragraph;
+// `<p>` in "before html" first creates the html and head and body elements nobody
+// wrote, and then opens a paragraph.
+//
+// That is not a quirk of the specification. It is the specification's answer to the
+// fact that real pages leave things out, and the modes are how "what was left out"
+// is expressed without a rule that says "look ahead and guess".
+//
+// What is here: the modes on the path every ordinary document takes — initial,
+// before html, before head, in head, after head, in body, after body — with the
+// implied start tags they insert and the end tags they ignore. What is not: the
+// table modes, foreign content, the adoption agency algorithm, and the fragment
+// case. Those are named at the bottom.
+
+import "mere-html/tokenizer.mere";
+import "dom.mere";
+
+// The tree is built by appending to the open elements, so it is easier to hold it
+// as a stack of (name, attrs, reversed children) and fold it up at the end than to
+// rebuild a persistent tree at every step.
+type frame = { fname: str, fattrs: attr list, fkids: node list };
+
+module Tree {
+  let _close = fn (f: frame) -> Element (f.fname, f.fattrs, list_rev f.fkids);
+
+  // Add a finished node to the innermost open element, or to the document when
+  // nothing is open.
+  let _add = fn (stack: frame list) -> fn (roots: node list) -> fn (n: node) ->
+    match stack with
+    | Nil -> (stack, Cons (n, roots))
+    | Cons (top, rest) ->
+      (Cons (frame { fname = top.fname, fattrs = top.fattrs,
+                     fkids = Cons (n, top.fkids) }, rest), roots);
+
+  let _push = fn (stack: frame list) -> fn (name: str) -> fn (attrs: attr list) ->
+    Cons (frame { fname = name, fattrs = attrs, fkids = Nil }, stack);
+
+  // Pop one element and give it to its parent.
+  let _pop = fn (stack: frame list) -> fn (roots: node list) ->
+    match stack with
+    | Nil -> (stack, roots)
+    | Cons (top, rest) -> _add rest roots (_close top);
+
+  let rec _pop_all = fn (stack: frame list) -> fn (roots: node list) ->
+    match stack with
+    | Nil -> list_rev roots
+    | _ -> let (s, r) = _pop stack roots in _pop_all s r;
+
+  let rec _open_has = fn (stack: frame list) -> fn (name: str) ->
+    match stack with
+    | Nil -> false
+    | Cons (f, rest) -> if f.fname == name then true else _open_has rest name;
+
+  // Pop until `name` has been popped. The standard's "generate implied end tags"
+  // and this are the same idea: an unclosed `<li>` is closed by whatever closes
+  // around it, not by an error.
+  let rec _pop_through = fn (stack: frame list) -> fn (roots: node list) ->
+                         fn (name: str) ->
+    match stack with
+    | Nil -> (stack, roots)
+    | Cons (top, _) ->
+      let (s, r) = _pop stack roots in
+      if top.fname == name then (s, r) else _pop_through s r name;
+
+  // Elements that never have children and are closed by their own start tag.
+  let _is_void = fn (n: str) ->
+    n == "area" || n == "base" || n == "br" || n == "col" || n == "embed"
+    || n == "hr" || n == "img" || n == "input" || n == "link" || n == "meta"
+    || n == "param" || n == "source" || n == "track" || n == "wbr";
+
+  // A paragraph is closed by anything that starts a new block.
+  let _closes_p = fn (n: str) ->
+    n == "address" || n == "article" || n == "aside" || n == "blockquote"
+    || n == "div" || n == "dl" || n == "fieldset" || n == "figure"
+    || n == "footer" || n == "form" || n == "h1" || n == "h2" || n == "h3"
+    || n == "h4" || n == "h5" || n == "h6" || n == "header" || n == "hr"
+    || n == "main" || n == "nav" || n == "ol" || n == "p" || n == "pre"
+    || n == "section" || n == "table" || n == "ul";
+
+  let _is_ws = fn (s: str) ->
+    let rec go = fn (i: int) ->
+      if i >= str_len s then true
+      else
+        let c = char_at s i in
+        if c == " " || c == "\t" || c == "\n" || c == "\r" || c == chr 12
+        then go (i + 1) else false in
+    go 0;
+
+  // `mode` is the insertion mode, by the standard's name.
+  let build = fn (tokens: token list) ->
+    let rec go = fn (ts: token list) -> fn (mode: str) ->
+                 fn (stack: frame list) -> fn (roots: node list) ->
+      match ts with
+      | Nil -> _pop_all stack roots
+      | Cons (t, rest) ->
+        (match t with
+        | TDoctype (name, pub, has_pub, sys, has_sys, ok) ->
+          if mode != "initial" then go rest mode stack roots
+          else
+            let (s, r) = _add stack roots
+              (Doctype (name, if has_pub then pub else "",
+                              if has_sys then sys else "")) in
+            go rest "before html" s r
+        | TComment data ->
+          let (s, r) = _add stack roots (Comment data) in go rest mode s r
+        | TChar data ->
+          // Whitespace before the body is dropped; anything else forces the
+          // elements nobody wrote into existence.
+          if _is_ws data && mode != "in body" then go rest mode stack roots
+          else if mode == "in body" then
+            let (s, r) = _add stack roots (Text data) in go rest mode s r
+          else
+            go ts "in body" (_open_body stack) roots
+        | TStart (name, attrs, selfc) ->
+          if mode == "initial" || mode == "before html" then
+            if name == "html" then go rest "before head" (_push stack "html" attrs) roots
+            else go ts "before head" (_push stack "html" Nil) roots
+          else if mode == "before head" then
+            if name == "head" then go rest "in head" (_push stack "head" attrs) roots
+            else go ts "in head" (_push stack "head" Nil) roots
+          else if mode == "in head" then
+            if name == "title" || name == "style" || name == "script"
+               || _is_void name then
+              let s1 = _push stack name attrs in
+              let (s2, r2) = _pop s1 roots in
+              go rest mode s2 r2
+            else
+              let (s, r) = _pop stack roots in
+              go ts "after head" s r
+          else if mode == "after head" then
+            if name == "body" then go rest "in body" (_push stack "body" attrs) roots
+            else go ts "in body" (_push stack "body" Nil) roots
+          else
+            // in body
+            if _is_void name || selfc then
+              let s1 = _push stack name attrs in
+              let (s2, r2) = _pop s1 roots in
+              go rest mode s2 r2
+            else if _closes_p name && _open_has stack "p" then
+              let (s, r) = _pop_through stack roots "p" in
+              go ts mode s r
+            else go rest mode (_push stack name attrs) roots
+        | TEnd name ->
+          if name == "html" || name == "body" then
+            if mode == "in body" then go rest "after body" stack roots
+            else go rest mode stack roots
+          else if _open_has stack name then
+            let (s, r) = _pop_through stack roots name in
+            // Closing the head is what ends "in head"; without this the next start
+            // tag takes the mode's fallback and pops the html element instead.
+            go rest (if name == "head" then "after head" else mode) s r
+          // An end tag with nothing open to match is ignored, which is what makes
+          // a stray `</div>` harmless rather than fatal.
+          else go rest mode stack roots)
+    // Everything before the body is optional in the source and required in the
+    // tree; this is the one place that fills all of it in at once.
+    and _open_body = fn (stack: frame list) ->
+      if _open_has stack "body" then stack
+      else if _open_has stack "html" then
+        if _open_has stack "head" then _push stack "body" Nil
+        else _push (_push stack "head" Nil) "body" Nil
+      else _push (_push (_push stack "html" Nil) "head" Nil) "body" Nil
+    in
+    go tokens "initial" Nil Nil;
+}

@@ -28,8 +28,19 @@ them together.
 
 ## Status
 
-Early. The document tree and the serializer the conformance suite compares against
-are here; the insertion modes are what comes next.
+Early. The document tree, its serializer, and the insertion modes on the path every
+ordinary document takes — enough to turn `<p>hi<p>there` into a document with the
+html, head and body elements nobody wrote and the two paragraphs as siblings.
+
+Dependencies are vendored into `.mere_modules/` (Mere resolves
+`import "<package>/<module>.mere"` by walking up to the nearest one) and committed,
+so a checkout builds without fetching anything. `scripts/vendor.sh` is what put them
+there.
+
+**What the checks are not yet**: html5lib-tests' tree-construction suite is not
+vendored — its files are not where the tokenizer's are and the path has to be found
+first — so `test/tree_check.mere` is hand-written, which is the weaker kind of
+evidence: those are the cases we thought of.
 
 ## Building
 
