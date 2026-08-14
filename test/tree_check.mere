@@ -85,6 +85,14 @@ let _ = check "li closes li" "<li>a<li>b"
 // check agreeing with the code was worth nothing: they were wrong together.
 let _ = check "li closes li across a div" "<li><div><li>"
   "<html>\n  <head>\n  <body>\n    <li>\n      <div>\n    <li>";
+// Text fostered out of a table joins the text already there: one node, not two.
+let _ = check "fostered text merges with the text before it" "<div>a<table>b</table>"
+  "<html>\n  <head>\n  <body>\n    <div>\n      \"ab\"\n      <table>";
+// With no doctype the document is in quirks mode, and there a table does not close a p.
+let _ = check "quirks: a table does not close a p" "<p><table></table>"
+  "<html>\n  <head>\n  <body>\n    <p>\n      <table>";
+let _ = check "with a doctype it does" "<!DOCTYPE html><p><table></table>"
+  "<!DOCTYPE html>\n<html>\n  <head>\n  <body>\n    <p>\n    <table>";
 // Scope is not the special category. An li does not bound scope, so </ul> closes its list
 // through one; the adoption agency would have stopped there.
 let _ = check "an end tag closes through an open li" "<ul>how<li>do</ul>you"

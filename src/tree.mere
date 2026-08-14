@@ -137,6 +137,16 @@ module Tree {
   // The head element, wherever the stack has got to — the standard calls this the head
   // element pointer, and it needs one because a `<meta>` written after `</head>` still goes
   // inside the head. There is only ever one, because a second `<head>` tag is ignored.
+  // Quirks mode, as far as this builder needs it: a document with no doctype at all. The
+  // standard also decides it from the doctype's public and system identifiers, which is not
+  // done here. It matters in exactly one placement rule, below.
+  let _has_doctype = fn (arena: anode list) ->
+    let rec go = fn (xs: anode list) ->
+      match xs with
+      | Nil -> false
+      | Cons (x, rest) -> if x.kind == 3 then true else go rest in
+    go arena;
+
   let _head_id = fn (arena: anode list) ->
     let rec go = fn (xs: anode list) -> fn (i: int) ->
       match xs with
@@ -504,7 +514,7 @@ module Tree {
           else if mode == "in body" || mode == "after body" then
             let fb = _foster_target arena open_ids in
             if fb >= 0 then
-              let (a, _id) = Nodes.insert_before arena fb 1 "" Nil data in
+              let a = Nodes.insert_text_before arena fb data in
               go rest mode a open_ids afe
             else
               // Anything inserted into a new block reopens the formatting elements
@@ -694,7 +704,11 @@ module Tree {
             else if _open_same_kind arena open_ids name != "" then
               go ts mode arena
                 (_pop_through arena open_ids (_open_same_kind arena open_ids name)) afe
-            else if _closes_p name && _open_has arena open_ids "p" then
+            // In quirks mode — here, a document with no doctype — a `<table>` does NOT
+            // close an open `<p>`. It is the one placement rule in this builder that turns
+            // on the doctype, and `<p><table></table>` is the case that says so.
+            else if _closes_p name && _open_has arena open_ids "p"
+                    && (name != "table" || _has_doctype arena) then
               go ts mode arena (_pop_through arena open_ids "p") afe
             else
               // Anything inserted reopens the formatting elements that are listed but no
@@ -751,7 +765,14 @@ module Tree {
               go (if _eats_newline name then _drop_lf rest else rest) mode a
                  (if _is_void name || selfc then drop1 o else o) l
         | TEnd name ->
-          if _cur_ns arena open_ids != "" then
+          // Two end tags in the head, and the corpus wants the older answers for both.
+          // `</html>` ends the head, so what follows lands in the body. `</p>` is ignored
+          // outright — today's standard would pop the head and let it start the body, and
+          // the vendored suite predates that, the same way its select expectations do.
+          if mode == "in head" && name == "html" then
+            go ts "after head" arena (drop1 open_ids) afe
+          else if mode == "in head" && name == "p" then go rest mode arena open_ids afe
+          else if _cur_ns arena open_ids != "" then
             // Match on the local name: the element is called "svg path" and the tag
             // says "path".
             let rec find = fn (xs: int list) ->

@@ -171,6 +171,22 @@ module Nodes {
     let before = prev_of (children_of a t.parent) (t.order - 2.0) in
     add a (_mk kind name attrs txt t.parent ((before + t.order) / 2.0));
 
+  // Text fostered out of a table joins the text already sitting there rather than starting
+  // a second node beside it. Two adjacent text nodes are not something a tree has — the
+  // serializer prints them as two lines and the suite writes one — so the merge that
+  // `add_text` does for the ordinary case has to happen here too.
+  let insert_text_before = fn (a: anode list) -> fn (target: int) -> fn (txt: str) ->
+    let t = _nth a target in
+    let rec prev_id = fn (xs: int list) -> fn (best: float) -> fn (bid: int) ->
+      match xs with
+      | Nil -> bid
+      | Cons (x, rest) ->
+        let o = (_nth a x).order in
+        if o < t.order && o > best then prev_id rest o x else prev_id rest best bid in
+    let p = prev_id (children_of a t.parent) (t.order - 2.0) (0 - 1) in
+    if is_text a p then append_text a p txt
+    else let (a2, _id) = insert_before a target 1 "" Nil txt in a2;
+
   let move_children = fn (a: anode list) -> fn (from: int) -> fn (to_: int) ->
     let rec go = fn (ids: int list) -> fn (acc: anode list) ->
       match ids with
