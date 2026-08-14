@@ -1,0 +1,47 @@
+// The document tree, and the shape the conformance suite compares.
+//
+// html5lib-tests states its expected trees as an indented text form, and that form
+// is the reason this file exists before any of the parsing does: a tree builder
+// whose output cannot be printed in the format the suite expects has to be tested
+// by reading it, which is not testing.
+
+type attr = { name: str, value: str };
+
+type node =
+  | Doctype of (str * str * str)
+  | Element of (str * attr list * node list)
+  | Text of str
+  | Comment of str;
+
+module Dom {
+  let _pad = fn (depth: int) -> str_repeat " " (depth * 2);
+
+  // The suite's serialization: two spaces per level, one node per line, elements
+  // as `<name>` with their attributes on the lines below, text quoted.
+  let rec _one = fn (n: node) -> fn (depth: int) ->
+    match n with
+    | Doctype (name, pub, sys) ->
+      let extra =
+        if pub == "" && sys == "" then ""
+        else " \"" ++ pub ++ "\" \"" ++ sys ++ "\"" in
+      _pad depth ++ "<!DOCTYPE " ++ name ++ extra ++ ">"
+    | Text s -> _pad depth ++ "\"" ++ s ++ "\""
+    | Comment s -> _pad depth ++ "<!-- " ++ s ++ " -->"
+    | Element (name, attrs, kids) ->
+      let head = _pad depth ++ "<" ++ name ++ ">" in
+      let rec attr_lines = fn (xs: attr list) -> fn (out: str list) ->
+        match xs with
+        | Nil -> list_rev out
+        | Cons (a, rest) ->
+          attr_lines rest
+            (Cons (_pad (depth + 1) ++ a.name ++ "=\"" ++ a.value ++ "\"", out)) in
+      let rec kid_lines = fn (xs: node list) -> fn (out: str list) ->
+        match xs with
+        | Nil -> list_rev out
+        | Cons (k, rest) -> kid_lines rest (Cons (_one k (depth + 1), out)) in
+      str_join "\n" (Cons (head, list_append (attr_lines attrs Nil)
+                                             (kid_lines kids Nil)));
+
+  let serialize = fn (roots: node list) ->
+    str_join "\n" (list_map roots (fn (n: node) -> _one n 0));
+}

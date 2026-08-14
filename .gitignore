@@ -1,0 +1,6 @@
+_build/
+*.c
+*.ll
+*.wat
+*.wasm
+mbrowse

@@ -1,0 +1,26 @@
+// The serializer against the format html5lib-tests states its expected trees in.
+// Hand-built trees for now: this is the shape the tree builder will be compared
+// in, so it is worth having right before there is a tree builder.
+
+import "../src/dom.mere";
+
+let expect = fn (label: str) -> fn (got: str) -> fn (want: str) ->
+  print (label ++ ": " ++ (if got == want then "ok" else
+    "MISMATCH\n--- got ---\n" ++ got ++ "\n--- want ---\n" ++ want));
+
+let doc = Cons (Doctype ("html", "", ""),
+          Cons (Element ("html", Nil,
+                  Cons (Element ("head", Nil, Nil),
+                  Cons (Element ("body", Nil,
+                          Cons (Element ("p", Cons (attr { name = "class", value = "x" }, Nil),
+                                  Cons (Text "hi", Nil)),
+                          Cons (Comment "c", Nil))), Nil))), Nil));
+
+let want = "<!DOCTYPE html>\n<html>\n  <head>\n  <body>\n    <p>\n      class=\"x\"\n      \"hi\"\n    <!-- c -->";
+
+let _ = expect "nested document" (Dom.serialize doc) want;
+let _ = expect "doctype with identifiers"
+          (Dom.serialize (Cons (Doctype ("html", "-//W3C//DTD HTML 4.01//EN", "u"), Nil)))
+          "<!DOCTYPE html \"-//W3C//DTD HTML 4.01//EN\" \"u\">";
+let _ = expect "empty document" (Dom.serialize Nil) "";
+0
