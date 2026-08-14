@@ -1,0 +1,42 @@
+// The adoption agency's simple case, on the shapes that reach each of its exits.
+
+import "../src/aaa.mere";
+
+let check = fn (label: str) -> fn (b: bool) ->
+  print (label ++ ": " ++ (if b then "ok" else "MISMATCH"));
+
+let special = fn (n: str) -> n == "p" || n == "div" || n == "table";
+
+// <b>x</b> : the b is listed and open, nothing special inside it.
+let a0 = Nodes.empty;
+let (a1, body) = Nodes.element a0 0 "body" Nil;
+let (a2, b1) = Nodes.element a1 body "b" Nil;
+let afe1 = Formatting.push Nil b1 "b" Nil;
+let (_, o1, f1, h1, cx1) = Aaa.run a2 (Cons (b1, Cons (body, Nil))) afe1 "b" special;
+let _ = check "simple case closes it" (h1 && not cx1);
+let _ = check "and pops it" (not (Aaa._in o1 b1));
+let _ = check "and forgets it" (not (Formatting.has f1 b1));
+
+// <i>x</i> where i was never a formatting element: step 1, the plain path.
+let (a3, i1) = Nodes.element a2 body "i" Nil;
+let (_, o2, _, h2, cx2) = Aaa.run a3 (Cons (i1, Cons (body, Nil))) Nil "i" special;
+let _ = check "current node that was never listed" (h2 && not cx2 && not (Aaa._in o2 i1));
+
+// </b> with no b anywhere: the caller has to handle it.
+let (_, _, _, h3, cx3) = Aaa.run a3 (Cons (i1, Cons (body, Nil))) Nil "b" special;
+let _ = check "not a formatting element: not handled" (not h3 && not cx3);
+
+// Listed but already closed: the list is stale and gets corrected.
+let (_, _, f4, h4, cx4) = Aaa.run a2 (Cons (body, Nil)) afe1 "b" special;
+let _ = check "stale entry is removed" (h4 && not cx4 && not (Formatting.has f4 b1));
+
+// <b>1<p>2</b> : a p is open inside the b, so this is the half that is not here.
+let (a5, p1) = Nodes.element a2 b1 "p" Nil;
+let (_, _, _, h5, cx5) = Aaa.run a5 (Cons (p1, Cons (b1, Cons (body, Nil)))) afe1 "b" special;
+let _ = check "furthest block is reported, not guessed" (not h5 && cx5);
+
+// The furthest block is the special element nearest the formatting element.
+let (a6, d1) = Nodes.element a5 p1 "div" Nil;
+let _ = check "nearest special below the formatting element"
+  (Aaa.furthest_block a6 (Cons (d1, Cons (p1, Cons (b1, Cons (body, Nil))))) b1 special == p1);
+0

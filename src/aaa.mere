@@ -1,0 +1,74 @@
+// The adoption agency algorithm — the simple case.
+//
+// What it is for: `<b>1<p>2</b>3` has a `</b>` that closes an element opened outside
+// the paragraph it is closing inside. No stack discipline can express that, which is
+// why HTML has an algorithm here instead of a rule.
+//
+// The standard's steps split at one question: is there a *special* element open
+// between the formatting element and the current node — a "furthest block". If there
+// is not, the answer is ordinary: pop up to and including the formatting element and
+// forget it. If there is, the tree has to be rewritten around it, with a bookmark and
+// a cloned element, and that half is **not here** — `run` reports it rather than
+// guessing, so a caller can tell "done" from "not attempted".
+//
+// The three things this stands on — the arena, the list, reconstruction — are each
+// checked on their own, so when this is wrong, what it is standing on will not be.
+
+import "formatting.mere";
+
+module Aaa {
+  let rec _in = fn (xs: int list) -> fn (id: int) ->
+    match xs with
+    | Nil -> false
+    | Cons (x, rest) -> if x == id then true else _in rest id;
+
+  let rec _name_of = fn (arena: anode list) -> fn (id: int) ->
+    (Nodes._nth arena id).name;
+
+  // Pop the stack until `id` has been popped.
+  let rec _pop_through = fn (open_ids: int list) -> fn (id: int) ->
+    match open_ids with
+    | Nil -> Nil
+    | Cons (x, rest) -> if x == id then rest else _pop_through rest id;
+
+  // The furthest block: walking from the current node back toward the formatting
+  // element, the special element nearest to it. Nothing before `fmt` is reached means
+  // there is none, and that is the simple case.
+  let furthest_block = fn (arena: anode list) -> fn (open_ids: int list) ->
+                       fn (fmt: int) -> fn (is_special: str -> bool) ->
+    let rec go = fn (xs: int list) -> fn (best: int) ->
+      match xs with
+      | Nil -> 0 - 1
+      | Cons (x, rest) ->
+        if x == fmt then best
+        else go rest (if is_special (_name_of arena x) then x else best) in
+    go open_ids (0 - 1);
+
+  // `handled` is false only when the caller must fall through to its own "any other
+  // end tag" handling, which is what the standard says to do when the subject is not
+  // a formatting element that is still listed.
+  let run = fn (arena: anode list) -> fn (open_ids: int list) -> fn (afe: afe list) ->
+            fn (subject: str) -> fn (is_special: str -> bool) ->
+    // Step 1: the current node is the subject and was never a formatting element.
+    match open_ids with
+    | Cons (cur, rest) ->
+      if _name_of arena cur == subject && not (Formatting.has afe cur) then
+        (arena, rest, afe, true, false)
+      else
+        let fmt = Formatting.find afe subject in
+        if fmt < 0 then (arena, open_ids, afe, false, false)
+        // Listed but not open: the list is stale, so correct the list and stop.
+        else if not (_in open_ids fmt) then
+          (arena, open_ids, Formatting.remove afe fmt, true, false)
+        else
+          let fb = furthest_block arena open_ids fmt is_special in
+          if fb < 0 then
+            // The simple case: nothing special intervenes, so this is an ordinary
+            // close that happens to have been recorded.
+            (arena, _pop_through open_ids fmt, Formatting.remove afe fmt, true, false)
+          else
+            // The half that rewrites the tree. Reported, not guessed at: the last
+            // field says "there was a furthest block and this did not handle it".
+            (arena, open_ids, afe, false, true)
+    | Nil -> (arena, open_ids, afe, false, false);
+}

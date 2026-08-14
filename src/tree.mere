@@ -43,10 +43,14 @@
 // inside the new block so that `<b><p>X` has one in the paragraph. It is a function
 // over the arena, the open stack and the list, checked on that document.
 //
-// What is left is the adoption agency loop itself, and then this builder moves onto
-// the arena. The three pieces under it are each checked on their own, which is the
-// point of having built them separately: when the loop is wrong, the thing it is
-// standing on will not be.
+// And src/aaa.mere is the algorithm's simple case: the exits that do not have to
+// rewrite the tree, plus a furthest block *reported* rather than guessed at, so a
+// caller can tell "done" from "not attempted".
+//
+// What is left is the half that rewrites the tree — the bookmark and the cloned
+// element — and then this builder moves onto the arena. The four pieces under it are
+// each checked on their own, which is the point of having built them separately: when
+// the rewrite is wrong, what it is standing on will not be.
 
 import "mere-html/tokenizer.mere";
 import "dom.mere";
