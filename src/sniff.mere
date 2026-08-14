@@ -128,10 +128,19 @@ module Sniff {
           else skip (k + 1) in
         go (skip (i + 4))
       else
-        // The tag's text up to the next ">" is enough: a meta element has no
-        // content, so everything that matters is inside its own angle brackets.
-        let rec upto = fn (k: int) -> if k >= n || at k == ">" then k else upto (k + 1) in
-        let e = upto i in
+        // The tag's text up to its own ">" — its own, because a quoted attribute
+        // value may contain one: `content="text/html; charset=x>"` ends the tag
+        // four characters later than it looks. Stopping at the first `>` truncated
+        // the tag and lost the declaration that was in it.
+        let rec upto = fn (k: int) -> fn (q: str) ->
+          if k >= n then k
+          else
+            let c = at k in
+            if q != "" then upto (k + 1) (if c == q then "" else q)
+            else if c == "\"" || c == "'" then upto (k + 1) c
+            else if c == ">" then k
+            else upto (k + 1) "" in
+        let e = upto i "" in
         let tag = substring src i (if e >= n then n else e) in
         let name = to_lower (substring tag 1 (if str_len tag >= 6 then 6 else str_len tag)) in
         if name == "meta " || name == "meta\t" || name == "meta\n"

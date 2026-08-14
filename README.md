@@ -51,7 +51,10 @@ reading as a page declaring nothing, because the table only listed encodings the
 a decoder for — and 54 until the prescan stopped reading `charset=` out of any
 attribute at all. There are two forms and no third: a `charset` attribute, or a
 `content` attribute on a meta whose `http-equiv` is Content-Type.
-`<meta name=x content="charset=foo">` declares nothing.
+`<meta name=x content="charset=foo">` declares nothing. 54 to 67 there, and 67 to 72
+when a tag stopped ending at the first `>` and started ending at its own — a quoted
+attribute value may contain one, and `content="text/html; charset=x>"` ends the tag
+four characters later than it looks.
 
 Finding a normative suite for tree construction — web-platform-tests is the obvious
 place to look next — comes before writing many more of these by hand. What is there is

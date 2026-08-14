@@ -15,9 +15,10 @@ command -v python3 >/dev/null 2>&1 || { echo "encoding_check: python3 needed to 
 # 46 -> 54 when the label table upstream became the Standard's full 228; 54 -> 67 when
 # the prescan stopped reading `charset=` out of any attribute at all and started
 # requiring the two forms the standard names. What fails now is the other direction
-# again — declarations that should count and are not found — which is where the
-# remaining work is.
-EXPECT_PASS=${EXPECT_PASS:-67}
+# again — declarations that should count and are not found. 67 -> 72 when the tag's
+# end stopped being the first `>` and started being its own. The remaining nine are
+# where the work is.
+EXPECT_PASS=${EXPECT_PASS:-72}
 
 T="${TMPDIR:-/tmp}/mbrowse_enc.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 python3 "$ROOT/scripts/encoding_cases.py" "$ROOT/test/data" "$T/cases.txt" "$T/meta.txt"
