@@ -14,70 +14,48 @@
 
 import "dom.mere";
 
+// `order` is what puts children in document order. It was the id — insertion order —
+// until foster parenting needed a node placed *before* one that already existed, which
+// id order cannot express: ids are handed out in sequence and everything already refers
+// to them. A separate order can have a value put between two others.
+//
 // kind: 0 element, 1 text, 2 comment, 3 doctype.
-type anode = { kind: int, name: str, attrs: attr list, text: str, parent: int };
+type anode = { kind: int, name: str, attrs: attr list, text: str, parent: int,
+               order: float };
 
 module Nodes {
-  // The root is id 0 and stands for the document; every real node's parent chain
-  // ends there.
-  let empty = Cons (anode { kind = 0, name = "#document", attrs = Nil,
-                            text = "", parent = 0 - 1 }, Nil);
+  let empty = Cons (anode { kind = 0, name = "#document", attrs = Nil, text = "",
+                            parent = 0 - 1, order = 0.0 }, Nil);
 
   let rec _nth = fn (xs: anode list) -> fn (i: int) ->
     match xs with
-    | Nil -> anode { kind = 0, name = "?", attrs = Nil, text = "", parent = 0 - 1 }
+    | Nil -> anode { kind = 0, name = "?", attrs = Nil, text = "",
+                     parent = 0 - 1, order = 0.0 }
     | Cons (x, rest) -> if i <= 0 then x else _nth rest (i - 1);
 
   let count = fn (a: anode list) -> len a;
 
-  // Appending puts the new node last, so its id is the old count and children come
-  // back in the order they were added.
-  let add = fn (a: anode list) -> fn (n: anode) ->
-    (list_append a (Cons (n, Nil)), len a);
+  let _mk = fn (kind: int) -> fn (name: str) -> fn (attrs: attr list) ->
+            fn (txt: str) -> fn (parent: int) -> fn (order: float) ->
+    anode { kind = kind, name = name, attrs = attrs, text = txt,
+            parent = parent, order = order };
+
+  // Appending puts the new node last and gives it an order to match, so a document
+  // built only by appending has order and id agreeing everywhere.
+  let add = fn (a: anode list) -> fn (n: anode) -> (list_append a (Cons (n, Nil)), len a);
 
   let element = fn (a: anode list) -> fn (parent: int) -> fn (name: str) ->
                 fn (attrs: attr list) ->
-    add a (anode { kind = 0, name = name, attrs = attrs, text = "", parent = parent });
+    add a (_mk 0 name attrs "" parent (float_of_int (len a)));
 
   let text = fn (a: anode list) -> fn (parent: int) -> fn (s: str) ->
-    add a (anode { kind = 1, name = "", attrs = Nil, text = s, parent = parent });
+    add a (_mk 1 "" Nil s parent (float_of_int (len a)));
 
   let comment = fn (a: anode list) -> fn (parent: int) -> fn (s: str) ->
-    add a (anode { kind = 2, name = "", attrs = Nil, text = s, parent = parent });
+    add a (_mk 2 "" Nil s parent (float_of_int (len a)));
 
   let doctype = fn (a: anode list) -> fn (parent: int) -> fn (s: str) ->
-    add a (anode { kind = 3, name = s, attrs = Nil, text = "", parent = parent });
-
-  // The last child of a parent, or -1. Insertion order is id order, so this is the
-  // highest id with that parent — no sibling links needed, which is the same reason
-  // _kids_of works by scanning.
-  let last_child = fn (a: anode list) -> fn (parent: int) ->
-    let n = len a in
-    let rec go = fn (i: int) -> fn (best: int) ->
-      if i >= n then best
-      else go (i + 1) (if (_nth a i).parent == parent then i else best) in
-    go 0 (0 - 1);
-
-  let is_text = fn (a: anode list) -> fn (id: int) ->
-    if id < 0 then false else (_nth a id).kind == 1;
-
-  // Adjacent text is one node, so inserting text next to text extends it instead of
-  // adding a second. In the nested representation this was a merge on the way in;
-  // here it is an edit in place, which is what the arena is for.
-  let append_text = fn (a: anode list) -> fn (id: int) -> fn (s: str) ->
-    let rec go = fn (xs: anode list) -> fn (i: int) -> fn (out: anode list) ->
-      match xs with
-      | Nil -> list_rev out
-      | Cons (x, rest) ->
-        let y = if i == id then anode { kind = x.kind, name = x.name, attrs = x.attrs,
-                                        text = x.text ++ s, parent = x.parent } else x in
-        go rest (i + 1) (Cons (y, out)) in
-    go a 0 Nil;
-
-  // Text under `parent`, joined to whatever text is already last there.
-  let add_text = fn (a: anode list) -> fn (parent: int) -> fn (s: str) ->
-    let l = last_child a parent in
-    if is_text a l then (append_text a l s, l) else text a parent s;
+    add a (_mk 3 s Nil "" parent (float_of_int (len a)));
 
   // The one operation the nested representation cannot do.
   let reparent = fn (a: anode list) -> fn (id: int) -> fn (new_parent: int) ->
@@ -85,27 +63,68 @@ module Nodes {
       match xs with
       | Nil -> list_rev out
       | Cons (x, rest) ->
-        let y = if i == id then anode { kind = x.kind, name = x.name,
-                                        attrs = x.attrs, text = x.text,
-                                        parent = new_parent } else x in
+        let y = if i == id then _mk x.kind x.name x.attrs x.text new_parent x.order
+                else x in
         go rest (i + 1) (Cons (y, out)) in
     go a 0 Nil;
 
-  // The children of a node, oldest first. Insertion order is id order, so this is a
-  // scan — the same reason last_child is one.
+  // By order, not by id. The two agree for everything appended and disagree exactly
+  // where something was put before something else, which is the point — and there is
+  // one of these rather than two, because two answers to the same question is how a
+  // node ends up in a different place depending on who asked.
   let children_of = fn (a: anode list) -> fn (parent: int) ->
     let n = len a in
+    let rec ins = fn (id: int) -> fn (xs: int list) ->
+      match xs with
+      | Nil -> Cons (id, Nil)
+      | Cons (y, rest) ->
+        if (_nth a id).order < (_nth a y).order then Cons (id, Cons (y, rest))
+        else Cons (y, ins id rest) in
     let rec go = fn (i: int) -> fn (out: int list) ->
-      if i >= n then list_rev out
-      else go (i + 1) (if (_nth a i).parent == parent then Cons (i, out) else out) in
+      if i >= n then out
+      else go (i + 1) (if (_nth a i).parent == parent then ins i out else out) in
     go 0 Nil;
 
-  // Move every child of `from` under `to`, keeping their order.
-  //
-  // The adoption agency needs exactly this: the furthest block's children go into a
-  // clone of the formatting element, and the clone becomes the block's only child.
-  // In the nested representation it was not expressible at all — the children were
-  // values inside their parent — and here it is a fold over reparent.
+  let last_child = fn (a: anode list) -> fn (parent: int) ->
+    let rec go = fn (xs: int list) -> fn (best: int) ->
+      match xs with Nil -> best | Cons (x, rest) -> go rest x in
+    go (children_of a parent) (0 - 1);
+
+  let is_text = fn (a: anode list) -> fn (id: int) ->
+    if id < 0 then false else (_nth a id).kind == 1;
+
+  let append_text = fn (a: anode list) -> fn (id: int) -> fn (s: str) ->
+    let rec go = fn (xs: anode list) -> fn (i: int) -> fn (out: anode list) ->
+      match xs with
+      | Nil -> list_rev out
+      | Cons (x, rest) ->
+        let y = if i == id then _mk x.kind x.name x.attrs (x.text ++ s) x.parent x.order
+                else x in
+        go rest (i + 1) (Cons (y, out)) in
+    go a 0 Nil;
+
+  // Adjacent text is one node, so inserting text next to text extends it. The nested
+  // form did this on the way in; an arena does it in place.
+  let add_text = fn (a: anode list) -> fn (parent: int) -> fn (s: str) ->
+    let l = last_child a parent in
+    if is_text a l then (append_text a l s, l) else text a parent s;
+
+  // A node placed immediately before an existing one, under the same parent. The order
+  // taken is halfway between the target's and its predecessor's — foster parenting puts
+  // content *before* the table it was found inside, and there is no id between two
+  // consecutive ids.
+  let insert_before = fn (a: anode list) -> fn (target: int) -> fn (kind: int) ->
+                      fn (name: str) -> fn (attrs: attr list) -> fn (txt: str) ->
+    let t = _nth a target in
+    let rec prev_of = fn (xs: int list) -> fn (best: float) ->
+      match xs with
+      | Nil -> best
+      | Cons (x, rest) ->
+        let o = (_nth a x).order in
+        if o < t.order && o > best then prev_of rest o else prev_of rest best in
+    let before = prev_of (children_of a t.parent) (t.order - 2.0) in
+    add a (_mk kind name attrs txt t.parent ((before + t.order) / 2.0));
+
   let move_children = fn (a: anode list) -> fn (from: int) -> fn (to_: int) ->
     let rec go = fn (ids: int list) -> fn (acc: anode list) ->
       match ids with
@@ -114,28 +133,27 @@ module Nodes {
     go (children_of a from) a;
 
   // A copy of an element under a new parent: same name, same attributes, no children.
-  // The algorithm clones rather than moves because the original is still in the tree
-  // and still referred to by the list of active formatting elements.
+  // The algorithm clones rather than moves because the original is still in the tree and
+  // still referred to by the list of active formatting elements.
   let clone = fn (a: anode list) -> fn (id: int) -> fn (parent: int) ->
     let x = _nth a id in
     element a parent x.name x.attrs;
 
-  // Back to the nested form, which is what the conformance harness compares.
+  // Back to the nested form, which is what the conformance harness compares. Through
+  // children_of, so document order is decided in one place.
   let rec _kids_of = fn (a: anode list) -> fn (parent: int) ->
-    let n = len a in
-    let rec go = fn (i: int) -> fn (out: node list) ->
-      if i >= n then list_rev out
-      else
+    let rec go = fn (ids: int list) -> fn (out: node list) ->
+      match ids with
+      | Nil -> list_rev out
+      | Cons (i, rest) ->
         let x = _nth a i in
-        if x.parent != parent then go (i + 1) out
-        else
-          let nd =
-            if x.kind == 1 then Text x.text
-            else if x.kind == 2 then Comment x.text
-            else if x.kind == 3 then Doctype (x.name, "", "")
-            else Element (x.name, x.attrs, _kids_of a i) in
-          go (i + 1) (Cons (nd, out)) in
-    go 0 Nil;
+        let nd =
+          if x.kind == 1 then Text x.text
+          else if x.kind == 2 then Comment x.text
+          else if x.kind == 3 then Doctype (x.name, "", "")
+          else Element (x.name, x.attrs, _kids_of a i) in
+        go rest (Cons (nd, out)) in
+    go (children_of a parent) Nil;
 
   let to_nodes = fn (a: anode list) -> _kids_of a 0;
   let serialize = fn (a: anode list) -> Dom.serialize (to_nodes a);

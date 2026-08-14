@@ -76,4 +76,19 @@ let _ = check "the children move into the clone, in order" (Nodes.serialize d7)
      Cons (Element ("b", Nil,
        Cons (Text "1", Cons (Element ("i", Nil, Cons (Text "2", Nil)), Nil))), Nil))), Nil)));
 let _ = check "and the original is empty" (show (Nodes.children_of d7 bb)) (show Nil);
+// --- inserting before, which id order cannot express ------------------------
+let (e1, dv2) = Nodes.element Nodes.empty 0 "div" Nil;
+let (e2, tb) = Nodes.element e1 dv2 "table" Nil;
+let (e3, _tx) = Nodes.add_text e2 dv2 "after";
+let (e4, _fo) = Nodes.insert_before e3 tb 1 "" Nil "before";
+let _ = check "a node lands before an existing one" (Nodes.serialize e4)
+  (Dom.serialize (Cons (Element ("div", Nil,
+     Cons (Text "before", Cons (Element ("table", Nil, Nil), Cons (Text "after", Nil)))), Nil)));
+
+// Twice over: the second goes between the first and the table, not before both.
+let (e5, _f2) = Nodes.insert_before e4 tb 1 "" Nil "mid";
+let _ = check "and again, between the two" (Nodes.serialize e5)
+  (Dom.serialize (Cons (Element ("div", Nil,
+     Cons (Text "before", Cons (Text "mid",
+       Cons (Element ("table", Nil, Nil), Cons (Text "after", Nil))))), Nil)));
 0
