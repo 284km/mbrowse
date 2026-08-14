@@ -23,14 +23,25 @@
 # a new pass.
 #
 # Five of the 126 pass, and the five are the ones with no text in normal flow. Everything else is
-# one thing: **a line of text has no height**. In these documents a line is 18 pixels tall and that
-# number is a font metric, so nothing here can produce it — a box holding only text comes out zero
-# high and every box below it is short by the same amount. The x coordinates and the widths already
-# match across the corpus, and margin collapsing works: a paragraph's 1em collapsing with the
-# body's 8px to 16 is why `body` starts at y=16 in both.
+# one thing: **a line of text has no height**. A line here is 22 pixels and that number is a font
+# metric, so a box holding only text comes out zero high and every box below it is short by the same
+# amount. The x coordinates and the widths already match across the corpus, and margin collapsing
+# works: a paragraph's 1em collapsing with the body's 8px to 16 is why `body` starts at y=16 in both.
 #
-# So the next slice is fonts, and after it this number should move a long way at once. What is
-# NOT missing, and would have been the guess: the box model, the cascade, and collapsing.
+# **Both sides measure with the same font, and they have to.** The expectations were first taken with
+# whatever font the browser defaulted to — on that machine a system font that cannot be
+# redistributed and that nothing here can read — so the 18px line in them was a number from a file
+# not in the repository. `scripts/vendor_font.sh` brings in Noto Sans Regular under the OFL, pinned
+# by commit, and the generator injects it into every document and waits for
+# `document.fonts.ready` before measuring. That waiting is the difference between measuring the
+# vendored font and measuring the fallback, and a probe that fires early gets plausible numbers from
+# the wrong file without saying so.
+#
+# It does change what the WPT documents test: they no longer exercise a reader's default font. That
+# is the right trade, because a comparison against a font nobody has is not a comparison.
+#
+# So the next slice is the font's metrics, and after it this number should move a long way at once.
+# What is NOT missing, and would have been the guess: the box model, the cascade, and collapsing.
 #
 # Usage:  MERE=/path/to/mere.exe sh scripts/layout_check.sh
 set -e
