@@ -82,4 +82,12 @@ let _ = check "li closes li" "<li>a<li>b"
 // ...but only while nothing block-level intervenes.
 let _ = check "li does not close across a div" "<li><div><li>"
   "<html>\n  <head>\n  <body>\n    <li>\n      <div>\n        <li>";
+// A table's structure is mostly elements nobody writes.
+let _ = check "a table gets its tbody and row" "<table><td>x"
+  "<html>\n  <head>\n  <body>\n    <table>\n      <tbody>\n        <tr>\n          <td>\n            \"x\"";
+let _ = check "a written tbody is not doubled" "<table><tbody><tr><td>x"
+  "<html>\n  <head>\n  <body>\n    <table>\n      <tbody>\n        <tr>\n          <td>\n            \"x\"";
+// A cell is a boundary: the inner table is its own, and needs its own row.
+let _ = check "a table inside a cell is a different table" "<table><td><table><td>y"
+  "<html>\n  <head>\n  <body>\n    <table>\n      <tbody>\n        <tr>\n          <td>\n            <table>\n              <tbody>\n                <tr>\n                  <td>\n                    \"y\"";
 0

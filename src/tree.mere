@@ -202,6 +202,44 @@ module Tree {
     n == "applet" || n == "object" || n == "marquee" || n == "td" || n == "th"
     || n == "caption" || n == "template";
 
+  // A table's structure is mostly elements nobody writes. `<table><tr><td>` is a
+  // table, a tbody, a row and a cell, and the standard's table insertion modes exist
+  // to put the two missing ones in. This is that, without the modes: the same
+  // question asked of the open elements, which is where the answer is.
+  let _table_open = fn (arena: anode list) -> fn (open_ids: int list) ->
+    let rec go = fn (xs: int list) ->
+      match xs with
+      | Nil -> false
+      | Cons (x, rest) ->
+        let n = _name_of arena x in
+        // A cell is a scope boundary: a table inside a cell is a different table.
+        if n == "table" then true
+        else if n == "td" || n == "th" || n == "caption" then false
+        else go rest in
+    go open_ids;
+
+  let _section_open = fn (arena: anode list) -> fn (open_ids: int list) ->
+    let rec go = fn (xs: int list) ->
+      match xs with
+      | Nil -> false
+      | Cons (x, rest) ->
+        let n = _name_of arena x in
+        if n == "tbody" || n == "thead" || n == "tfoot" then true
+        else if n == "table" then false
+        else go rest in
+    go open_ids;
+
+  let _row_open = fn (arena: anode list) -> fn (open_ids: int list) ->
+    let rec go = fn (xs: int list) ->
+      match xs with
+      | Nil -> false
+      | Cons (x, rest) ->
+        let n = _name_of arena x in
+        if n == "tr" then true
+        else if n == "table" then false
+        else go rest in
+    go open_ids;
+
   let build = fn (tokens: token list) ->
     let push_el = fn (arena: anode list) -> fn (open_ids: int list) ->
                   fn (name: str) -> fn (attrs: attr list) ->
@@ -279,7 +317,21 @@ module Tree {
             else if _closes_p name && _open_has arena open_ids "p" then
               go ts mode arena (_pop_through arena open_ids "p") afe
             else
-              let (a, o) = push_el arena open_ids name attrs in
+              // The elements a table needs and the document did not write. Asked
+              // before the push so that the cell lands under a row that exists.
+              let (ai, oi) =
+                if not (_table_open arena open_ids) then (arena, open_ids)
+                else if name == "tr" then
+                  if _section_open arena open_ids then (arena, open_ids)
+                  else push_el arena open_ids "tbody" Nil
+                else if name == "td" || name == "th" then
+                  if _row_open arena open_ids then (arena, open_ids)
+                  else
+                    let (a1, o1) = if _section_open arena open_ids then (arena, open_ids)
+                                   else push_el arena open_ids "tbody" Nil in
+                    push_el a1 o1 "tr" Nil
+                else (arena, open_ids) in
+              let (a, o) = push_el ai oi name attrs in
               let id = _parent o in
               let l = if _is_formatting name then Formatting.push afe id name attrs
                       else if _is_marker_scope name then Formatting.push_marker afe
