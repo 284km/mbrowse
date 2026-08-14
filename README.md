@@ -146,8 +146,12 @@ the parent's height ignores it **unless the parent establishes a block formattin
 positioned, floated, a table cell or anything but `overflow: visible` does that. What such a box contains
 is the float's *margin* box, not its border box.
 
-What is left is where a float shortens the line beside it, floats placed side by side, and a replaced
-element with no intrinsic size.
+And a box that establishes a formatting context does not **overlap** a float — it is placed beside it, in
+whatever width is left. An ordinary block ignores the float entirely and only its line boxes are
+shortened; that difference is the whole of what `overflow: scroll` does to a sibling of a float.
+
+What is left is where a float shortens the line beside it, and a replaced element with no intrinsic
+size.
 
 That list is re-derived from the failures each time rather than carried forward, because it has been
 wrong twice: it once named `font-size`, which **not one of the 126 documents sets**, and then floats,

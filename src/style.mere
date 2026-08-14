@@ -17,7 +17,7 @@ import "css_rules.mere";
 // where a length cannot be resolved without knowing the containing block, which is what `-1`
 // means for width and height: auto.
 type sty = {
-  display: str, position: str, float_: str, spacing: int,
+  display: str, position: str, float_: str, spacing: int, overflow: str,
   w: int, h: int,                      // -1 for auto
   w_pct: int, h_pct: int,              // -1 when not a percentage
   mt: int, mr: int, mb: int, ml: int,
@@ -444,6 +444,9 @@ module Style {
       position = let v = to_lower (get "position") in if v == "" then "static" else v,
       float_ = let v = to_lower (get "float") in if v == "" then "none" else v,
       spacing = let v = get "border-spacing" in if v == "" then 0 else px_of v,
+      // Anything but `visible` makes a box establish a formatting context, which is why it is here:
+      // this is a layout question wearing a painting property's name.
+      overflow = let v = to_lower (get "overflow") in if v == "" then "visible" else v,
       w = if wv == "" || to_lower wv == "auto" then 0 - 1
           else let q = px_of wv in if q == 0 - 2 then 0 - 1 else q,
       h = if hv == "" || to_lower hv == "auto" then 0 - 1
