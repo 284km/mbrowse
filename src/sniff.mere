@@ -112,11 +112,19 @@ module Sniff {
           | None -> ""
           | Some c -> _charset_in c;
 
-  // The prescan: the first 1024 bytes, looking only for a meta element that
-  // declares an encoding. Comments and other tags are skipped rather than parsed,
-  // because at this point there is no document to build.
+  // The prescan: the bytes available, looking only for a meta element that declares
+  // an encoding. Comments and other tags are skipped rather than parsed, because at
+  // this point there is no document to build.
+  //
+  // Not the first 1024 bytes. The standard says the prescan **may** be aborted after
+  // that many, and reading "may" as "does" loses the declaration on any page whose
+  // head starts with a long comment — a licence stub, a build banner, a conditional
+  // comment for a browser nobody runs any more. The suite has those cases at 2048,
+  // 4096 and 8192 bytes and expects the declaration to be found, which is the
+  // evidence for what the number should be. The scan stops at the first declaration
+  // it finds, so an ordinary page still costs a few hundred bytes.
   let prescan = fn (src: str) ->
-    let n = if str_len src > 1024 then 1024 else str_len src in
+    let n = str_len src in
     let at = fn (i: int) -> if i >= n then "" else char_at src i in
     let rec go = fn (i: int) ->
       if i >= n then ""

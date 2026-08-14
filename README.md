@@ -54,7 +54,10 @@ attribute at all. There are two forms and no third: a `charset` attribute, or a
 `<meta name=x content="charset=foo">` declares nothing. 54 to 67 there, and 67 to 72
 when a tag stopped ending at the first `>` and started ending at its own — a quoted
 attribute value may contain one, and `content="text/html; charset=x>"` ends the tag
-four characters later than it looks.
+four characters later than it looks. And 72 to **79** when the scan stopped stopping
+at 1024 bytes — the standard says the prescan *may* be aborted there, and reading
+"may" as "does" loses the declaration on any page whose head opens with a long
+comment. Two of the 81 are left.
 
 Finding a normative suite for tree construction — web-platform-tests is the obvious
 place to look next — comes before writing many more of these by hand. What is there is
