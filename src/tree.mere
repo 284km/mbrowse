@@ -257,6 +257,43 @@ module Tree {
         | Cons (x, rest) -> if _name_of arena x == "table" then x else find rest in
       find open_ids;
 
+  // Inside SVG or MathML, a tag means something else. `<title>` is an ordinary element
+  // there and `<path>` is not an unknown one, so the rules that apply are the foreign
+  // ones until something on this list appears — and then the standard's answer is not
+  // "error" but "the author meant to be back in HTML", so the foreign elements are
+  // closed and the tag is reprocessed.
+  let _breaks_out = fn (n: str) ->
+    n == "b" || n == "big" || n == "blockquote" || n == "body" || n == "br"
+    || n == "center" || n == "code" || n == "dd" || n == "div" || n == "dl"
+    || n == "dt" || n == "em" || n == "embed" || _is_heading n || n == "head"
+    || n == "hr" || n == "i" || n == "img" || n == "li" || n == "listing"
+    || n == "menu" || n == "meta" || n == "nobr" || n == "ol" || n == "p"
+    || n == "pre" || n == "ruby" || n == "s" || n == "small" || n == "span"
+    || n == "strong" || n == "strike" || n == "sub" || n == "sup" || n == "table"
+    || n == "tt" || n == "u" || n == "ul" || n == "var";
+
+  // SVG's names are case-sensitive and the tokenizer lower-cased them, so the ones
+  // that are not all-lowercase have to be put back. A short table because SVG has a
+  // short list of them.
+  let _svg_name = fn (n: str) ->
+    if n == "foreignobject" then "foreignObject"
+    else if n == "clippath" then "clipPath"
+    else if n == "textpath" then "textPath"
+    else if n == "lineargradient" then "linearGradient"
+    else if n == "radialgradient" then "radialGradient"
+    else if n == "animatetransform" then "animateTransform"
+    else n;
+
+  let _cur_ns = fn (arena: anode list) -> fn (open_ids: int list) ->
+    match open_ids with Nil -> "" | Cons (x, _) -> Nodes.ns_of arena x;
+
+  // Close every open foreign element, which is what breaking out means.
+  let rec _leave_foreign = fn (arena: anode list) -> fn (open_ids: int list) ->
+    if _cur_ns arena open_ids == "" then open_ids
+    else match open_ids with
+         | Nil -> Nil
+         | Cons (_, rest) -> _leave_foreign arena rest;
+
   let build = fn (tokens: token list) ->
     let push_el = fn (arena: anode list) -> fn (open_ids: int list) ->
                   fn (name: str) -> fn (attrs: attr list) ->
@@ -330,7 +367,19 @@ module Tree {
               let (a, o) = _open_body true arena open_ids in
               go ts "in body" a o afe
           else
-            if _is_void name || selfc then
+            // Inside a foreign namespace, unless the tag says the author is back in
+            // HTML.
+            if _cur_ns arena open_ids != "" && not (_breaks_out name) then
+              let ns = _cur_ns arena open_ids in
+              let nm = if ns == "svg" then _svg_name name else name in
+              let (a2, id) = Nodes.element_ns arena (_parent open_ids) ns nm attrs in
+              go rest mode a2 (if selfc then open_ids else Cons (id, open_ids)) afe
+            else if _cur_ns arena open_ids != "" then
+              go ts mode arena (_leave_foreign arena open_ids) afe
+            else if name == "svg" || name == "math" then
+              let (a2, id) = Nodes.element_ns arena (_parent open_ids) name name attrs in
+              go rest mode a2 (if selfc then open_ids else Cons (id, open_ids)) afe
+            else if _is_void name || selfc then
               let (a, o) = push_el arena open_ids name attrs in
               go rest mode a (drop1 o) afe
             else if _open_same_kind arena open_ids name != "" then
@@ -367,7 +416,26 @@ module Tree {
                       else afe in
               go rest mode a o l
         | TEnd name ->
-          if name == "html" || name == "body" then
+          if _cur_ns arena open_ids != "" then
+            // Match on the local name: the element is called "svg path" and the tag
+            // says "path".
+            let rec find = fn (xs: int list) ->
+              match xs with
+              | Nil -> 0 - 1
+              | Cons (x, rest) ->
+                if Nodes.local_of arena x == name
+                   || _name_of arena x == name then x
+                else if Nodes.ns_of arena x == "" then 0 - 1
+                else find rest in
+            let hit = find open_ids in
+            if hit < 0 then go rest mode arena open_ids afe
+            else
+              let rec pop = fn (xs: int list) ->
+                match xs with
+                | Nil -> Nil
+                | Cons (x, r) -> if x == hit then r else pop r in
+              go rest mode arena (pop open_ids) afe
+          else if name == "html" || name == "body" then
             if mode == "in body" then go rest "after body" arena open_ids afe
             else go rest mode arena open_ids afe
           // A formatting element's end tag is the adoption agency's, and it says

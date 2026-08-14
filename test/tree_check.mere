@@ -102,4 +102,20 @@ let _ = check "text is fostered out of a table" "<table>x<td>y"
   "<html>\n  <head>\n  <body>\n    \"x\"\n    <table>\n      <tbody>\n        <tr>\n          <td>\n            \"y\"";
 let _ = check "and so is an element" "<table><b>x</b><td>y"
   "<html>\n  <head>\n  <body>\n    <b>\n      \"x\"\n    <table>\n      <tbody>\n        <tr>\n          <td>\n            \"y\"";
+// --- foreign content --------------------------------------------------------
+// Inside SVG the rules are the foreign ones, and the suite writes the namespace into
+// the name.
+let _ = check "svg children are in the svg namespace" "<svg><path>"
+  "<html>\n  <head>\n  <body>\n    <svg svg>\n      <svg path>";
+// SVG's names are case-sensitive; the tokenizer lower-cased them.
+let _ = check "camelCase names are put back" "<svg><foreignObject>"
+  "<html>\n  <head>\n  <body>\n    <svg svg>\n      <svg foreignObject>";
+// A tag on the breakout list means the author is back in HTML, so the svg closes.
+let _ = check "a breakout tag leaves the namespace" "<svg><path><p>x"
+  "<html>\n  <head>\n  <body>\n    <svg svg>\n      <svg path>\n    <p>\n      \"x\"";
+// An end tag inside SVG matches on the local name.
+let _ = check "an end tag matches the local name" "<svg><path></path><circle>"
+  "<html>\n  <head>\n  <body>\n    <svg svg>\n      <svg path>\n      <svg circle>";
+let _ = check "and math works the same way" "<math><mi>x"
+  "<html>\n  <head>\n  <body>\n    <math math>\n      <math mi>\n        \"x\"";
 0
