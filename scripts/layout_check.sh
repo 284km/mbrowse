@@ -22,15 +22,15 @@
 # The pass count is pinned exactly rather than as a floor: a floor lets a regression hide behind
 # a new pass.
 #
-# What has to exist for this number to move, in the order it is worth doing:
+# Five of the 126 pass, and the five are the ones with no text in normal flow. Everything else is
+# one thing: **a line of text has no height**. In these documents a line is 18 pixels tall and that
+# number is a font metric, so nothing here can produce it — a box holding only text comes out zero
+# high and every box below it is short by the same amount. The x coordinates and the widths already
+# match across the corpus, and margin collapsing works: a paragraph's 1em collapsing with the
+# body's 8px to 16 is why `body` starts at y=16 in both.
 #
-#   style resolution   the UA stylesheet is in every one of these expectations already —
-#                      `body` has an 8px margin and a `<p>` has 1em top and bottom. Without it
-#                      every box starts in the wrong place, which is most of the 126.
-#   text measurement   a line of text is 18px tall in these files, and that number is a font
-#                      metric. Nothing here can produce it yet, so a box containing only text
-#                      has no height. Not a guess about fonts — the absence of one.
-#   margin collapsing  visible in the expectations as soon as style resolution lands.
+# So the next slice is fonts, and after it this number should move a long way at once. What is
+# NOT missing, and would have been the guess: the box model, the cascade, and collapsing.
 #
 # Usage:  MERE=/path/to/mere.exe sh scripts/layout_check.sh
 set -e
@@ -38,7 +38,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "layout_check: no mere — set MERE=..." >&2; exit 1; }
 DATA="$ROOT/test/data/layout"
-EXPECT_PASS=${EXPECT_PASS:-0}
+EXPECT_PASS=${EXPECT_PASS:-5}
 
 T="${TMPDIR:-/tmp}/mbrowse_layout.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 

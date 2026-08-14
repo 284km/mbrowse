@@ -174,6 +174,24 @@ module Rules {
     | Nil -> Cons (RuleErr "empty", Nil)
     | Cons (_h, _t) -> Cons (declaration vs, Nil);
 
+  // Declarations out of component values that somebody else already parsed — a rule's block
+  // arrives as a `cval list`, not as text, and re-serialising it to hand back to a parser
+  // would put a round trip where there is no need for one.
+  let declarations = fn (vs0: cval list) ->
+    let rec go = fn (vs: cval list) -> fn (acc: rule list) ->
+      match _skip_ws vs with
+      | Nil -> list_rev acc
+      | Cons (head, rest) ->
+        if _is_bare head ";" then go rest acc
+        else
+          let is_at = match _at_name head with Some _n -> true | None -> false in
+          if is_at then
+            let (r, left) = _one (_skip_ws vs) in go left (Cons (r, acc))
+          else
+            let (chunk, left) = _upto_semi (_skip_ws vs) in
+            go left (Cons (declaration chunk, acc)) in
+    go vs0 Nil;
+
   let declaration_list = fn (src: str) ->
     let rec go = fn (vs: cval list) -> fn (acc: rule list) ->
       match _skip_ws vs with

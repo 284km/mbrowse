@@ -1,0 +1,450 @@
+// Style resolution: a DOM element and its ancestors in, the values layout needs out.
+//
+// Three things happen here and they are worth keeping apart, because each has its own way of
+// being wrong: the UA stylesheet says what an element is when nobody said otherwise, the
+// selectors say which rules reach it, and the cascade says which of the reaching rules wins.
+//
+// The property set is the one **block layout** needs and no more: display, width, height, and
+// the four sides of margin, padding and border. That set was not chosen — it was counted. The
+// 126 documents in `test/data/layout` use width 83 times, height 82, border 59, and the margins
+// and paddings a few dozen times between them; `position`, `float` and `overflow` are the next
+// three and each is a layout mode rather than a value, so they wait for their own slice.
+
+import "dom.mere";
+import "css_rules.mere";
+
+// Everything layout asks about an element. Lengths are already resolved to whole pixels except
+// where a length cannot be resolved without knowing the containing block, which is what `-1`
+// means for width and height: auto.
+type sty = {
+  display: str,
+  w: int, h: int,                      // -1 for auto
+  w_pct: int, h_pct: int,              // -1 when not a percentage
+  mt: int, mr: int, mb: int, ml: int,
+  pt: int, pr: int, pb: int, pl: int,
+  bt: int, br: int, bb: int, bl: int
+};
+
+// A tag, an id and a class — and ONE type serves both a selector's compound and an element,
+// because they are the same three fields asked in two directions. A selector's empty field means
+// "anything"; an element's empty field means "none". Two record types with the same fields is
+// also something this language will not resolve, which is how the shared shape got noticed.
+//
+// Three fields rather than a list of classes because no selector in the corpus has two classes,
+// and a list would be a general answer to a question nobody has asked yet.
+type elem = { tag: str, id: str, cls: str };
+
+// A selector is a chain of compounds with combinators between them, newest last. `child` says
+// whether the step before it must be the direct parent.
+type step = { s: elem, child: bool };
+
+
+// A declaration that reached an element, with what it took to reach it.
+type hit = { prop: str, value: str, spec: int, order: int };
+
+// A stylesheet, flattened to (selector chain, specificity, declarations). Done once per
+// document rather than per element: the UA sheet is parsed on every call otherwise, and note
+// 166's lesson is that a per-element cost is the one that turns into a square.
+type prepared = { steps: step list, spec: int, decls: rule list };
+
+module Style {
+  // The part of the standard's suggested rendering that block geometry can see. Written as CSS
+  // and parsed by the same parser everything else goes through, rather than as a table of
+  // constants: a table would be a second place where "what a `<p>` is" is written down, and the
+  // two would drift. The numbers here are in the expectations of all 126 documents — the 8px on
+  // body and the 1em on a paragraph are why every box in them starts where it does.
+  // Every `{` here is escaped as `\{`: a brace opens a string interpolation in this language, so
+  // an unescaped stylesheet is a program that tries to evaluate `display: block`.
+  let ua_sheet =
+    "html, body, div, p, blockquote, figure, figcaption, ol, ul, li, dl, dd, dt,"
+    ++ " h1, h2, h3, h4, h5, h6, pre, address, article, aside, footer, header,"
+    ++ " hgroup, main, nav, section, table, form, fieldset, legend, hr, center,"
+    ++ " dir, menu, details, summary, listing, plaintext, xmp, marquee, optgroup,"
+    ++ " option, frameset, frame, noframes, tbody, thead, tfoot, tr, td, th, caption,"
+    ++ " colgroup, col \{ display: block }\n"
+    ++ "head, style, script, meta, link, title, base \{ display: none }\n"
+    ++ "body \{ margin: 8px }\n"
+    ++ "p, blockquote, figure, dl, dd, ol, ul, dir, menu \{ margin-top: 1em; margin-bottom: 1em }\n"
+    ++ "pre, xmp, plaintext, listing \{ margin-top: 1em; margin-bottom: 1em }\n"
+    ++ "h1 \{ margin-top: 0.67em; margin-bottom: 0.67em }\n"
+    ++ "h2 \{ margin-top: 0.83em; margin-bottom: 0.83em }\n"
+    ++ "h3 \{ margin-top: 1em; margin-bottom: 1em }\n"
+    ++ "h4 \{ margin-top: 1.33em; margin-bottom: 1.33em }\n"
+    ++ "h5 \{ margin-top: 1.67em; margin-bottom: 1.67em }\n"
+    ++ "h6 \{ margin-top: 2.33em; margin-bottom: 2.33em }\n"
+    ++ "ol, ul, dir, menu \{ padding-left: 40px }\n"
+    ++ "blockquote, figure \{ margin-left: 40px; margin-right: 40px }\n"
+    ++ "table \{ border-spacing: 2px }\n";
+
+  // The font size everything `em` is relative to. One number, because `font-size` is not
+  // resolved yet: an em here is always the initial size. When font-size lands this becomes the
+  // computed value of the parent and this constant goes away.
+  let root_em = 16;
+
+  // ---- lengths ------------------------------------------------------------------
+
+  let _is_digit = fn (c: str) -> c != "" && c >= "0" && c <= "9";
+
+  // A CSS length in whole pixels, rounded the way the oracle rounds: to nearest. `em` uses the
+  // one font size there is. A percentage is NOT resolved here — it needs the containing block,
+  // which style resolution does not have, so it comes back as `-2` and layout asks again.
+  let px_of = fn (s0: str) ->
+    let s = to_lower s0 in
+    let n = str_len s in
+    if s == "auto" then 0 - 1
+    else if str_index_of s "%" >= 0 then 0 - 2
+    else
+      // The number, then the unit. Written by hand rather than with the tokenizer because a
+      // declaration's value is already a component value list by the time it gets here and this
+      // is the last mile of one token.
+      let rec num_end = fn (i: int) ->
+        if i < n && (_is_digit (char_at s i) || char_at s i == "."
+                     || char_at s i == "-" || char_at s i == "+")
+        then num_end (i + 1) else i in
+      let e = num_end 0 in
+      if e == 0 then 0
+      else
+        let mag = float_of_str (substring s 0 e) in
+        let unit = substring s e n in
+        let scale =
+          if unit == "em" then float_of_int root_em
+          else if unit == "px" || unit == "" then 1.0
+          // The absolute units, in the ratios the standard fixes them at.
+          else if unit == "pt" then 4.0 / 3.0
+          else if unit == "pc" then 16.0
+          else if unit == "in" then 96.0
+          else if unit == "cm" then 96.0 / 2.54
+          else if unit == "mm" then 9.6 / 2.54
+          else 1.0 in
+        let v = mag * scale in
+        int_of_float (if v < 0.0 then v - 0.5 else v + 0.5);
+
+  // The percentage in a value, or -1. Layout resolves these against the containing block.
+  let pct_of = fn (s: str) ->
+    if str_index_of s "%" < 0 then 0 - 1
+    else
+      let i = str_index_of s "%" in
+      int_of_float (float_of_str (substring s 0 i) + 0.5);
+
+  // ---- selectors ----------------------------------------------------------------
+
+
+
+  let _empty_simple = elem { tag = "", id = "", cls = "" };
+
+  // Component values to steps. The hash carries its type flag joined by U+0001 — the CSS
+  // tokenizer puts it there — so the id is what comes before that.
+  let parse_sel = fn (vs: cval list) ->
+    let rec go = fn (vs: cval list) -> fn (cur: elem) -> fn (child: bool) ->
+                 fn (acc: step list) ->
+      match vs with
+      | Nil ->
+        if cur.tag == "" && cur.id == "" && cur.cls == "" then list_rev acc
+        else list_rev (Cons (step { s = cur, child = child }, acc))
+      | Cons (v, rest) ->
+        match v with
+        | Named (k, val) ->
+          if k == "ident" then go rest (elem { tag = to_lower val, id = cur.id,
+                                                 cls = cur.cls }) child acc
+          else if k == "hash" then
+            let i = str_index_of val (chr 1) in
+            let id = if i < 0 then val else substring val 0 i in
+            go rest (elem { tag = cur.tag, id = id, cls = cur.cls }) child acc
+          else go rest cur child acc
+        | Bare s ->
+          if s == "." then
+            match rest with
+            | Cons (Named (_k2, cname), r2) ->
+              go r2 (elem { tag = cur.tag, id = cur.id, cls = to_lower cname }) child acc
+            | _ -> go rest cur child acc
+          else if s == ">" then
+            // A combinator ends the compound before it. The `>` sets the flag on the NEXT one,
+            // because "must be the direct parent" is a statement about the step that follows.
+            let acc2 = if cur.tag == "" && cur.id == "" && cur.cls == "" then acc
+                       else Cons (step { s = cur, child = child }, acc) in
+            go rest _empty_simple true acc2
+          else if s == " " then
+            // Whitespace next to a `>` is padding, not a combinator. With nothing accumulated
+            // there is no compound to close and no descendant relationship to state, so the flag
+            // is left exactly as it is — clearing it here turned `div > span` back into
+            // `div span`, and the `>` had already been read.
+            if cur.tag == "" && cur.id == "" && cur.cls == "" then
+              go rest _empty_simple child acc
+            else
+              let acc2 = Cons (step { s = cur, child = child }, acc) in
+              (match rest with
+               | Cons (Bare ">", _r) -> go rest _empty_simple child acc2
+               | _ -> go rest _empty_simple false acc2)
+          else go rest cur child acc
+        | Block (_b, _k) -> go rest cur child acc
+        | Func (_f, _k) -> go rest cur child acc in
+    go vs _empty_simple false Nil;
+
+  // Specificity, as the one number the cascade compares. Ids count 100, classes 10, tags 1 —
+  // the standard's three-column tuple flattened, which is exact as long as no selector has a
+  // hundred of anything, and none in the corpus has two.
+  let specificity = fn (steps: step list) ->
+    let rec go = fn (xs: step list) -> fn (acc: int) ->
+      match xs with
+      | Nil -> acc
+      | Cons (st, rest) ->
+        go rest (acc + (if st.s.id == "" then 0 else 100)
+                     + (if st.s.cls == "" then 0 else 10)
+                     + (if st.s.tag == "" then 0 else 1)) in
+    go steps 0;
+
+
+  // The class attribute is a space-separated list, and a substring test would match `foobar` for
+  // `foo`. Compared token by token.
+  let _has_class = fn (list: str) -> fn (want: str) ->
+    let n = str_len list in
+    let rec go = fn (i: int) -> fn (cur: str) ->
+      if i >= n then cur == want
+      else
+        let c = char_at list i in
+        if c == " " || c == "\t" || c == "\n" then
+          (if cur == want then true else go (i + 1) "")
+        else go (i + 1) (cur ++ to_lower c) in
+    go 0 "";
+
+  let _matches_simple = fn (e: elem) -> fn (s: elem) ->
+    (s.tag == "" || s.tag == e.tag)
+    && (s.id == "" || s.id == e.id)
+    && (s.cls == "" || _has_class e.cls s.cls);
+
+  // Does the chain match, given the element and its ancestors nearest first? Walked from the
+  // last step backwards: the last step is about the element itself, and everything before it is
+  // about somewhere above.
+  let matches = fn (steps: step list) -> fn (e: elem) -> fn (ancestors: elem list) ->
+    let rev = list_rev steps in
+    match rev with
+    | Nil -> false
+    | Cons (last, up) ->
+      if not (_matches_simple e last.s) then false
+      else
+        // Each remaining step consumes ancestors: a child step must match the very next one, a
+        // descendant step may skip any number. Backtracking is not needed for the shapes in the
+        // corpus and its absence is a real limitation, written here rather than discovered:
+        // `div p span` where the outer div also matches `p` would need it.
+        // `want_child` belongs to the step BELOW the one being matched, not to this one. `>` sets
+        // the flag on the compound after it — "my parent must be that" — and this walk runs the
+        // other way, so the flag has to be carried down from the step already matched. Reading it
+        // off the current step made `div > span` match a span two levels under a div.
+        let rec go = fn (xs: step list) -> fn (anc: elem list) -> fn (want_child: bool) ->
+          match xs with
+          | Nil -> true
+          | Cons (st, rest) ->
+            let rec find = fn (a: elem list) -> fn (first: bool) ->
+              match a with
+              | Nil -> false
+              | Cons (x, more) ->
+                if _matches_simple x st.s then go rest more st.child
+                else if want_child && first then false
+                else find more false in
+            find anc true in
+        go up ancestors last.child;
+
+  // ---- the cascade --------------------------------------------------------------
+
+
+  // The value of a component value list, flattened back to text. Declarations arrive as
+  // component values and the properties here want a word or a length, so this is the last mile.
+  //
+  // The care is all in the numbers. The CSS tokenizer packs a number's extra fields after a
+  // U+0001 — representation, integer-or-number, and for a dimension its unit — so a consumer that
+  // takes the text before the separator gets `1` out of `1em` and never knows. That is exactly
+  // what happened: every `em` in the UA stylesheet resolved to one pixel, a paragraph's margin
+  // came out as 1 instead of 16, and the only visible symptom was a document eight pixels too
+  // short. A packed field is a field somebody has to unpack.
+  let value_text = fn (vs: cval list) ->
+    let field = fn (s: str) -> fn (i: int) ->
+      let rec go = fn (at: int) -> fn (n: int) -> fn (acc: str) ->
+        if at >= str_len s then (if n == i then acc else "")
+        else if char_at s at == chr 1 then
+          (if n == i then acc else go (at + 1) (n + 1) "")
+        else go (at + 1) n (acc ++ char_at s at) in
+      go 0 0 "" in
+    let one = fn (v: cval) ->
+      match v with
+      | Bare s -> s
+      | Named (k, s) ->
+        if k == "dimension" then field s 0 ++ field s 2
+        else if k == "percentage" then field s 0 ++ "%"
+        else if k == "number" then field s 0
+        else if k == "hash" then "#" ++ field s 0
+        else s
+      | Block (_b, _k) -> ""
+      | Func (_f, _k) -> "" in
+    let rec go = fn (xs: cval list) -> fn (acc: str) ->
+      match xs with
+      | Nil -> acc
+      | Cons (v, rest) -> go rest (acc ++ one v) in
+    str_trim (go vs "");
+
+  // ---- the cascade ---------------------------------------------------------------
+
+  // A selector list split on its top-level commas: `p, div { ... }` is two rules that happen to
+  // share a block, and the cascade compares them one at a time.
+  let _split_commas = fn (vs: cval list) ->
+    let rec go = fn (xs: cval list) -> fn (cur: cval list) -> fn (acc: cval list list) ->
+      match xs with
+      | Nil -> list_rev (Cons (list_rev cur, acc))
+      | Cons (v, rest) ->
+        match v with
+        | Bare c -> if c == "," then go rest Nil (Cons (list_rev cur, acc))
+                    else go rest (Cons (v, cur)) acc
+        | Named (_k, _x) -> go rest (Cons (v, cur)) acc
+        | Block (_b, _k) -> go rest (Cons (v, cur)) acc
+        | Func (_f, _k) -> go rest (Cons (v, cur)) acc in
+    go vs Nil Nil;
+
+  // A stylesheet, flattened to (selector chain, specificity, declarations) once per document
+  // rather than once per element. Note 166's lesson is that the per-element cost is the one that
+  // turns into a square.
+  let prepare = fn (src: str) ->
+    let rec go = fn (rs: rule list) -> fn (acc: prepared list) ->
+      match rs with
+      | Nil -> list_rev acc
+      | Cons (r, rest) ->
+        match r with
+        | QualRule (pre, body) ->
+          let rec each = fn (groups: cval list list) -> fn (a: prepared list) ->
+            match groups with
+            | Nil -> a
+            | Cons (g, more) ->
+              let st = parse_sel g in
+              match st with
+              | Nil -> each more a
+              | Cons (_x, _y) ->
+                each more (Cons (prepared { steps = st, spec = specificity st,
+                                            decls = Rules.declarations body }, a)) in
+          go rest (each (_split_commas pre) acc)
+        | AtRule (_n, _p, _b) -> go rest acc
+        | Decl (_n, _v, _i) -> go rest acc
+        | RuleErr _w -> go rest acc in
+    go (Rules.stylesheet src) Nil;
+
+  // Every declaration that reaches this element, with what it took to reach it. `origin` separates
+  // the UA sheet from the author's and is folded into the specificity, so the author always wins
+  // whatever the selectors say — a plain specificity comparison across origins would let a UA
+  // `body { margin: 8px }` beat an author's `#x { margin: 0 }`, and it must not.
+  let hits_for = fn (sheets: prepared list) -> fn (origin: int) -> fn (e: elem) ->
+                 fn (ancestors: elem list) -> fn (start: int) ->
+    let rec go = fn (ps: prepared list) -> fn (i: int) -> fn (acc: hit list) ->
+      match ps with
+      | Nil -> acc
+      | Cons (pr, rest) ->
+        if not (matches pr.steps e ancestors) then go rest (i + 1) acc
+        else
+          let rec each = fn (ds: rule list) -> fn (a: hit list) ->
+            match ds with
+            | Nil -> a
+            | Cons (d, more) ->
+              match d with
+              | Decl (name, value, _imp) ->
+                each more (Cons (hit { prop = to_lower name, value = value_text value,
+                                       spec = origin * 100000 + pr.spec,
+                                       order = start + i }, a))
+              | AtRule (_n, _p, _b) -> each more a
+              | QualRule (_p, _b) -> each more a
+              | RuleErr _w -> each more a in
+          go rest (i + 1) (each pr.decls acc) in
+    go sheets 0 Nil;
+
+  // The winning value for a property, or "" when nothing said anything. Specificity first, then
+  // document order — the cascade in the only two terms this needs, since nothing here has
+  // `!important` or a layer.
+  let winner = fn (hs: hit list) -> fn (prop: str) ->
+    let rec go = fn (xs: hit list) -> fn (best: str) -> fn (bs: int) -> fn (bo: int) ->
+      match xs with
+      | Nil -> best
+      | Cons (h, rest) ->
+        if h.prop != prop then go rest best bs bo
+        else if h.spec > bs || (h.spec == bs && h.order >= bo) then
+          go rest h.value h.spec h.order
+        else go rest best bs bo in
+    go hs "" (0 - 1) (0 - 1);
+
+  // The four sides of a shorthand, in the standard's order: one value is all four, two are
+  // vertical then horizontal, three add the bottom, four go clockwise from the top.
+  let _sides = fn (v: str) ->
+    let parts = list_filter (str_split v " ") (fn (x: str) -> x != "") in
+    match parts with
+    | Nil -> ("", "", "", "")
+    | Cons (a, r1) ->
+      match r1 with
+      | Nil -> (a, a, a, a)
+      | Cons (b, r2) ->
+        match r2 with
+        | Nil -> (a, b, a, b)
+        | Cons (c, r3) ->
+          match r3 with
+          | Nil -> (a, b, c, b)
+          | Cons (d, _r4) -> (a, b, c, d);
+
+  // The width in a `border` shorthand. It is three values in any order and only one is a length;
+  // the other two are a style and a colour. `border: none` is a ZERO width whatever else is
+  // there, which is why the style word is read rather than skipped over.
+  let _border_width = fn (v: str) ->
+    let parts = list_filter (str_split (to_lower v) " ") (fn (x: str) -> x != "") in
+    let rec go = fn (xs: str list) -> fn (w: int) -> fn (none: bool) ->
+      match xs with
+      | Nil -> if none then 0 else w
+      | Cons (x, rest) ->
+        if x == "none" || x == "hidden" then go rest w true
+        else if x == "thin" then go rest 1 none
+        else if x == "medium" then go rest 3 none
+        else if x == "thick" then go rest 5 none
+        else if x != "" && (_is_digit (char_at x 0) || char_at x 0 == ".") then
+          go rest (px_of x) none
+        else go rest w none in
+    // A border with a style and no width is `medium`, which is 3px.
+    go parts 3 false;
+
+  // ---- what layout asks ----------------------------------------------------------
+
+  let resolve = fn (hs: hit list) -> fn (tag: str) ->
+    let get = fn (p: str) -> winner hs p in
+    // A longhand beats the shorthand it belongs to when both are present, which is only right
+    // because `winner` already picked the winning shorthand and the winning longhand separately.
+    let side = fn (short: str) -> fn (long: str) -> fn (which: int) ->
+      let l = get long in
+      if l != "" then l
+      else
+        let (t, r, b, ll) = _sides (get short) in
+        if which == 0 then t else if which == 1 then r
+        else if which == 2 then b else ll in
+    let len = fn (v: str) -> if v == "" then 0 else let q = px_of v in if q < 0 then 0 else q in
+    let bw = fn (which: int) ->
+      let one = get ("border-" ++ (if which == 0 then "top" else if which == 1 then "right"
+                                   else if which == 2 then "bottom" else "left")) in
+      let all = get "border" in
+      let stw = to_lower (get "border-style") in
+      if one != "" then _border_width one
+      else if all != "" then _border_width all
+      else if stw != "" && stw != "none" && stw != "hidden" then 3
+      else 0 in
+    // Not named in either sheet means `inline`, which is the initial value and the right answer
+    // for every tag the UA sheet does not mention.
+    let disp = let d = get "display" in if d != "" then to_lower d else "inline" in
+    let wv = get "width" in
+    let hv = get "height" in
+    sty {
+      display = disp,
+      w = if wv == "" || to_lower wv == "auto" then 0 - 1
+          else let q = px_of wv in if q == 0 - 2 then 0 - 1 else q,
+      h = if hv == "" || to_lower hv == "auto" then 0 - 1
+          else let q = px_of hv in if q == 0 - 2 then 0 - 1 else q,
+      w_pct = if wv == "" then 0 - 1 else pct_of wv,
+      h_pct = if hv == "" then 0 - 1 else pct_of hv,
+      mt = len (side "margin" "margin-top" 0),
+      mr = len (side "margin" "margin-right" 1),
+      mb = len (side "margin" "margin-bottom" 2),
+      ml = len (side "margin" "margin-left" 3),
+      pt = len (side "padding" "padding-top" 0),
+      pr = len (side "padding" "padding-right" 1),
+      pb = len (side "padding" "padding-bottom" 2),
+      pl = len (side "padding" "padding-left" 3),
+      bt = bw 0, br = bw 1, bb = bw 2, bl = bw 3
+    };
+}

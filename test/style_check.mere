@@ -1,0 +1,102 @@
+// Style resolution, on the pieces that decide a number.
+//
+// The first check here is the one that earned its place: `1em` came out of the CSS tokenizer as a
+// dimension whose unit sits after a U+0001, and the code that flattened a declaration's value took
+// the text before the separator. So every `em` in the UA stylesheet resolved to one pixel, a
+// paragraph's margin was 1 instead of 16, and the only symptom was a document a few pixels short.
+
+import "../src/style.mere";
+
+let check = fn (label: str) -> fn (b: bool) ->
+  print (label ++ ": " ++ (if b then "ok" else "MISMATCH"));
+
+// A value packed with its unit has to come back with it.
+let _ = check "a dimension keeps its unit"
+  (Style.value_text (Css.values "1em") == "1em");
+let _ = check "a percentage keeps its sign"
+  (Style.value_text (Css.values "50%") == "50%");
+let _ = check "a bare number does not gain one"
+  (Style.value_text (Css.values "0") == "0");
+
+// Lengths, in the units the corpus uses.
+let _ = check "px is itself" (Style.px_of "12px" == 12);
+let _ = check "em is the root size" (Style.px_of "1em" == 16);
+let _ = check "a fractional em rounds to nearest" (Style.px_of "0.67em" == 11);
+let _ = check "auto is not a length" (Style.px_of "auto" == 0 - 1);
+let _ = check "a percentage is not resolved here" (Style.px_of "50%" == 0 - 2);
+let _ = check "pt is four thirds of a px" (Style.px_of "12pt" == 16);
+
+// The UA stylesheet, through the same parser as everything else.
+let ua = Style.prepare Style.ua_sheet;
+let of_tag = fn (t: str) -> fn (anc: elem list) ->
+  Style.resolve (Style.hits_for ua 0 (elem { tag = t, id = "", cls = "" }) anc 0) t;
+let body_anc = Cons (elem { tag = "body", id = "", cls = "" }, Nil);
+let _ = check "body has its eight pixels" ((of_tag "body" Nil).ml == 8);
+let _ = check "a paragraph has its em" ((of_tag "p" body_anc).mt == 16);
+let _ = check "and nothing sideways" ((of_tag "p" body_anc).ml == 0);
+let _ = check "a div is a block" ((of_tag "div" body_anc).display == "block");
+let _ = check "a span is not" ((of_tag "span" body_anc).display == "inline");
+let _ = check "the head is not drawn" ((of_tag "head" Nil).display == "none");
+let _ = check "a list is indented" ((of_tag "ul" body_anc).pl == 40);
+
+// Selectors. An id beats a class beats a tag, and the author beats the UA whatever they are.
+let sheet = Style.prepare
+  ("div \{ width: 1px }\n.c \{ width: 2px }\n#i \{ width: 3px }\n"
+   ++ "div p \{ width: 4px }\ndiv > span \{ width: 5px }\n");
+let w_of = fn (e: elem) -> fn (anc: elem list) ->
+  (Style.resolve (Style.hits_for sheet 1 e anc 0) e.tag).w;
+let _ = check "a tag matches"
+  (w_of (elem { tag = "div", id = "", cls = "" }) Nil == 1);
+let _ = check "a class beats a tag"
+  (w_of (elem { tag = "div", id = "", cls = "c" }) Nil == 2);
+let _ = check "an id beats a class"
+  (w_of (elem { tag = "div", id = "i", cls = "c" }) Nil == 3);
+let _ = check "a descendant selector reaches through"
+  (w_of (elem { tag = "p", id = "", cls = "" })
+        (Cons (elem { tag = "section", id = "", cls = "" },
+               Cons (elem { tag = "div", id = "", cls = "" }, Nil))) == 4);
+let _ = check "a child selector does not"
+  (w_of (elem { tag = "span", id = "", cls = "" })
+        (Cons (elem { tag = "section", id = "", cls = "" },
+               Cons (elem { tag = "div", id = "", cls = "" }, Nil))) == 0 - 1);
+let _ = check "but it does when it is the parent"
+  (w_of (elem { tag = "span", id = "", cls = "" })
+        (Cons (elem { tag = "div", id = "", cls = "" }, Nil)) == 5);
+// A class attribute is a list, so `foo` must not match `foobar`.
+let cls_sheet = Style.prepare ".foo \{ width: 7px }\n";
+let _ = check "a class is matched whole, not as a substring"
+  ((Style.resolve (Style.hits_for cls_sheet 1
+      (elem { tag = "div", id = "", cls = "foobar" }) Nil 0) "div").w == 0 - 1);
+let _ = check "and matched when it is one of several"
+  ((Style.resolve (Style.hits_for cls_sheet 1
+      (elem { tag = "div", id = "", cls = "a foo b" }) Nil 0) "div").w == 7);
+
+// The author wins over the UA even with a weaker selector, because origin outranks specificity.
+let author = Style.prepare "div \{ margin-top: 3px }\n";
+let both = Style.resolve
+  (list_append (Style.hits_for ua 0 (elem { tag = "p", id = "", cls = "" }) body_anc 0)
+               (Style.hits_for author 1 (elem { tag = "p", id = "", cls = "" }) body_anc 0)) "p";
+let _ = check "the UA still applies where the author is silent" (both.mt == 16);
+
+// Shorthands. Four sides from one, two, three or four values, and a border's width found among
+// words that are not lengths.
+let sh = Style.prepare
+  ("#a \{ margin: 1px }\n#b \{ margin: 1px 2px }\n#c \{ margin: 1px 2px 3px }\n"
+   ++ "#d \{ margin: 1px 2px 3px 4px }\n#e \{ margin: 5px; margin-top: 9px }\n"
+   ++ "#f \{ border: solid 2px black }\n#g \{ border: none }\n#h \{ border: solid black }\n");
+let by_id = fn (i: str) ->
+  Style.resolve (Style.hits_for sh 1 (elem { tag = "div", id = i, cls = "" }) Nil 0) "div";
+let a1 = by_id "a";
+let _ = check "one value is all four" (a1.mt == 1 && a1.mr == 1 && a1.mb == 1 && a1.ml == 1);
+let b1 = by_id "b";
+let _ = check "two are vertical then horizontal" (b1.mt == 1 && b1.mr == 2 && b1.mb == 1 && b1.ml == 2);
+let c1 = by_id "c";
+let _ = check "three add the bottom" (c1.mt == 1 && c1.mr == 2 && c1.mb == 3 && c1.ml == 2);
+let d1 = by_id "d";
+let _ = check "four go clockwise" (d1.mt == 1 && d1.mr == 2 && d1.mb == 3 && d1.ml == 4);
+let e1 = by_id "e";
+let _ = check "a longhand beats the shorthand it belongs to" (e1.mt == 9 && e1.ml == 5);
+let _ = check "a border's width is the length among the words" ((by_id "f").bt == 2);
+let _ = check "border none is zero" ((by_id "g").bt == 0);
+let _ = check "a border with a style and no width is medium" ((by_id "h").bt == 3);
+0
