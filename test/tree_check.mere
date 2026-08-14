@@ -58,4 +58,17 @@ let _ = check "head then body" "<head><meta charset=utf-8></head><p>x"
 // The standard has them as one loop for exactly this reason. Changing the shape to
 // match is the next piece of work, and it is a change to the signature rather than
 // to any of the rules above.
+// The half of the tokenizer/tree loop the builder owns. `Tree.build` cannot use it
+// yet — it takes a token list, and by then the choice has been made — but the
+// answer is a fact about elements and belongs here either way, so it is written and
+// checked before the restructure that consumes it.
+let st = fn (name: str) -> fn (want: str) ->
+  print ("content_state " ++ name ++ ": " ++ pass (Tree.content_state name == want));
+let _ = st "title" "RCDATA state";
+let _ = st "textarea" "RCDATA state";
+let _ = st "style" "RAWTEXT state";
+let _ = st "script" "Script data state";
+let _ = st "plaintext" "PLAINTEXT state";
+let _ = st "p" "Data state";
+let _ = st "div" "Data state";
 0

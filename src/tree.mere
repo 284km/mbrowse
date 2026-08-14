@@ -25,6 +25,21 @@ import "dom.mere";
 type frame = { fname: str, fattrs: attr list, fkids: node list };
 
 module Tree {
+  // Which tokenizer state an element's content is in. This is the half of the loop
+  // the tree builder owns: the tokenizer cannot know, because the answer depends on
+  // which element was just opened, and by the time a token list exists the choice
+  // has already been made.
+  //
+  // It is a pure function of the tag name, and it is here rather than in the
+  // tokenizer because it is a fact about elements, not about characters.
+  let content_state = fn (name: str) ->
+    if name == "title" || name == "textarea" then "RCDATA state"
+    else if name == "style" || name == "xmp" || name == "iframe"
+            || name == "noembed" || name == "noframes" then "RAWTEXT state"
+    else if name == "script" then "Script data state"
+    else if name == "plaintext" then "PLAINTEXT state"
+    else "Data state";
+
   let _close = fn (f: frame) -> Element (f.fname, f.fattrs, list_rev f.fkids);
 
   // Add a finished node to the innermost open element, or to the document when
