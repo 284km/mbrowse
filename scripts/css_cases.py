@@ -56,7 +56,15 @@ def render(expected):
         elif isinstance(v, list) and len(v) == 2 and isinstance(v[1], str):
             lines.append("N\t%s\t%s" % (v[0], esc(v[1])))
         elif isinstance(v, list) and v and v[0] in ("number", "dimension", "percentage"):
-            return (None, "numeric-fields")
+            # Everything the tokenizer decides, and not the numeric value. The value is
+            # arithmetic on the representation — the suite writes `+45.0` as 45 — so
+            # comparing it would be comparing how two languages print a float, which is
+            # not what this gate is for. The representation, the integer-or-number
+            # decision and the unit are all tokenizer decisions and are all compared.
+            if v[0] == "dimension":
+                lines.append("N\tdimension\t%s\t%s\t%s" % (esc(v[1]), v[3], esc(v[4])))
+            else:
+                lines.append("N\t%s\t%s\t%s" % (v[0], esc(v[1]), v[3]))
         else:
             return (None, "nested")
     return ("\n".join(lines), None)

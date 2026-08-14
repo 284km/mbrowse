@@ -163,9 +163,16 @@ module Css {
           else if how == "eof" then
             go e (Cons (Named ("error", "eof-in-string"), Cons (Named ("string", v), out)))
           else go e (Cons (Named ("string", v), out))
-        else if c == "@" && _is_name_start (at (i + 1)) then
-          let e = name_end (i + 1) in
-          go e (Cons (Named ("at-keyword", substring src (i + 1) e), out))
+        // `@-0media` is not an at-keyword: what follows the at sign has to be able to
+        // start an identifier, and a dash can only do that before a name start, another
+        // dash, or an escape — the same rule as an identifier, because it is one.
+        else if c == "@" && (_is_name_start (at (i + 1))
+                             || (at (i + 1) == "\\" && esc_ok (i + 1))
+                             || (at (i + 1) == "-"
+                                 && (_is_name_start (at (i + 2)) || at (i + 2) == "-"
+                                     || (at (i + 2) == "\\" && esc_ok (i + 2))))) then
+          let (v, e) = name_from (i + 1) in
+          go e (Cons (Named ("at-keyword", v), out))
         else if c == "#" && _is_name (at (i + 1)) then
           let e = name_end (i + 1) in
           go e (Cons (Named ("hash", substring src (i + 1) e), out))
@@ -183,11 +190,22 @@ module Css {
             then digits (if _is_digit (at (k2 + 1)) then k2 + 1 else k2 + 2)
             else k2 in
           let num = substring src i k3 in
-          if at k3 == "%" then go (k3 + 1) (Cons (Named ("percentage", num), out))
-          else if _is_name_start (at k3) then
-            let e = name_end k3 in
-            go e (Cons (Named ("dimension", num), out))
-          else go k3 (Cons (Named ("number", num), out))
+          // The suite asks for the representation *and* whether it is an integer, and
+          // they are different questions: `+45.0` is a number whose value is 45, and the
+          // representation is what was written. A dimension also carries its unit.
+          let ntype =
+            if str_index_of num "." >= 0 || str_index_of num "e" >= 0
+               || str_index_of num "E" >= 0 then "number" else "integer" in
+          if at k3 == "%" then
+            go (k3 + 1) (Cons (Named ("percentage", num ++ chr 1 ++ ntype), out))
+          // A unit is an identifier, so it may begin with a dash the same way one may:
+          // `12.0-red` is twelve of the unit `-red`, not a number and an identifier.
+          else if _is_name_start (at k3) || (at k3 == "\\" && esc_ok k3)
+                  || (at k3 == "-" && (_is_name_start (at (k3 + 1)) || at (k3 + 1) == "-"
+                                       || (at (k3 + 1) == "\\" && esc_ok (k3 + 1)))) then
+            let (u, e) = name_from k3 in
+            go e (Cons (Named ("dimension", num ++ chr 1 ++ ntype ++ chr 1 ++ u), out))
+          else go k3 (Cons (Named ("number", num ++ chr 1 ++ ntype), out))
         // Before the identifier rules, not after: `-->` has to win over the `-` that
         // starts a name, or `--` is taken as an identifier and the CDC never happens.
         // The standard checks it first for exactly that reason.
@@ -280,6 +298,9 @@ module Css {
     let one = fn (v: cval) ->
       match v with
       | Bare s -> "B\t" ++ esc s
-      | Named (k, s) -> "N\t" ++ k ++ "\t" ++ esc s in
+      // The extra fields of a number come through joined by U+0001 rather than by a
+      // tab, because `esc` turns a tab into two characters and a field separator that
+      // the escaping eats is not a separator. Translated here, after escaping.
+      | Named (k, s) -> "N\t" ++ k ++ "\t" ++ str_replace (esc s) (chr 1) "\t" in
     str_join "\n" (list_map vs one);
 }
