@@ -47,9 +47,14 @@
 // rewrite the tree, plus a furthest block *reported* rather than guessed at, so a
 // caller can tell "done" from "not attempted".
 //
-// What is left is two things, in this order:
+// The builder is on the arena as of this commit: a frame stack became an arena plus a
+// stack of ids, and `_close` is gone — a popped element stays where it is and stays
+// addressable. 95 of 189 before and after, which is what a change of representation
+// with no change of behaviour is supposed to look like.
 //
-// 1. **This builder moves onto the arena.** A frame stack becomes an arena plus a
+// What is left:
+//
+// 1. ~~This builder moves onto the arena.~~ Done. A frame stack becomes an arena plus a
 //    stack of ids, and `_close` disappears — a node that is popped stays where it is
 //    instead of being folded into its parent. That is the whole change, and it is the
 //    one piece of work here whose success looks like *nothing happening*: 95 of 189
@@ -71,17 +76,12 @@
 
 import "mere-html/tokenizer.mere";
 import "dom.mere";
-
-// The tree is built by appending to the open elements, so it is easier to hold it
-// as a stack of (name, attrs, reversed children) and fold it up at the end than to
-// rebuild a persistent tree at every step.
-type frame = { fname: str, fattrs: attr list, fkids: node list };
+import "nodes.mere";
 
 module Tree {
   // Which tokenizer state an element's content is in. This is the half of the loop
   // the tree builder owns: the tokenizer cannot know, because the answer depends on
-  // which element was just opened, and by the time a token list exists the choice
-  // has already been made.
+  // which element was just opened.
   //
   // It is a pure function of the tag name, and it is here rather than in the
   // tokenizer because it is a fact about elements, not about characters.
@@ -93,90 +93,27 @@ module Tree {
     else if name == "plaintext" then "PLAINTEXT state"
     else "Data state";
 
-  let _close = fn (f: frame) -> Element (f.fname, f.fattrs, list_rev f.fkids);
-
-  // Add a finished node to the innermost open element, or to the document when
-  // nothing is open.
-  // Adjacent text is one node, not two. The tokenizer coalesces the characters it
-  // emits in a run, but a run can be interrupted by something that produces no node
-  // at all — an ignored end tag, a comment already placed — and the two halves have
-  // to join here or the tree has a shape no document describes.
-  let _merge = fn (kids: node list) -> fn (n: node) ->
-    match (n, kids) with
-    | (Text b, Cons (Text a, rest)) -> Cons (Text (a ++ b), rest)
-    | _ -> Cons (n, kids);
-
-  let _add = fn (stack: frame list) -> fn (roots: node list) -> fn (n: node) ->
-    match stack with
-    | Nil -> (stack, _merge roots n)
-    | Cons (top, rest) ->
-      (Cons (frame { fname = top.fname, fattrs = top.fattrs,
-                     fkids = _merge top.fkids n }, rest), roots);
-
-  let _push = fn (stack: frame list) -> fn (name: str) -> fn (attrs: attr list) ->
-    Cons (frame { fname = name, fattrs = attrs, fkids = Nil }, stack);
-
-  // Pop one element and give it to its parent.
-  let _pop = fn (stack: frame list) -> fn (roots: node list) ->
-    match stack with
-    | Nil -> (stack, roots)
-    | Cons (top, rest) -> _add rest roots (_close top);
-
-  let rec _pop_all = fn (stack: frame list) -> fn (roots: node list) ->
-    match stack with
-    | Nil -> list_rev roots
-    | _ -> let (s, r) = _pop stack roots in _pop_all s r;
-
-  let rec _open_has = fn (stack: frame list) -> fn (name: str) ->
-    match stack with
-    | Nil -> false
-    | Cons (f, rest) -> if f.fname == name then true else _open_has rest name;
-
-  // Pop until `name` has been popped. The standard's "generate implied end tags"
-  // and this are the same idea: an unclosed `<li>` is closed by whatever closes
-  // around it, not by an error.
-  let rec _pop_through = fn (stack: frame list) -> fn (roots: node list) ->
-                         fn (name: str) ->
-    match stack with
-    | Nil -> (stack, roots)
-    | Cons (top, _) ->
-      let (s, r) = _pop stack roots in
-      if top.fname == name then (s, r) else _pop_through s r name;
-
-  // Elements that never have children and are closed by their own start tag.
-  let _is_void = fn (n: str) ->
-    n == "area" || n == "base" || n == "br" || n == "col" || n == "embed"
-    || n == "hr" || n == "img" || n == "input" || n == "link" || n == "meta"
-    || n == "param" || n == "source" || n == "track" || n == "wbr";
-
   let _is_heading = fn (n: str) ->
     n == "h1" || n == "h2" || n == "h3" || n == "h4" || n == "h5" || n == "h6";
 
-  // The elements that close a same-kind open element rather than nesting inside it:
-  // a second `<li>` ends the first, `<h2>` ends an open `<h1>`, `<dd>` ends a `<dt>`.
-  // Documents rely on this constantly and write neither end tag.
   let _same_kind = fn (open_name: str) -> fn (name: str) ->
     if _is_heading name then _is_heading open_name
     else if name == "li" then open_name == "li"
     else if name == "dd" || name == "dt" then open_name == "dd" || open_name == "dt"
     else false;
 
-  let rec _open_same_kind = fn (stack: frame list) -> fn (name: str) ->
-    match stack with
-    | Nil -> ""
-    | Cons (f, rest) ->
-      if _same_kind f.fname name then f.fname
-      // A same-kind element only counts while nothing block-level intervenes:
-      // `<li><div><li>` is two list items, `<li><div>` alone is not.
-      else if f.fname == "div" || f.fname == "p" || f.fname == "body"
-              || f.fname == "html" then ""
-      else _open_same_kind rest name;
+  let _is_void = fn (n: str) ->
+    n == "area" || n == "base" || n == "br" || n == "col" || n == "embed"
+    || n == "hr" || n == "img" || n == "input" || n == "link" || n == "meta"
+    || n == "param" || n == "source" || n == "track" || n == "wbr";
 
-  // The standard's "special" elements. An end tag that does not match the innermost
-  // open element walks up looking for its own, and **stops** at one of these: that is
-  // why `<span><button>foo</span>bar` leaves the button open and puts bar inside it
-  // rather than closing both. Popping through unconditionally is the difference
-  // between recovering and guessing.
+  let _closes_p = fn (n: str) ->
+    n == "address" || n == "article" || n == "aside" || n == "blockquote"
+    || n == "div" || n == "dl" || n == "fieldset" || n == "figure"
+    || n == "footer" || n == "form" || _is_heading n || n == "header"
+    || n == "main" || n == "nav" || n == "ol" || n == "p" || n == "pre"
+    || n == "section" || n == "table" || n == "ul" || n == "hr";
+
   let _is_special = fn (n: str) ->
     n == "address" || n == "applet" || n == "area" || n == "article" || n == "aside"
     || n == "base" || n == "basefont" || n == "bgsound" || n == "blockquote"
@@ -196,25 +133,6 @@ module Tree {
     || n == "thead" || n == "title" || n == "tr" || n == "track" || n == "ul"
     || n == "wbr" || n == "xmp";
 
-  // Whether an end tag for `name` should close anything: walking up from the
-  // innermost element, its own name before any special element.
-  let rec _end_tag_matches = fn (stack: frame list) -> fn (name: str) ->
-    match stack with
-    | Nil -> false
-    | Cons (f, rest) ->
-      if f.fname == name then true
-      else if _is_special f.fname then false
-      else _end_tag_matches rest name;
-
-  // A paragraph is closed by anything that starts a new block.
-  let _closes_p = fn (n: str) ->
-    n == "address" || n == "article" || n == "aside" || n == "blockquote"
-    || n == "div" || n == "dl" || n == "fieldset" || n == "figure"
-    || n == "footer" || n == "form" || n == "h1" || n == "h2" || n == "h3"
-    || n == "h4" || n == "h5" || n == "h6" || n == "header" || n == "hr"
-    || n == "main" || n == "nav" || n == "ol" || n == "p" || n == "pre"
-    || n == "section" || n == "table" || n == "ul";
-
   let _is_ws = fn (s: str) ->
     let rec go = fn (i: int) ->
       if i >= str_len s then true
@@ -224,101 +142,151 @@ module Tree {
         then go (i + 1) else false in
     go 0;
 
-  // `mode` is the insertion mode, by the standard's name.
+  // --- the open elements, as ids into the arena ------------------------------
+  // A popped element is not folded into anything: it stays in the arena and stays
+  // addressable, which is the whole reason for the change.
+
+  let _parent = fn (open_ids: int list) ->
+    match open_ids with Cons (x, _) -> x | Nil -> 0;
+
+  let _name_of = fn (arena: anode list) -> fn (id: int) ->
+    (Nodes._nth arena id).name;
+
+  let rec _open_has = fn (arena: anode list) -> fn (open_ids: int list) ->
+                      fn (name: str) ->
+    match open_ids with
+    | Nil -> false
+    | Cons (x, rest) ->
+      if _name_of arena x == name then true else _open_has arena rest name;
+
+  let rec _pop_through = fn (arena: anode list) -> fn (open_ids: int list) ->
+                         fn (name: str) ->
+    match open_ids with
+    | Nil -> Nil
+    | Cons (x, rest) ->
+      if _name_of arena x == name then rest else _pop_through arena rest name;
+
+  let rec _open_same_kind = fn (arena: anode list) -> fn (open_ids: int list) ->
+                            fn (name: str) ->
+    match open_ids with
+    | Nil -> ""
+    | Cons (x, rest) ->
+      let n = _name_of arena x in
+      if _same_kind n name then n
+      else if n == "div" || n == "p" || n == "body" || n == "html" then ""
+      else _open_same_kind arena rest name;
+
+  let rec _end_tag_matches = fn (arena: anode list) -> fn (open_ids: int list) ->
+                             fn (name: str) ->
+    match open_ids with
+    | Nil -> false
+    | Cons (x, rest) ->
+      let n = _name_of arena x in
+      if n == name then true
+      else if _is_special n then false
+      else _end_tag_matches arena rest name;
+
   let build = fn (tokens: token list) ->
+    let push_el = fn (arena: anode list) -> fn (open_ids: int list) ->
+                  fn (name: str) -> fn (attrs: attr list) ->
+      let (a, id) = Nodes.element arena (_parent open_ids) name attrs in
+      (a, Cons (id, open_ids)) in
+
     let rec go = fn (ts: token list) -> fn (mode: str) ->
-                 fn (stack: frame list) -> fn (roots: node list) ->
+                 fn (arena: anode list) -> fn (open_ids: int list) ->
       match ts with
-      // Even a document that opened nothing has an html, a head and a body.
       | Nil ->
-        let (s, r) = if _open_has stack "body" then (stack, roots)
-                     else _open_body (mode == "after head" || mode == "in body"
-                                      || mode == "after body") stack roots in
-        _pop_all s r
+        let (a, _o) = if _open_has arena open_ids "body" then (arena, open_ids)
+                      else _open_body (mode == "after head" || mode == "in body"
+                                       || mode == "after body") arena open_ids in
+        Nodes.to_nodes a
       | Cons (t, rest) ->
         (match t with
         | TDoctype (name, pub, has_pub, sys, has_sys, ok) ->
-          if mode != "initial" then go rest mode stack roots
+          if mode != "initial" then go rest mode arena open_ids
           else
-            let (s, r) = _add stack roots
-              (Doctype (name, if has_pub then pub else "",
-                              if has_sys then sys else "")) in
-            go rest "before html" s r
+            let (a, _id) = Nodes.doctype arena (_parent open_ids) name in
+            go rest "before html" a open_ids
         | TComment data ->
-          let (s, r) = _add stack roots (Comment data) in go rest mode s r
+          let (a, _id) = Nodes.comment arena (_parent open_ids) data in
+          go rest mode a open_ids
         | TChar data ->
-          // Whitespace before the body is dropped; anything else forces the
-          // elements nobody wrote into existence.
-          if _is_ws data && mode != "in body" then go rest mode stack roots
+          if _is_ws data && mode != "in body" then go rest mode arena open_ids
           else if mode == "in body" then
-            let (s, r) = _add stack roots (Text data) in go rest mode s r
+            let (a, _id) = Nodes.add_text arena (_parent open_ids) data in
+            go rest mode a open_ids
           else
-            let (s, r) = _open_body (mode == "after head" || mode == "in body"
-                                     || mode == "after body") stack roots in
-            go ts "in body" s r
+            let (a, o) = _open_body (mode == "after head" || mode == "after body")
+                           arena open_ids in
+            go ts "in body" a o
         | TStart (name, attrs, selfc) ->
           if mode == "initial" || mode == "before html" then
-            if name == "html" then go rest "before head" (_push stack "html" attrs) roots
-            else go ts "before head" (_push stack "html" Nil) roots
+            if name == "html" then
+              let (a, o) = push_el arena open_ids "html" attrs in
+              go rest "before head" a o
+            else
+              let (a, o) = push_el arena open_ids "html" Nil in
+              go ts "before head" a o
           else if mode == "before head" then
-            if name == "head" then go rest "in head" (_push stack "head" attrs) roots
-            else go ts "in head" (_push stack "head" Nil) roots
+            if name == "head" then
+              let (a, o) = push_el arena open_ids "head" attrs in
+              go rest "in head" a o
+            else
+              let (a, o) = push_el arena open_ids "head" Nil in
+              go ts "in head" a o
           else if mode == "in head" then
             if name == "title" || name == "style" || name == "script"
                || _is_void name then
-              let s1 = _push stack name attrs in
-              let (s2, r2) = _pop s1 roots in
-              go rest mode s2 r2
+              let (a, o) = push_el arena open_ids name attrs in
+              go rest mode a (match o with Cons (_, r) -> r | Nil -> Nil)
             else
-              let (s, r) = _pop stack roots in
-              go ts "after head" s r
+              go ts "after head" arena
+                (match open_ids with Cons (_, r) -> r | Nil -> Nil)
           else if mode == "after head" then
-            if name == "body" then go rest "in body" (_push stack "body" attrs) roots
-            else let (s, r) = _open_body true stack roots in go ts "in body" s r
+            if name == "body" then
+              let (a, o) = push_el arena open_ids "body" attrs in
+              go rest "in body" a o
+            else
+              let (a, o) = _open_body true arena open_ids in
+              go ts "in body" a o
           else
-            // in body
             if _is_void name || selfc then
-              let s1 = _push stack name attrs in
-              let (s2, r2) = _pop s1 roots in
-              go rest mode s2 r2
-            else if _open_same_kind stack name != "" then
-              let (s, r) = _pop_through stack roots (_open_same_kind stack name) in
-              go ts mode s r
-            else if _closes_p name && _open_has stack "p" then
-              let (s, r) = _pop_through stack roots "p" in
-              go ts mode s r
-            else go rest mode (_push stack name attrs) roots
+              let (a, o) = push_el arena open_ids name attrs in
+              go rest mode a (match o with Cons (_, r) -> r | Nil -> Nil)
+            else if _open_same_kind arena open_ids name != "" then
+              go ts mode arena
+                (_pop_through arena open_ids (_open_same_kind arena open_ids name))
+            else if _closes_p name && _open_has arena open_ids "p" then
+              go ts mode arena (_pop_through arena open_ids "p")
+            else
+              let (a, o) = push_el arena open_ids name attrs in
+              go rest mode a o
         | TEnd name ->
           if name == "html" || name == "body" then
-            if mode == "in body" then go rest "after body" stack roots
-            else go rest mode stack roots
-          else if _end_tag_matches stack name then
-            let (s, r) = _pop_through stack roots name in
-            // Closing the head is what ends "in head"; without this the next start
-            // tag takes the mode's fallback and pops the html element instead.
-            go rest (if name == "head" then "after head" else mode) s r
-          // An end tag with nothing open to match is ignored, which is what makes
-          // a stray `</div>` harmless rather than fatal.
-          else go rest mode stack roots)
-    // Everything before the body is optional in the source and required in the
-    // tree; this is the one place that fills all of it in at once.
-    // `head_done` because a closed head is not on the stack: asking the stack
-    // whether one exists cannot tell "never created" from "created and finished",
-    // and guessing gave documents two of them. The mode knows.
-    and _open_body = fn (head_done: bool) -> fn (stack: frame list) -> fn (roots: node list) ->
-      if _open_has stack "body" then (stack, roots)
+            if mode == "in body" then go rest "after body" arena open_ids
+            else go rest mode arena open_ids
+          else if _end_tag_matches arena open_ids name then
+            go rest (if name == "head" then "after head" else mode)
+              arena (_pop_through arena open_ids name)
+          else go rest mode arena open_ids)
+
+    // Everything before the body is optional in the source and required in the tree.
+    // `head_done` because a closed head is no longer on the stack: asking the stack
+    // cannot tell "never created" from "created and finished". The mode knows.
+    and _open_body = fn (head_done: bool) -> fn (arena: anode list) ->
+                     fn (open_ids: int list) ->
+      if _open_has arena open_ids "body" then (arena, open_ids)
       else
-        // The head has to be *closed*, not merely present: it was being left open,
-        // so the body became its child instead of its sibling and every document in
-        // the suite came out one level too deep.
-        let (s1, r1) =
-          if _open_has stack "html" then (stack, roots)
-          else (_push stack "html" Nil, roots) in
-        let (s2, r2) =
-          if _open_has s1 "head" then _pop_through s1 r1 "head"
-          else if head_done then (s1, r1)
-          else _pop (_push s1 "head" Nil) r1 in
-        (_push s2 "body" Nil, r2)
+        let (a1, o1) =
+          if _open_has arena open_ids "html" then (arena, open_ids)
+          else push_el arena open_ids "html" Nil in
+        let (a2, o2) =
+          if _open_has a1 o1 "head" then (a1, _pop_through a1 o1 "head")
+          else if head_done then (a1, o1)
+          else
+            let (x, y) = push_el a1 o1 "head" Nil in
+            (x, match y with Cons (_, r) -> r | Nil -> Nil) in
+        push_el a2 o2 "body" Nil
     in
-    go tokens "initial" Nil Nil;
+    go tokens "initial" Nodes.empty Nil;
 }
