@@ -91,12 +91,12 @@ The oracle is `canvas.measureText` over the same font file, in hundredths of a p
 because it already draws text correctly and reads the same bytes; a metrics reader checked against a
 table somebody typed has been checked against somebody typing.
 
-**25 of 29 pass and the four that do not are kerning — measured, not assumed.** Asking the same
-browser for the same strings with `font-kerning: none` returns exactly the numbers this produces, so
-the advance sum is right to the hundredth of a pixel and what is missing is the pair adjustment. This
-font has no `kern` table, only GPOS, so that work is a lookup walk. The oracle is deliberately *not*
-regenerated with kerning off: that would fit the oracle to the implementation, which is the wrong
-direction for a gate to move.
+**All 29 pass.** The four that used to fail were kerning, and that was established by measurement rather
+than argument: asking the same browser with `font-kerning: none` returned exactly the numbers this
+produced. Kerning now comes from GPOS — this font ships no `kern` table — and the four came back without
+anything else moving, which is what a diagnosis that was right looks like. The oracle was deliberately
+never regenerated with kerning off; that would have fitted the oracle to the implementation, which is the
+wrong direction for a gate to move.
 
 ## Layout, and its gate before it
 

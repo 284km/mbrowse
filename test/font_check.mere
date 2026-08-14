@@ -36,6 +36,13 @@ let _ = check "one byte" (Font.codepoint "M" == 77);
 let _ = check "two bytes" (Font.codepoint "é" == 233);
 let _ = check "three bytes" (Font.codepoint "—" == 8212);
 
+// Kerning is an adjustment between two glyphs, so it shows up in a pair and never in one glyph.
+let _ = check "a kerned pair is narrower than its parts"
+  (Font.text_units f "Te" < Font.text_units f "T" + Font.text_units f "e");
+let _ = check "and an unkerned one is exactly its parts"
+  (Font.text_units f "nn" == 2 * Font.text_units f "n");
+let _ = check "one glyph has no pair to kern with"
+  (Font.text_units f "T" == Font.advance f (Font.glyph f 84));
 // Summed in font units, scaled once. A space has an advance, which is the one easy to forget.
 let _ = check "a space has a width" (Font.text_units f " " > 0);
 let _ = check "a sum is a sum"

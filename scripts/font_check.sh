@@ -10,16 +10,14 @@
 # digits, punctuation, an accented character that is two bytes of UTF-8, and a hundred-character run
 # where rounding once and rounding per glyph diverge.
 #
-# 25 of the 29 pass and the other four are KERNING, which is not a guess: asking the same browser for
-# the same strings with `font-kerning: none` returns exactly the numbers this produces — 7264, 33616,
-# 5965, 33918 — while the kerned answers are 7120, 33488, 5869, 33630. So the advance sum here is
-# right to the hundredth of a pixel and what is missing is the pair adjustment. This font has no
-# `kern` table, only GPOS, so the work is a lookup walk: script list to the `kern` feature, feature to
-# a type 2 PairPos lookup, then coverage and either pair sets or class definitions.
+# All 29 pass. The four that used to fail were kerning, which was established by measurement rather than
+# argument: asking the same browser for the same strings with `font-kerning: none` returned exactly the
+# numbers this produced. Kerning is now read from GPOS — this font ships no `kern` table — and the four
+# came back without touching anything else, which is what a diagnosis that was right looks like.
 #
-# The count is pinned exactly and the failures are printed in full, so the four cannot quietly become
-# five. The oracle is NOT regenerated with kerning off — that would fit the oracle to the
-# implementation, which is the wrong direction for a gate to move.
+# The `kern` feature here also names a type 8 chained-context lookup, which is skipped. That is
+# contextual kerning, and skipping it is a smaller error than guessing at it; it costs nothing on these
+# 29 strings and the count would say if it started to.
 #
 # The header values and the line height are checked separately by `test/font_check.mere`, by hand,
 # because a wrong read of them produces something plausible: `descender` read unsigned is 65243
@@ -67,7 +65,7 @@ while [ "$i" -le "$want" ]; do
 done
 
 echo "font_widths: $pass passed, $fail failed, of $want strings"
-EXPECT_PASS=${EXPECT_PASS:-25}
+EXPECT_PASS=${EXPECT_PASS:-29}
 if [ "$pass" -ne "$EXPECT_PASS" ]; then
   echo "font_widths: expected exactly $EXPECT_PASS passing, got $pass — raise EXPECT_PASS if this is the reader growing"
   exit 1
