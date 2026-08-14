@@ -14,7 +14,22 @@
 // before html, before head, in head, after head, in body, after body — with the
 // implied start tags they insert and the end tags they ignore. What is not: the
 // table modes, foreign content, the adoption agency algorithm, and the fragment
-// case. Those are named at the bottom.
+// case.
+//
+// The adoption agency needs something this file cannot currently give it, and the
+// reason is worth knowing before starting: **it rewrites the tree**. Given
+// `<b><p>X</b>Y`, the `<b>` is closed inside the paragraph and then *reopened*
+// around what follows, which means taking nodes that are already placed and moving
+// them under a different parent. The representation here closes an element when it
+// is popped — `_close` folds a frame into an immutable `Element` — so by the time
+// the algorithm would run, the nodes it has to move are no longer reachable as
+// anything but a value inside their parent.
+//
+// So the adoption agency is not more rules on top of these. It is a change to how
+// the tree is held while it is being built: nodes that stay addressable after their
+// element is closed, plus the list of active formatting elements the algorithm walks.
+// That is the next piece of work, and it is a bigger one than it looks from the
+// outside — which is why it is written down here rather than attempted in passing.
 
 import "mere-html/tokenizer.mere";
 import "dom.mere";
