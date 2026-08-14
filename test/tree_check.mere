@@ -29,8 +29,11 @@ let _ = check "p closes p" "<p>a<p>b"
   "<html>\n  <head>\n  <body>\n    <p>\n      \"a\"\n    <p>\n      \"b\"";
 
 // An end tag with nothing open to match is ignored rather than fatal.
+// ...and the text on either side of it is one node, not two: the end tag produced
+// nothing, so nothing separates them. This expectation was wrong until the corpus
+// disagreed with it.
 let _ = check "stray end tag" "<p>a</div>b"
-  "<html>\n  <head>\n  <body>\n    <p>\n      \"a\"\n      \"b\"";
+  "<html>\n  <head>\n  <body>\n    <p>\n      \"ab\"";
 
 // A void element takes no children even when the source implies some.
 let _ = check "void element" "<p>a<br>b"

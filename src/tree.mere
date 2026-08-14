@@ -44,12 +44,21 @@ module Tree {
 
   // Add a finished node to the innermost open element, or to the document when
   // nothing is open.
+  // Adjacent text is one node, not two. The tokenizer coalesces the characters it
+  // emits in a run, but a run can be interrupted by something that produces no node
+  // at all — an ignored end tag, a comment already placed — and the two halves have
+  // to join here or the tree has a shape no document describes.
+  let _merge = fn (kids: node list) -> fn (n: node) ->
+    match (n, kids) with
+    | (Text b, Cons (Text a, rest)) -> Cons (Text (a ++ b), rest)
+    | _ -> Cons (n, kids);
+
   let _add = fn (stack: frame list) -> fn (roots: node list) -> fn (n: node) ->
     match stack with
-    | Nil -> (stack, Cons (n, roots))
+    | Nil -> (stack, _merge roots n)
     | Cons (top, rest) ->
       (Cons (frame { fname = top.fname, fattrs = top.fattrs,
-                     fkids = Cons (n, top.fkids) }, rest), roots);
+                     fkids = _merge top.fkids n }, rest), roots);
 
   let _push = fn (stack: frame list) -> fn (name: str) -> fn (attrs: attr list) ->
     Cons (frame { fname = name, fattrs = attrs, fkids = Nil }, stack);
@@ -109,6 +118,40 @@ module Tree {
       else if f.fname == "div" || f.fname == "p" || f.fname == "body"
               || f.fname == "html" then ""
       else _open_same_kind rest name;
+
+  // The standard's "special" elements. An end tag that does not match the innermost
+  // open element walks up looking for its own, and **stops** at one of these: that is
+  // why `<span><button>foo</span>bar` leaves the button open and puts bar inside it
+  // rather than closing both. Popping through unconditionally is the difference
+  // between recovering and guessing.
+  let _is_special = fn (n: str) ->
+    n == "address" || n == "applet" || n == "area" || n == "article" || n == "aside"
+    || n == "base" || n == "basefont" || n == "bgsound" || n == "blockquote"
+    || n == "body" || n == "br" || n == "button" || n == "caption" || n == "center"
+    || n == "col" || n == "colgroup" || n == "dd" || n == "details" || n == "dir"
+    || n == "div" || n == "dl" || n == "dt" || n == "embed" || n == "fieldset"
+    || n == "figcaption" || n == "figure" || n == "footer" || n == "form"
+    || n == "frame" || n == "frameset" || _is_heading n || n == "head"
+    || n == "header" || n == "hgroup" || n == "hr" || n == "html" || n == "iframe"
+    || n == "img" || n == "input" || n == "li" || n == "link" || n == "listing"
+    || n == "main" || n == "marquee" || n == "menu" || n == "meta" || n == "nav"
+    || n == "noembed" || n == "noframes" || n == "noscript" || n == "object"
+    || n == "ol" || n == "p" || n == "param" || n == "plaintext" || n == "pre"
+    || n == "script" || n == "section" || n == "select" || n == "source"
+    || n == "style" || n == "summary" || n == "table" || n == "tbody" || n == "td"
+    || n == "template" || n == "textarea" || n == "tfoot" || n == "th"
+    || n == "thead" || n == "title" || n == "tr" || n == "track" || n == "ul"
+    || n == "wbr" || n == "xmp";
+
+  // Whether an end tag for `name` should close anything: walking up from the
+  // innermost element, its own name before any special element.
+  let rec _end_tag_matches = fn (stack: frame list) -> fn (name: str) ->
+    match stack with
+    | Nil -> false
+    | Cons (f, rest) ->
+      if f.fname == name then true
+      else if _is_special f.fname then false
+      else _end_tag_matches rest name;
 
   // A paragraph is closed by anything that starts a new block.
   let _closes_p = fn (n: str) ->
@@ -196,7 +239,7 @@ module Tree {
           if name == "html" || name == "body" then
             if mode == "in body" then go rest "after body" stack roots
             else go rest mode stack roots
-          else if _open_has stack name then
+          else if _end_tag_matches stack name then
             let (s, r) = _pop_through stack roots name in
             // Closing the head is what ends "in head"; without this the next start
             // tag takes the mode's fallback and pops the html element instead.
