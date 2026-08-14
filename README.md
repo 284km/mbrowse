@@ -45,11 +45,13 @@ for first. So `test/tree_check.mere` is hand-written, which is the weaker kind o
 evidence: those are the cases we thought of.
 
 For encoding sniffing there **is** one, and it is wired up: `scripts/encoding_check.sh`
-runs html5lib-tests' encoding suite, **54 of 81**. It was 46 until the label table
+runs html5lib-tests' encoding suite, **67 of 81**. It was 46 until the label table
 upstream became the Standard's full 228 — a page declaring `iso-8859-2` had been
 reading as a page declaring nothing, because the table only listed encodings there was
-a decoder for. What fails now is the opposite: the prescan accepts a declaration the
-suite says should not count, being too willing rather than too blind.
+a decoder for — and 54 until the prescan stopped reading `charset=` out of any
+attribute at all. There are two forms and no third: a `charset` attribute, or a
+`content` attribute on a meta whose `http-equiv` is Content-Type.
+`<meta name=x content="charset=foo">` declares nothing.
 
 Finding a normative suite for tree construction — web-platform-tests is the obvious
 place to look next — comes before writing many more of these by hand. What is there is

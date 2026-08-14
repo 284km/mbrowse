@@ -28,8 +28,48 @@ module Sniff {
     else if at 0 == 255 && at 1 == 254 then "UTF-16LE"
     else "";
 
-  // `charset=` inside an attribute value, as the standard's "extracting a
-  // character encoding from a meta element" step reads it.
+  // The attributes of a tag, from its text. A scanner rather than the tokenizer,
+  // for the reasons at the top of this file — and a small one, because a meta
+  // element's attributes are all it has.
+  let _attrs_of = fn (tag: str) ->
+    let n = str_len tag in
+    let at = fn (i: int) -> if i >= n then "" else char_at tag i in
+    let rec skip_ws = fn (i: int) -> if i < n && _is_space (at i) then skip_ws (i + 1) else i in
+    let rec go = fn (i: int) -> fn (out: (str * str) list) ->
+      let i = skip_ws i in
+      if i >= n then list_rev out
+      else if at i == "/" || at i == ">" then go (i + 1) out
+      else
+        let rec name_end = fn (k: int) ->
+          if k >= n || _is_space (at k) || at k == "=" || at k == "/" || at k == ">"
+          then k else name_end (k + 1) in
+        let ne = name_end i in
+        if ne == i then go (i + 1) out
+        else
+          let nm = to_lower (substring tag i ne) in
+          let e = skip_ws ne in
+          if at e != "=" then go e (Cons ((nm, ""), out))
+          else
+            let v = skip_ws (e + 1) in
+            let q = at v in
+            if q == "\"" || q == "'" then
+              let rec vend = fn (k: int) -> if k >= n || at k == q then k else vend (k + 1) in
+              let ve = vend (v + 1) in
+              go (ve + 1) (Cons ((nm, substring tag (v + 1) ve), out))
+            else
+              let rec vend = fn (k: int) ->
+                if k >= n || _is_space (at k) || at k == ">" then k else vend (k + 1) in
+              let ve = vend v in
+              go ve (Cons ((nm, substring tag v ve), out)) in
+    go 0 Nil;
+
+  let rec _lookup = fn (xs: (str * str) list) -> fn (want: str) ->
+    match xs with
+    | Nil -> None
+    | Cons ((k, v), rest) -> if k == want then Some v else _lookup rest want;
+
+  // `charset=` inside a Content-Type value, as the standard's "extracting a
+  // character encoding from a meta element" reads it.
   let _charset_in = fn (s: str) ->
     let n = str_len s in
     let low = to_lower s in
@@ -49,15 +89,28 @@ module Sniff {
             let e = str_index_of (substring s (j + 1) n) q in
             if e < 0 then "" else substring s (j + 1) (j + 1 + e)
           else
-            // An unquoted value ends at whitespace, `;` or `"` — the last because
-            // `content="text/html; charset=utf-8"` puts the attribute's own closing
-            // quote right after the value, and taking it made every such page
-            // unlabelled.
             let rec upto = fn (k: int) ->
-              if k >= n || _is_space (char_at s k) || char_at s k == ";"
-                 || char_at s k == "\"" || char_at s k == "'" then k
+              if k >= n || _is_space (char_at s k) || char_at s k == ";" then k
               else upto (k + 1) in
             substring s j (upto j);
+
+  // What a meta element declares, if anything. Two forms and no third: a `charset`
+  // attribute, or a `content` attribute on a meta whose `http-equiv` is
+  // Content-Type. Reading `charset=` out of any attribute at all was too willing —
+  // `<meta name=x content="charset=foo">` declares nothing.
+  let _meta_declares = fn (tag: str) ->
+    let attrs = _attrs_of tag in
+    match _lookup attrs "charset" with
+    | Some v -> v
+    | None ->
+      match _lookup attrs "http-equiv" with
+      | None -> ""
+      | Some he ->
+        if to_lower he != "content-type" then ""
+        else
+          match _lookup attrs "content" with
+          | None -> ""
+          | Some c -> _charset_in c;
 
   // The prescan: the first 1024 bytes, looking only for a meta element that
   // declares an encoding. Comments and other tags are skipped rather than parsed,
@@ -83,7 +136,7 @@ module Sniff {
         let name = to_lower (substring tag 1 (if str_len tag >= 6 then 6 else str_len tag)) in
         if name == "meta " || name == "meta\t" || name == "meta\n"
            || name == "meta\r" || name == "meta/" then
-          let cs = _charset_in tag in
+          let cs = _meta_declares tag in
           if cs != "" then cs else go (e + 1)
         else go (e + 1) in
     go 0;
