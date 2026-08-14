@@ -90,4 +90,10 @@ let _ = check "a written tbody is not doubled" "<table><tbody><tr><td>x"
 // A cell is a boundary: the inner table is its own, and needs its own row.
 let _ = check "a table inside a cell is a different table" "<table><td><table><td>y"
   "<html>\n  <head>\n  <body>\n    <table>\n      <tbody>\n        <tr>\n          <td>\n            <table>\n              <tbody>\n                <tr>\n                  <td>\n                    \"y\"";
+// </table> has to close through whatever is still open inside it. Without that the
+// table stays open and everything after it lands in the last cell.
+let _ = check "the table closes through its cell" "<table><td>x</table>y"
+  "<html>\n  <head>\n  <body>\n    <table>\n      <tbody>\n        <tr>\n          <td>\n            \"x\"\n    \"y\"";
+let _ = check "and a row closes through its cell" "<table><tr><td>x</tr><tr><td>y"
+  "<html>\n  <head>\n  <body>\n    <table>\n      <tbody>\n        <tr>\n          <td>\n            \"x\"\n        <tr>\n          <td>\n            \"y\"";
 0

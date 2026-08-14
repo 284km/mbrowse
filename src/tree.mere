@@ -351,6 +351,16 @@ module Tree {
             else if _end_tag_matches arena open_ids name then
               go rest mode arena (_pop_through arena open_ids name) afe
             else go rest mode arena open_ids afe
+          // The table family closes through whatever is still open inside it. The
+          // ordinary path cannot: walking up from a cell it meets the cell, which is
+          // special, and stops — so `</table>` around an unfinished row was ignored
+          // and the table stayed open for the rest of the document.
+          else if (name == "table" || name == "tbody" || name == "thead"
+                   || name == "tfoot" || name == "tr" || name == "caption")
+                  && _open_has arena open_ids name then
+            let o = _pop_through arena open_ids name in
+            let l = if name == "caption" then Formatting.clear_to_marker afe else afe in
+            go rest mode arena o l
           else if _end_tag_matches arena open_ids name then
             let o = _pop_through arena open_ids name in
             let l = if _is_marker_scope name then Formatting.clear_to_marker afe
