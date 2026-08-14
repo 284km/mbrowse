@@ -11,8 +11,10 @@
 // does not.
 
 type cval =
-  | Bare of str            // a token that is only itself: a delim, whitespace, a CDC
-  | Named of (str * str);  // a kind and its value: ident, number, string, ...
+  | Bare of str                  // a token that is only itself: a delim, whitespace, a CDC
+  | Named of (str * str)         // a kind and its value: ident, number, string, ...
+  | Block of (str * cval list)   // `()`, `[]` or `{}` and what is inside it
+  | Func of (str * cval list);   // a name and its arguments
 
 module Css {
   let _is_ws = fn (c: str) ->
@@ -104,6 +106,15 @@ module Css {
           else if _is_ws (at k) then k + 1 else k in
         (str_of_codepoint (if v == 0 || v > 1114111 then 65533 else v), k2) in
 
+    // Whether an identifier could start at `i`: a name start, an escape, or a dash
+    // before one of those or another dash. Three rules in the standard say this — the
+    // ident rule, the at-keyword rule and the hash flag — and they are the same rule, so
+    // saying it three times is three places for it to drift.
+    let _starts_ident = fn (i: int) ->
+      _is_name_start (at i) || (at i == "\\" && esc_ok i)
+      || (at i == "-" && (_is_name_start (at (i + 1)) || at (i + 1) == "-"
+                          || (at (i + 1) == "\\" && esc_ok (i + 1)))) in
+
     // A name, built as it is scanned because an escape inside it stands for something
     // other than its own characters. This was a substring until the corpus asked for
     // `\30 red`.
@@ -166,16 +177,19 @@ module Css {
         // `@-0media` is not an at-keyword: what follows the at sign has to be able to
         // start an identifier, and a dash can only do that before a name start, another
         // dash, or an escape — the same rule as an identifier, because it is one.
-        else if c == "@" && (_is_name_start (at (i + 1))
-                             || (at (i + 1) == "\\" && esc_ok (i + 1))
-                             || (at (i + 1) == "-"
-                                 && (_is_name_start (at (i + 2)) || at (i + 2) == "-"
-                                     || (at (i + 2) == "\\" && esc_ok (i + 2))))) then
+        else if c == "@" && _starts_ident (i + 1) then
           let (v, e) = name_from (i + 1) in
           go e (Cons (Named ("at-keyword", v), out))
-        else if c == "#" && _is_name (at (i + 1)) then
-          let e = name_end (i + 1) in
-          go e (Cons (Named ("hash", substring src (i + 1) e), out))
+        // A hash carries a flag saying whether what follows the sign could have been an
+        // identifier on its own: `#red` could, `#0red` could not, and a selector engine
+        // needs to know because only the first is an id. It is the same "starts an
+        // identifier" question asked of `-` and `@` above, asked a third time — so it is
+        // written once here and the three call it.
+        else if c == "#" && (_is_name (at (i + 1))
+                            || (at (i + 1) == "\\" && esc_ok (i + 1))) then
+          let (v, e) = name_from (i + 1) in
+          let flag = if _starts_ident (i + 1) then "id" else "unrestricted" in
+          go e (Cons (Named ("hash", v ++ chr 1 ++ flag), out))
         else if _is_digit c
                 || ((c == "+" || c == "-") && _is_digit (at (i + 1)))
                 || (c == "." && _is_digit (at (i + 1)))
@@ -200,9 +214,7 @@ module Css {
             go (k3 + 1) (Cons (Named ("percentage", num ++ chr 1 ++ ntype), out))
           // A unit is an identifier, so it may begin with a dash the same way one may:
           // `12.0-red` is twelve of the unit `-red`, not a number and an identifier.
-          else if _is_name_start (at k3) || (at k3 == "\\" && esc_ok k3)
-                  || (at k3 == "-" && (_is_name_start (at (k3 + 1)) || at (k3 + 1) == "-"
-                                       || (at (k3 + 1) == "\\" && esc_ok (k3 + 1)))) then
+          else if _starts_ident k3 then
             let (u, e) = name_from k3 in
             go e (Cons (Named ("dimension", num ++ chr 1 ++ ntype ++ chr 1 ++ u), out))
           else go k3 (Cons (Named ("number", num ++ chr 1 ++ ntype), out))
@@ -213,9 +225,43 @@ module Css {
           go (i + 4) (Cons (Bare "<!--", out))
         else if c == "-" && at (i + 1) == "-" && at (i + 2) == ">" then
           go (i + 3) (Cons (Bare "-->", out))
-        else if _is_name_start c || (c == "\\" && esc_ok i)
-                || (c == "-" && (_is_name_start (at (i + 1)) || at (i + 1) == "-"
-                                 || (at (i + 1) == "\\" && esc_ok (i + 1)))) then
+        // A unicode range, and it competes with the identifier `u` — so it is asked
+        // first, the way the standard asks about `-->` before `--`.
+        //
+        // Two things the corpus says outright and are worth not repairing: the range is
+        // not validated and not clamped. `U+100000-2` is a range from 1048576 to 2, and
+        // `u+??????` ends at 0xFFFFFF, past the last code point there is. Whether a range
+        // is usable is a question for whoever reads it; the tokenizer's job is to say
+        // what was written.
+        else if (c == "u" || c == "U") && at (i + 1) == "+"
+                && (_is_hex (at (i + 2)) || at (i + 2) == "?") then
+          let rec hexs = fn (k: int) -> fn (v: int) -> fn (cnt: int) ->
+            if cnt >= 6 || not (_is_hex (at k)) then (k, v, cnt)
+            else hexs (k + 1) (v * 16 + _hexval (at k)) (cnt + 1) in
+          let (k1, v1, d) = hexs (i + 2) 0 0 in
+          // Six characters between the digits and the question marks together, which is
+          // why `U+1??????` is a range with five of them and a leftover `?`.
+          let rec qs = fn (k: int) -> fn (cnt: int) ->
+            if d + cnt >= 6 || at k != "?" then (k, cnt)
+            else qs (k + 1) (cnt + 1) in
+          let (k2, q) = qs k1 0 in
+          let emit = fn (lo: int) -> fn (hi: int) -> fn (e: int) ->
+            go e (Cons (Named ("unicode-range",
+                               str_of_int lo ++ chr 1 ++ str_of_int hi), out)) in
+          // A question mark is the wildcard, so it fills with zeros for the start and
+          // with fs for the end: `u+1?` is 0x10 through 0x1F. Getting that fill backwards
+          // or off by a digit is the only bug this token has.
+          if q > 0 then
+            let rec fill = fn (v: int) -> fn (m: int) -> fn (cnt: int) ->
+              if cnt <= 0 then v else fill (v * 16 + m) m (cnt - 1) in
+            emit (fill v1 0 q) (fill v1 15 q) k2
+          // A wildcard and an explicit end are exclusive: after `u+1?` a dash is not part
+          // of the range, which is why `U+1?-50` is a range and then the number -50.
+          else if at k2 == "-" && _is_hex (at (k2 + 1)) then
+            let (k3, v2, _d2) = hexs (k2 + 1) 0 0 in
+            emit v1 v2 k3
+          else emit v1 v1 k2
+        else if _starts_ident i then
           let (v, e) = name_from i in
           // A name followed by `(` is a function, and the parenthesis belongs to it —
           // except `url(`, which is its own token unless what follows is a quote. That
@@ -283,6 +329,55 @@ module Css {
         else go (i + 1) (Cons (Bare c, out)) in
     go 0 Nil;
 
+  let _mirror = fn (c: str) ->
+    // A brace has to be escaped in a Mere string: `{` opens an interpolation.
+    if c == "(" then ")" else if c == "[" then "]" else if c == "\{" then "}" else "";
+
+  // The second half of the standard's parsing, and a separate pass on purpose: the
+  // standard draws the line in the same place. A tokenizer answers "what is this token";
+  // only a parser can answer "what is this token inside of", and the answer needs a stack
+  // that a scanner producing one token at a time does not have.
+  let parse = fn (ts0: cval list) ->
+    // `close` is what ends this level — "" at the top, where only the input's end does.
+    let rec upto = fn (close: str) -> fn (ts: cval list) ->
+      match ts with
+      // A block still open at the end of the input simply closes, with no error token.
+      // The corpus says so outright: `@media print { (foo]{bar) }baz` ends with two blocks
+      // open and errors only for the mismatched closers inside them.
+      | Nil -> (Nil, Nil)
+      | Cons (t, rest) ->
+        let more = fn (v: cval) -> fn (r: cval list) ->
+          let (ks, r2) = upto close r in (Cons (v, ks), r2) in
+        match t with
+        | Bare s ->
+          if s == close then (Nil, rest)
+          else if s == "(" || s == "[" || s == "\{" then
+            let (kids, r) = upto (_mirror s) rest in
+            more (Block (s ++ _mirror s, kids)) r
+          // A closer that is not this level's is an error even when it matches a level
+          // further out. In `(foo]{bar)` the `)` sits inside a `{}` and is an error there;
+          // the `{}` is closed by the `}` after it and the `()` by nothing at all. A
+          // parser that let a closer reach past its own block would shut two brackets with
+          // one and move everything after it into the wrong place.
+          else if s == ")" || s == "]" || s == "}" then more (Named ("error", s)) rest
+          else more t rest
+        | Named (k, v) ->
+          // The tokenizer already decided this was a function rather than an ident and a
+          // bracket, because that decision needs to see there is no space between them.
+          // What is left for here is finding where it ends.
+          if k == "function" then
+            let (kids, r) = upto ")" rest in more (Func (v, kids)) r
+          else more t rest
+        // Neither can appear in a token list. Parsing a parsed list leaves them alone,
+        // which makes `parse` idempotent rather than wrong on its own output.
+        | Block (_b, _k) -> more t rest
+        | Func (_f, _k) -> more t rest in
+    let (vs, _r) = upto "" ts0 in vs;
+
+  // Bytes to component values, which is what a caller wants and what the suite's level
+  // is named after.
+  let values = fn (src: str) -> parse (tokenize src);
+
   // One line per component value, in the shape the harness compares — the two shapes
   // the suite uses, kept apart.
   let render = fn (vs: cval list) ->
@@ -295,12 +390,30 @@ module Css {
                            else if c == "\n" then "\\n" else if c == "\r" then "\\r"
                            else c)) in
       e 0 "" in
-    let one = fn (v: cval) ->
-      match v with
-      | Bare s -> "B\t" ++ esc s
-      // The extra fields of a number come through joined by U+0001 rather than by a
-      // tab, because `esc` turns a tab into two characters and a field separator that
-      // the escaping eats is not a separator. Translated here, after escaping.
-      | Named (k, s) -> "N\t" ++ k ++ "\t" ++ str_replace (esc s) (chr 1) "\t" in
-    str_join "\n" (list_map vs one);
+    // A tree is its root line and then its children, two spaces deeper. The same shape
+    // the DOM serializer uses, for the same reason: a diff of it can be read.
+    let rec block = fn (pad: str) -> fn (vs: cval list) ->
+      let rec go = fn (vs: cval list) -> fn (acc: str list) ->
+        match vs with
+        | Nil -> list_rev acc
+        | Cons (v, rest) ->
+          let row =
+            match v with
+            | Bare s -> pad ++ "B\t" ++ esc s
+            // The extra fields of a number, a hash or a range come through joined by
+            // U+0001 rather than by a tab, because `esc` turns a tab into two characters
+            // and a field separator the escaping eats is not a separator. Translated
+            // here, after escaping.
+            | Named (k, s) -> pad ++ "N\t" ++ k ++ "\t" ++ str_replace (esc s) (chr 1) "\t"
+            | Block (b, kids) ->
+              (match kids with
+               | Nil -> pad ++ "K\t" ++ b
+               | Cons (_x, _xs) -> pad ++ "K\t" ++ b ++ "\n" ++ block (pad ++ "  ") kids)
+            | Func (f, kids) ->
+              (match kids with
+               | Nil -> pad ++ "F\t" ++ esc f
+               | Cons (_x, _xs) -> pad ++ "F\t" ++ esc f ++ "\n" ++ block (pad ++ "  ") kids) in
+          go rest (Cons (row, acc)) in
+      str_join "\n" (go vs Nil) in
+    block "" vs;
 }

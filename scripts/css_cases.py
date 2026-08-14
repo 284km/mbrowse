@@ -34,40 +34,79 @@ def esc_in(s):
     return "".join(out)
 
 def render(expected):
-    """The expected list in the canonical form, or (None, why) when it uses a shape the
-    tokenizer's output cannot be compared against yet.
+    """The expected list in the canonical form, or (None, why) when it uses a shape this
+    tokenizer cannot produce yet.
 
-    There are two reasons, and calling both of them "blocks and functions" was wrong:
+    The canonical form is one line per component value, and a tree is its root line
+    followed by its children indented two spaces per level:
 
-      nested          a function with children, or a block — a tree, which needs a
-                      parser over the tokens and not more tokens
-      numeric-fields  a number, dimension or percentage, which the suite writes with
-                      five fields — kind, representation, value, integer-or-number, and
-                      the unit — where this emits two
+        B<TAB>value                a bare token
+        N<TAB>kind<TAB>fields...   a named one
+        K<TAB>()                   a simple block, children indented below
+        F<TAB>name                 a function, children indented below
 
-    The second is not a shape the tokenizer cannot reach. It is a shape it does reach
-    and does not say enough about, which is a different and smaller piece of work, and
-    counting the two together hid thirteen cases behind a label that did not fit them.
+    `why` is what is missing, and it took two rounds of being wrong to get these apart.
+    Calling all of it "blocks and functions" hid thirteen numeric cases; calling the rest
+    "nested" then hid nine `unicode-range` cases and two hash flags, which are not trees
+    at all and not one piece of work with trees. A bucket is a claim about what is left,
+    so a bucket that names the wrong thing is a wrong estimate of the work.
     """
-    lines = []
-    for v in expected:
+    why = set()
+    lines = _render_into(expected, 0, [], why)
+    if why:
+        return (None, ",".join(sorted(why)))
+    return ("\n".join(lines), None)
+
+
+def _render_into(vals, depth, lines, why):
+    pad = "  " * depth
+    for v in vals:
         if isinstance(v, str):
-            lines.append("B\t%s" % esc(v))
-        elif isinstance(v, list) and len(v) == 2 and isinstance(v[1], str):
-            lines.append("N\t%s\t%s" % (v[0], esc(v[1])))
-        elif isinstance(v, list) and v and v[0] in ("number", "dimension", "percentage"):
+            lines.append("%sB\t%s" % (pad, esc(v)))
+        elif not isinstance(v, list) or not v:
+            why.add("other")
+        elif v[0] in ("()", "[]", "{}"):
+            lines.append("%sK\t%s" % (pad, v[0]))
+            _render_into(v[1:], depth + 1, lines, why)
+        elif v[0] == "function":
+            lines.append("%sF\t%s" % (pad, esc(v[1])))
+            _render_into(v[2:], depth + 1, lines, why)
+        elif v[0] == "hash":
+            # The flag is the tokenizer's answer to "could this be an identifier", which
+            # is what tells `#0red` from `#red`, so it is a decision and it is compared.
+            lines.append("%sN\thash\t%s\t%s" % (pad, esc(v[1]), v[2]))
+        elif v[0] == "unicode-range":
+            # Two code points, and both are arithmetic the tokenizer did: `u+1?` means
+            # 0x10 through 0x1F, and getting the fill wrong is the whole bug there is.
+            lines.append("%sN\tunicode-range\t%d\t%d" % (pad, v[1], v[2]))
+        elif v[0] in ("number", "dimension", "percentage"):
             # Everything the tokenizer decides, and not the numeric value. The value is
             # arithmetic on the representation — the suite writes `+45.0` as 45 — so
             # comparing it would be comparing how two languages print a float, which is
             # not what this gate is for. The representation, the integer-or-number
             # decision and the unit are all tokenizer decisions and are all compared.
             if v[0] == "dimension":
-                lines.append("N\tdimension\t%s\t%s\t%s" % (esc(v[1]), v[3], esc(v[4])))
+                lines.append("%sN\tdimension\t%s\t%s\t%s" % (pad, esc(v[1]), v[3], esc(v[4])))
             else:
-                lines.append("N\t%s\t%s\t%s" % (v[0], esc(v[1]), v[3]))
+                lines.append("%sN\t%s\t%s\t%s" % (pad, v[0], esc(v[1]), v[3]))
+        elif len(v) == 2 and isinstance(v[1], str):
+            lines.append("%sN\t%s\t%s" % (pad, v[0], esc(v[1])))
         else:
-            return (None, "nested")
-    return ("\n".join(lines), None)
+            why.add("other:" + str(v[0]))
+    return lines
+
+
+def _group(text):
+    """Lines back into component values: a line at depth zero starts a new one and the
+    indented lines under it belong to it."""
+    out = []
+    for line in (text.split("\n") if text else []):
+        if line.startswith("  ") and out:
+            out[-1].append(line)
+        else:
+            out.append([line])
+    return out
+
 
 if sys.argv[1] == "--compare":
     got, meta, expect = sys.argv[2], sys.argv[3], int(sys.argv[4])
@@ -99,11 +138,15 @@ if sys.argv[1] == "--compare":
         # so a joined diff says "something in here" and leaves the reader to align two
         # long strings by eye — which is how a case can sit one detail from passing
         # without anyone knowing which detail.
-        wl, al = w.split("\n") if w else [], a.split("\n") if a else []
+        # A component value is no longer a line — a tree is several — so the lines are
+        # grouped back into component values by their indentation before being compared.
+        # Reporting "line 14" would name a place inside a tree and not the tree, and the
+        # tree is what differs.
+        wl, al = _group(w), _group(a)
         first = None
         for k in range(max(len(wl), len(al))):
-            wk = wl[k] if k < len(wl) else "<nothing>"
-            ak = al[k] if k < len(al) else "<nothing>"
+            wk = wl[k] if k < len(wl) else ["<nothing>"]
+            ak = al[k] if k < len(al) else ["<nothing>"]
             if wk != ak:
                 first = (k, wk, ak)
                 break
@@ -112,8 +155,9 @@ if sys.argv[1] == "--compare":
         else:
             k, wk, ak = first
             print("  FAIL at component value %d of %d:" % (k + 1, len(wl)))
-            print("       want: %s" % wk)
-            print("       got:  %s" % ak)
+            for tag, rows in (("want", wk), ("got ", ak)):
+                for j, r in enumerate(rows):
+                    print("       %s %s" % (tag if j == 0 else "    ", r))
     if p != expect:
         print("css_tokens: expected exactly %d passing, got %d — raise EXPECT_PASS if this "
               "is the tokenizer growing" % (expect, p))

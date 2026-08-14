@@ -27,7 +27,7 @@ let rec run = fn (xs: str list) -> fn (i: int) ->
   | Nil -> ()
   | Cons (line, rest) ->
     let _ = print ("##" ++ show i) in
-    let _ = print (Css.render (Css.tokenize (unescape line))) in
+    let _ = print (Css.render (Css.values (unescape line))) in
     run rest (i + 1);
 
 let path = match args () with Cons (p, _) -> p | Nil -> "cases.txt";

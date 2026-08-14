@@ -77,14 +77,39 @@ excuses arrives. What is there is
 an `encoding` suite, which is the gate for the character-encoding sniffing that reads
 `<meta charset>`, and that is the next thing to need one.
 
-## The CSS gate, before the CSS
+## CSS component values
 
 `test/data/css_*.json` is [css-parsing-tests](https://github.com/CourtBouillon/css-parsing-tests),
 126 cases across every level from component values to a whole stylesheet — what
-css-parsing-tests is to CSS is what html5lib-tests is to HTML. It is vendored, pinned by
-SHA, and **here before any parser is**.
+css-parsing-tests is to CSS is what html5lib-tests is to HTML. It is vendored and pinned by
+SHA, and it was **here before any parser was**.
 
-That order is deliberate. Encoding sniffing in this repository went from 43 of 81 to all
+```
+sh scripts/css_check.sh          # component values: 50 of 50
+```
+
+`src/css_tokens.mere` is the tokenizer and the component value parser, split where the
+standard splits them: the tokenizer answers *what is this token* and the parser answers
+*what is this token inside of*, which needs a stack the scanner does not have. **All 50
+cases pass with nothing exempted and nothing left uncompared.** One thing is deliberately
+not compared — the numeric *value* of a number, because the value is arithmetic on the
+representation (the suite writes `+45.0` as 45) and comparing it would compare how two
+languages print a float rather than what the tokenizer decided.
+
+Getting there cost three wrong estimates of the same pile, which is the part worth keeping.
+It started as one bucket of 34 cases labelled "blocks and functions". Splitting it found 13
+that only wanted a number to say more about itself. Splitting what was left found 9
+`unicode-range` cases and 2 hash flags, neither of which is a tree. **A bucket is a claim
+about what is left in it**, and this one was wrong three times in a row — each time in the
+direction of making the remaining work sound like one big thing.
+
+Three rules that arrived separately turned out to be one rule: a unit is an identifier
+(`12.0-red` is twelve of the unit `-red`), an at-keyword is an identifier (`@-0media` is
+not one), and a hash is flagged `id` exactly when what follows the sign could have been an
+identifier. That question is now asked once, by one predicate, in the four places that ask
+it.
+
+The order — corpus first, parser second — was deliberate. Encoding sniffing in this repository went from 43 of 81 to all
 81 against a normative corpus, and along the way it was wrong in both directions
 alternately — too willing to read a declaration, then too blind to find one, then too
 willing again. Without the corpus there was no way to know which side it was out on, only
