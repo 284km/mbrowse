@@ -85,6 +85,18 @@ let _ = check "li closes li" "<li>a<li>b"
 // check agreeing with the code was worth nothing: they were wrong together.
 let _ = check "li closes li across a div" "<li><div><li>"
   "<html>\n  <head>\n  <body>\n    <li>\n      <div>\n    <li>";
+// The newline after `<pre>` is not content, so these two are the same tree.
+let _ = check "a newline right after pre is dropped" "<pre>\nfoo</pre>"
+  "<html>\n  <head>\n  <body>\n    <pre>\n      \"foo\"";
+let _ = check "and only the first one" "<pre>\n\nfoo</pre>"
+  "<html>\n  <head>\n  <body>\n    <pre>\n      \"\nfoo\"";
+// A repeated html or body tag is not a second element.
+let _ = check "a second body merges its attributes" "<body a=1><body b=2>"
+  "<html>\n  <head>\n  <body>\n    a=\"1\"\n    b=\"2\"";
+let _ = check "and does not overwrite one it has" "<body a=1><body a=2>"
+  "<html>\n  <head>\n  <body>\n    a=\"1\"";
+let _ = check "image is img" "<image>"
+  "<html>\n  <head>\n  <body>\n    <img>";
 // A heading is the other rule and closes only the current node, so the div does stop it.
 let _ = check "a heading does not close across a div" "<h1><div><h2>"
   "<html>\n  <head>\n  <body>\n    <h1>\n      <div>\n        <h2>";

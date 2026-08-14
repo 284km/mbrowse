@@ -105,6 +105,28 @@ module Tree {
     else if name == "dd" || name == "dt" then open_name == "dd" || open_name == "dt"
     else false;
 
+  // The newline right after `<pre>`, `<listing>` or `<textarea>` is not content: it is
+  // dropped so that a source file can put the tag on its own line. Done by rewriting the
+  // next token rather than by carrying a flag through the loop — the rule is about one
+  // token and the token is right there.
+  let _drop_lf = fn (ts: token list) ->
+    match ts with
+    | Nil -> Nil
+    | Cons (t, rest) ->
+      match t with
+      | TChar data ->
+        if str_len data > 0 && char_at data 0 == "\n" then
+          let d = substring data 1 (str_len data) in
+          if d == "" then rest else Cons (TChar d, rest)
+        else ts
+      | TStart (_n, _a, _s) -> ts
+      | TEnd _n -> ts
+      | TComment _d -> ts
+      | TDoctype (_dn, _p, _hp, _sy, _hs, _ok) -> ts;
+
+  let _eats_newline = fn (n: str) ->
+    n == "pre" || n == "listing" || n == "textarea";
+
   let _is_void = fn (n: str) ->
     n == "area" || n == "base" || n == "br" || n == "col" || n == "embed"
     || n == "hr" || n == "img" || n == "input" || n == "link" || n == "meta"
@@ -204,6 +226,15 @@ module Tree {
           else walk rest in
       walk open_ids
     else "";
+
+  // The id of the nearest open element with this name. `_open_has` answers whether, and
+  // three places also need which.
+  let rec _open_id_of = fn (arena: anode list) -> fn (open_ids: int list) ->
+                        fn (name: str) ->
+    match open_ids with
+    | Nil -> 0 - 1
+    | Cons (x, rest) ->
+      if _name_of arena x == name then x else _open_id_of arena rest name;
 
   let rec _end_tag_matches = fn (arena: anode list) -> fn (open_ids: int list) ->
                              fn (name: str) ->
@@ -395,7 +426,19 @@ module Tree {
           else
             // Inside a foreign namespace, unless the tag says the author is back in
             // HTML.
-            if _cur_ns arena open_ids != "" && not (_breaks_out name) then
+            // A repeated `<html>` or `<body>` is not a second element. Its attributes go
+            // onto the one that is already open, minus the ones already there, and the
+            // token is otherwise ignored: `<body t1=1><body t2=2>` is one body with two
+            // attributes, not two bodies. Asked before everything else because it is not a
+            // question about where an element goes.
+            if (name == "html" || name == "body") && _open_has arena open_ids name then
+              let hit = _open_id_of arena open_ids name in
+              go rest mode (Nodes.merge_attrs arena hit attrs) open_ids afe
+            // `<image>` is `<img>`. The standard says so in one line and calls it a
+            // historical mistake; the corpus checks the mistake is honoured.
+            else if name == "image" then
+              go (Cons (TStart ("img", attrs, selfc), rest)) mode arena open_ids afe
+            else if _cur_ns arena open_ids != "" && not (_breaks_out name) then
               let ns = _cur_ns arena open_ids in
               let nm = if ns == "svg" then _svg_name name else name in
               let (a2, id) = Nodes.element_ns arena (_parent open_ids) ns nm attrs in
@@ -440,7 +483,7 @@ module Tree {
               let l = if _is_formatting name then Formatting.push afe id name attrs
                       else if _is_marker_scope name then Formatting.push_marker afe
                       else afe in
-              go rest mode a o l
+              go (if _eats_newline name then _drop_lf rest else rest) mode a o l
         | TEnd name ->
           if _cur_ns arena open_ids != "" then
             // Match on the local name: the element is called "svg path" and the tag

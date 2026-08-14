@@ -91,6 +91,29 @@ module Nodes {
         go rest (i + 1) (Cons (y, out)) in
     go a 0 Nil;
 
+  // Attributes an element does not have yet, added to it. A repeated `<html>` or `<body>`
+  // tag is not a second element — the standard puts its new attributes on the one that is
+  // already there and drops the ones it already has, so `<body t1=1><body t2=2>` is one
+  // body with two attributes.
+  let merge_attrs = fn (a: anode list) -> fn (id: int) -> fn (extra: attr list) ->
+    let rec has = fn (xs: attr list) -> fn (nm: str) ->
+      match xs with
+      | Nil -> false
+      | Cons (x, rest) -> x.name == nm || has rest nm in
+    let rec add_new = fn (cur: attr list) -> fn (xs: attr list) ->
+      match xs with
+      | Nil -> cur
+      | Cons (x, rest) ->
+        add_new (if has cur x.name then cur else list_append cur (Cons (x, Nil))) rest in
+    let rec go = fn (xs: anode list) -> fn (i: int) -> fn (out: anode list) ->
+      match xs with
+      | Nil -> list_rev out
+      | Cons (x, rest) ->
+        let y = if i == id then _mk x.kind x.name (add_new x.attrs extra) x.text x.parent x.order
+                else x in
+        go rest (i + 1) (Cons (y, out)) in
+    go a 0 Nil;
+
   // By order, not by id. The two agree for everything appended and disagree exactly
   // where something was put before something else, which is the point — and there is
   // one of these rather than two, because two answers to the same question is how a
