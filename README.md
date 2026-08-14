@@ -128,10 +128,12 @@ move past it and the parent's height does not grow. That was 94 of the 116 failu
 
 What is left is in the gate's header, grouped by **the first box whose geometry differs** rather than by
 what a layout engine usually needs. That distinction cost something: the header used to name `font-size`
-as the next thing, and **not one of the 126 documents sets it**. The corpus was one grep away. What the
-failures actually say: 83 documents are `html` exactly 8 pixels too tall — one arithmetic error in
-margin collapsing, not eighty-three features — then floats, then a replaced element with no intrinsic
-size.
+as the next thing, and **not one of the 126 documents sets it**. The corpus was one grep away. That 8-pixel error is fixed, and it was not the body's own margin: **the cursor and the content height
+were one number.** `y` includes the margin still hanging after the last child, because that is where
+the next child goes; the height is measured to the last child's border box. And a box with nothing in it
+and no border or padding lets margins collapse *through* — an empty `<div>` after a paragraph is placed
+after the collapsed margin, which puts it below its own parent's bottom edge and adds nothing to that
+parent's height. What is left is floats, and a replaced element with no intrinsic size.
 
 The UA stylesheet is written as CSS and parsed by the same parser as everything else, rather than as
 a table of constants. A table would be a second place where "what a `<p>` is" is written down, and

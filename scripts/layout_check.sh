@@ -22,12 +22,15 @@
 # The pass count is pinned exactly rather than as a floor: a floor lets a regression hide behind
 # a new pass.
 #
-# Eleven of the 126 pass, and what is left is measured rather than guessed. The failures are grouped by
+# Thirteen of the 126 pass, and what is left is measured rather than guessed. The failures are grouped by
 # the first box whose geometry differs:
 #
-#   83  `html` is 8 pixels too tall — want 54, got 62, in every one of them. The body's own bottom
-#       margin is being counted as well as the collapsed one, so this is one arithmetic error and not
-#       eighty-three documents' worth of features. It is the next thing.
+# The 8-pixel error that was in 83 of them is gone, and it was not the body's own margin: the cursor and
+# the content height were one number. `y` includes the margin still hanging after the last child,
+# because that is where the next child goes; the height is measured to the last child's BORDER box. And
+# a box with nothing in it and no border or padding lets margins collapse THROUGH — an empty `<div>`
+# after a paragraph is placed after the collapsed margin, which puts it below its own parent's bottom
+# edge, and adds nothing to that parent's height.
 #   13  an inline element's x or width: `<strong>` 39px to the right of where it belongs, which is a
 #       float beside it that this does not shorten the line for.
 #    6  a `<div>` at the wrong x AND y — floats again, placed beside rather than below.
@@ -60,7 +63,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "layout_check: no mere — set MERE=..." >&2; exit 1; }
 DATA="$ROOT/test/data/layout"
-EXPECT_PASS=${EXPECT_PASS:-11}
+EXPECT_PASS=${EXPECT_PASS:-13}
 
 T="${TMPDIR:-/tmp}/mbrowse_layout.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 

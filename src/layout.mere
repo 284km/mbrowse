@@ -248,16 +248,21 @@ module Layout {
   let rec _stack = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
                    fn (ancestors: elem list) -> fn (ns: node list) -> fn (cbw: int) ->
                    fn (y: int) -> fn (open_mb: int) -> fn (swallow_first: bool) ->
-                   fn (first_mt: int) -> fn (seen: bool) -> fn (acc: box list) ->
+                   fn (first_mt: int) -> fn (seen: bool) -> fn (bottom: int) ->
+                   fn (acc: box list) ->
     match ns with
-    | Nil -> (list_rev acc, y, open_mb, first_mt)
+    // Five things, and `bottom` is the one that is not `y`. The cursor `y` includes the margin still
+    // hanging after the last child, because that is where the next child goes. The content height is
+    // measured to the last child's BORDER box, which is a different number — using one for both made a
+    // parent as tall as the margin below its last child, in eighty-three documents at once.
+    | Nil -> (list_rev acc, y, open_mb, first_mt, bottom)
     | Cons (n, rest) ->
       match n with
       | Element (tag, attrs, kids) ->
         let e = _elem_of tag attrs in
         let st = style_of ua author e ancestors (_attr attrs "style") in
         if st.display == "none" then
-          _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen acc
+          _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom acc
         // Out of flow: the box is laid out where it would have been — its static position, which is
         // what `top` and `left` of `auto` mean — and then the cursor does not move and the height does
         // not grow. `<div style="position:absolute">` inside a page made the page as tall as if it were
@@ -265,7 +270,7 @@ module Layout {
         else if st.position == "absolute" || st.position == "fixed" then
           let (fbs, _fh, _fmt, _fmb) = _block f ua author ancestors tag attrs kids cbw st in
           let bs = _shift fbs 0 (y + _collapse open_mb 0) in
-          _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen
+          _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom
                  (list_append (list_rev bs) acc)
         else
           let (fbs, fh, fmt, fmb) = _block f ua author ancestors tag attrs kids cbw st in
@@ -275,12 +280,20 @@ module Layout {
           let gap = if is_first && swallow_first then 0 else _collapse open_mb fmt in
           let top = y + gap in
           let bs = _shift fbs 0 top in
-          _stack f ua author ancestors rest cbw (top + fh) fmb swallow_first
-                 (if is_first then fmt else first_mt) true
+          // A box with nothing in it and no border or padding lets margins COLLAPSE THROUGH: its own
+          // two margins join the run rather than ending it, so the cursor does not move past it and it
+          // adds nothing to the parent's height. The box is still placed, and after the gap — which is
+          // why an empty `<div>` after a paragraph sits below its parent's own bottom edge.
+          let through = fh == 0 in
+          _stack f ua author ancestors rest cbw
+                 (if through then y else top + fh)
+                 (if through then _collapse open_mb (_collapse fmt fmb) else fmb)
+                 swallow_first (if is_first then fmt else first_mt) true
+                 (if through then bottom else top + fh)
                  (list_append (list_rev bs) acc)
       // Text and comments generate no box yet. A line of text needs a font metric to have a
       // height, and there is none — zero here is the absence of a measurement, not a guess at one.
-      | _ -> _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen acc
+      | _ -> _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom acc
 
   // One block box and everything under it, at coordinates relative to its own border box.
   and _block = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
@@ -331,9 +344,10 @@ module Layout {
     // anonymous block boxes come to for whitespace-only inline content.
     let inline_only = not (has_block kids) && _collapse_ws (_inline_text kids "") != "" in
     let (ibs, ilines) = if inline_only then _inline f kids cw font_size else (Nil, 0) in
-    let (bs, used, open_mb, first_mt) =
-      if inline_only then (ibs, ilines * Font.line_height f font_size, 0, 0)
-      else _stack f ua author inner_ancestors kids cw 0 0 (not sep_top) 0 false Nil in
+    let (bs, used, open_mb, first_mt, bottom) =
+      if inline_only then
+        let h = ilines * Font.line_height f font_size in (ibs, h, 0, 0, h)
+      else _stack f ua author inner_ancestors kids cw 0 0 (not sep_top) 0 false 0 Nil in
     // The fragment's origin is (the containing block's content left, this border box's top): x is
     // measured from outside the margin because a horizontal margin is an offset, y from the border
     // box because a vertical one collapsed into the gap above. So a child clears this box's own
@@ -342,9 +356,11 @@ module Layout {
     let inner = _shift bs (st.ml + st.bl + st.pl) (st.bt + st.pt) in
     // The margin still hanging at the end is inside this box only if something separates it from
     // the bottom edge; otherwise it escapes and is the parent's to place.
+    // To the last child's border box, and then the trailing margin only when something separates it
+    // from this box's bottom edge. `used` is the cursor and is one margin too far.
     let content_h = if st.h >= 0 then st.h
-                    else if sep_bot then used + (if open_mb > 0 then open_mb else 0)
-                    else used in
+                    else if sep_bot then bottom + (if open_mb > 0 then open_mb else 0)
+                    else bottom in
     let h = st.bt + st.pt + content_h + st.pb + st.bb in
     let me = box { tag = to_lower tag, x = st.ml, y = 0,
                    w = st.bl + st.pl + cw + st.pr + st.br, h = h } in
@@ -360,7 +376,8 @@ module Layout {
     let author = Style.prepare (author_css roots "") in
     // The initial containing block is the viewport. Its own margin does not collapse out of the
     // document, so the root's top margin starts the stack rather than escaping it.
-    let (bs, _y, _mb, _fm) = _stack f ua author Nil roots viewport_w 0 0 false 0 false Nil in
+    let (bs, _y, _mb, _fm, _bot) =
+      _stack f ua author Nil roots viewport_w 0 0 false 0 false 0 Nil in
     bs;
 
   // The canonical form the gate compares, one line per box in document order.
