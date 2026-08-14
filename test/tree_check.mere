@@ -79,9 +79,15 @@ let _ = check "heading closes heading" "<h1>a<h2>b"
   "<html>\n  <head>\n  <body>\n    <h1>\n      \"a\"\n    <h2>\n      \"b\"";
 let _ = check "li closes li" "<li>a<li>b"
   "<html>\n  <head>\n  <body>\n    <li>\n      \"a\"\n    <li>\n      \"b\"";
-// ...but only while nothing block-level intervenes.
-let _ = check "li does not close across a div" "<li><div><li>"
-  "<html>\n  <head>\n  <body>\n    <li>\n      <div>\n        <li>";
+// ...and across a div too, which is the opposite of what this check said until the
+// corpus was asked. The walk that looks for the li to close skips address, div and p —
+// they are the three tags it passes through, not three of the tags that stop it. This
+// check agreeing with the code was worth nothing: they were wrong together.
+let _ = check "li closes li across a div" "<li><div><li>"
+  "<html>\n  <head>\n  <body>\n    <li>\n      <div>\n    <li>";
+// A heading is the other rule and closes only the current node, so the div does stop it.
+let _ = check "a heading does not close across a div" "<h1><div><h2>"
+  "<html>\n  <head>\n  <body>\n    <h1>\n      <div>\n        <h2>";
 // A table's structure is mostly elements nobody writes.
 let _ = check "a table gets its tbody and row" "<table><td>x"
   "<html>\n  <head>\n  <body>\n    <table>\n      <tbody>\n        <tr>\n          <td>\n            \"x\"";

@@ -115,7 +115,11 @@ module Tree {
     || n == "div" || n == "dl" || n == "fieldset" || n == "figure"
     || n == "footer" || n == "form" || _is_heading n || n == "header"
     || n == "main" || n == "nav" || n == "ol" || n == "p" || n == "pre"
-    || n == "section" || n == "table" || n == "ul" || n == "hr";
+    || n == "section" || n == "table" || n == "ul" || n == "hr"
+    // `li`, `dd` and `dt` reach here after the walk above found nothing to close, which
+    // is step 6 of their own algorithm rather than a separate rule: `<p><li>` is two
+    // siblings. The two steps chain because both re-process the token.
+    || n == "li" || n == "dd" || n == "dt";
 
   let _is_special = fn (n: str) ->
     n == "address" || n == "applet" || n == "area" || n == "article" || n == "aside"
@@ -169,15 +173,37 @@ module Tree {
     | Cons (x, rest) ->
       if _name_of arena x == name then rest else _pop_through arena rest name;
 
-  let rec _open_same_kind = fn (arena: anode list) -> fn (open_ids: int list) ->
-                            fn (name: str) ->
-    match open_ids with
-    | Nil -> ""
-    | Cons (x, rest) ->
-      let n = _name_of arena x in
-      if _same_kind n name then n
-      else if n == "div" || n == "p" || n == "body" || n == "html" then ""
-      else _open_same_kind arena rest name;
+  // Two rules that look like one, and are not. A heading start tag closes a heading only
+  // when it is the CURRENT node; an `li`, `dd` or `dt` start tag walks up the stack,
+  // skipping `address`, `div` and `p`, and closes the first one it finds. Running one rule
+  // for both is wrong whichever rule you pick, and the corpus has a case for each
+  // direction: `<h1><table><td><h3>` puts the h3 in the cell, and `<ul><li><div><p><li>`
+  // makes the second li a sibling of the first.
+  //
+  // This started as one walk with `div`, `p`, `body` and `html` as the list of tags that
+  // STOP it. The standard's three — address, div, p — are the tags it SKIPS, and every
+  // other special tag stops it. The two readings are opposites and both are plausible;
+  // seven cases in the corpus are the difference.
+  let _open_same_kind = fn (arena: anode list) -> fn (open_ids: int list) ->
+                        fn (name: str) ->
+    if _is_heading name then
+      match open_ids with
+      | Nil -> ""
+      | Cons (x, _rest) ->
+        let n = _name_of arena x in
+        if _is_heading n then n else ""
+    else if name == "li" || name == "dd" || name == "dt" then
+      let rec walk = fn (ids: int list) ->
+        match ids with
+        | Nil -> ""
+        | Cons (x, rest) ->
+          let n = _name_of arena x in
+          if _same_kind n name then n
+          else if n == "address" || n == "div" || n == "p" then walk rest
+          else if _is_special n then ""
+          else walk rest in
+      walk open_ids
+    else "";
 
   let rec _end_tag_matches = fn (arena: anode list) -> fn (open_ids: int list) ->
                              fn (name: str) ->
