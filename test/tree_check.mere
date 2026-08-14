@@ -96,4 +96,10 @@ let _ = check "the table closes through its cell" "<table><td>x</table>y"
   "<html>\n  <head>\n  <body>\n    <table>\n      <tbody>\n        <tr>\n          <td>\n            \"x\"\n    \"y\"";
 let _ = check "and a row closes through its cell" "<table><tr><td>x</tr><tr><td>y"
   "<html>\n  <head>\n  <body>\n    <table>\n      <tbody>\n        <tr>\n          <td>\n            \"x\"\n        <tr>\n          <td>\n            \"y\"";
+// Content a table cannot hold goes before the table, not inside it — and neither the
+// content nor the table is lost, which is the whole point.
+let _ = check "text is fostered out of a table" "<table>x<td>y"
+  "<html>\n  <head>\n  <body>\n    \"x\"\n    <table>\n      <tbody>\n        <tr>\n          <td>\n            \"y\"";
+let _ = check "and so is an element" "<table><b>x</b><td>y"
+  "<html>\n  <head>\n  <body>\n    <b>\n      \"x\"\n    <table>\n      <tbody>\n        <tr>\n          <td>\n            \"y\"";
 0

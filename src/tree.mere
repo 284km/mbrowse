@@ -240,6 +240,23 @@ module Tree {
         else go rest in
     go open_ids;
 
+  // Foster parenting: content that a table cannot hold goes *before* the table, not
+  // inside it. `<table>x` is a table with the x next to it, which is what a browser
+  // shows — and the reason is that a page with a stray character in a table should not
+  // lose either the character or the table.
+  //
+  // Returns the table to insert before, or -1 when the insertion point is ordinary.
+  let _foster_target = fn (arena: anode list) -> fn (open_ids: int list) ->
+    let here = _name_of arena (_parent open_ids) in
+    if here != "table" && here != "tbody" && here != "thead" && here != "tfoot"
+       && here != "tr" then 0 - 1
+    else
+      let rec find = fn (xs: int list) ->
+        match xs with
+        | Nil -> 0 - 1
+        | Cons (x, rest) -> if _name_of arena x == "table" then x else find rest in
+      find open_ids;
+
   let build = fn (tokens: token list) ->
     let push_el = fn (arena: anode list) -> fn (open_ids: int list) ->
                   fn (name: str) -> fn (attrs: attr list) ->
@@ -269,12 +286,17 @@ module Tree {
         | TChar data ->
           if _is_ws data && mode != "in body" then go rest mode arena open_ids afe
           else if mode == "in body" then
-            // Anything inserted into a new block reopens the formatting elements that
-            // are listed but no longer open — that is what the list is for.
-            let (a0, o0, l0, p0) =
-              Reconstruct.run arena open_ids afe (_parent open_ids) in
-            let (a, _id) = Nodes.add_text a0 p0 data in
-            go rest mode a o0 l0
+            let fb = _foster_target arena open_ids in
+            if fb >= 0 then
+              let (a, _id) = Nodes.insert_before arena fb 1 "" Nil data in
+              go rest mode a open_ids afe
+            else
+              // Anything inserted into a new block reopens the formatting elements
+              // that are listed but no longer open — that is what the list is for.
+              let (a0, o0, l0, p0) =
+                Reconstruct.run arena open_ids afe (_parent open_ids) in
+              let (a, _id) = Nodes.add_text a0 p0 data in
+              go rest mode a o0 l0
           else
             let (a, o) = _open_body (mode == "after head" || mode == "after body")
                            arena open_ids in
@@ -331,7 +353,14 @@ module Tree {
                                    else push_el arena open_ids "tbody" Nil in
                     push_el a1 o1 "tr" Nil
                 else (arena, open_ids) in
-              let (a, o) = push_el ai oi name attrs in
+              let fb = _foster_target ai oi in
+              let (a, o) =
+                if fb >= 0 && name != "table" && name != "tbody" && name != "thead"
+                   && name != "tfoot" && name != "tr" && name != "td" && name != "th"
+                   && name != "caption" && name != "colgroup" && name != "col" then
+                  let (x, i2) = Nodes.insert_before ai fb 0 name attrs "" in
+                  (x, Cons (i2, oi))
+                else push_el ai oi name attrs in
               let id = _parent o in
               let l = if _is_formatting name then Formatting.push afe id name attrs
                       else if _is_marker_scope name then Formatting.push_marker afe
