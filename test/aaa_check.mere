@@ -6,35 +6,49 @@ let check = fn (label: str) -> fn (b: bool) ->
   print (label ++ ": " ++ (if b then "ok" else "MISMATCH"));
 
 let special = fn (n: str) -> n == "p" || n == "div" || n == "table";
+// Scope is a different list from the special category, which is the whole reason `run` takes
+// both: a table bounds scope and does not stop the walk that finds a furthest block.
+let scope = fn (n: str) -> n == "table" || n == "td" || n == "th" || n == "caption"
+            || n == "applet" || n == "marquee" || n == "object" || n == "html";
 
 // <b>x</b> : the b is listed and open, nothing special inside it.
 let a0 = Nodes.empty;
 let (a1, body) = Nodes.element a0 0 "body" Nil;
 let (a2, b1) = Nodes.element a1 body "b" Nil;
 let afe1 = Formatting.push Nil b1 "b" Nil;
-let (_, o1, f1, h1, cx1) = Aaa.run a2 (Cons (b1, Cons (body, Nil))) afe1 "b" special;
+let (_, o1, f1, h1, cx1) = Aaa.run a2 (Cons (b1, Cons (body, Nil))) afe1 "b" special scope;
 let _ = check "simple case closes it" (h1 && not cx1);
 let _ = check "and pops it" (not (Aaa._in o1 b1));
 let _ = check "and forgets it" (not (Formatting.has f1 b1));
 
 // <i>x</i> where i was never a formatting element: step 1, the plain path.
 let (a3, i1) = Nodes.element a2 body "i" Nil;
-let (_, o2, _, h2, cx2) = Aaa.run a3 (Cons (i1, Cons (body, Nil))) Nil "i" special;
+let (_, o2, _, h2, cx2) = Aaa.run a3 (Cons (i1, Cons (body, Nil))) Nil "i" special scope;
 let _ = check "current node that was never listed" (h2 && not cx2 && not (Aaa._in o2 i1));
 
 // </b> with no b anywhere: the caller has to handle it.
-let (_, _, _, h3, cx3) = Aaa.run a3 (Cons (i1, Cons (body, Nil))) Nil "b" special;
+let (_, _, _, h3, cx3) = Aaa.run a3 (Cons (i1, Cons (body, Nil))) Nil "b" special scope;
 let _ = check "not a formatting element: not handled" (not h3 && not cx3);
 
 // Listed but already closed: the list is stale and gets corrected.
-let (_, _, f4, h4, cx4) = Aaa.run a2 (Cons (body, Nil)) afe1 "b" special;
+let (_, _, f4, h4, cx4) = Aaa.run a2 (Cons (body, Nil)) afe1 "b" special scope;
 let _ = check "stale entry is removed" (h4 && not cx4 && not (Formatting.has f4 b1));
 
 // <b>1<p>2</b> : a p is open inside the b, so the tree gets rewritten around it —
 // the b is reopened inside the p, which is the whole reason the algorithm exists.
 let (a5, p1) = Nodes.element a2 b1 "p" Nil;
 let (a6, tx) = Nodes.add_text a5 p1 "2";
-let (r, o5, f5, h5, cx5) = Aaa.run a6 (Cons (p1, Cons (b1, Cons (body, Nil)))) afe1 "b" special;
+let (r, o5, f5, h5, cx5) = Aaa.run a6 (Cons (p1, Cons (b1, Cons (body, Nil)))) afe1 "b" special scope;
+
+// Out of scope is a different exit from every other one: the token is consumed and the tree
+// is untouched. `<b><table></b>` reaches it — the table bounds scope, so there is nothing to
+// adopt, and the b closes later when the table is gone.
+let (a7, t1) = Nodes.element a2 b1 "table" Nil;
+let (r6, o6, f6, h6, cx6) = Aaa.run a7 (Cons (t1, Cons (b1, Cons (body, Nil)))) afe1 "b" special scope;
+let _ = check "out of scope: reported handled" (h6 && not cx6);
+let _ = check "out of scope: the stack is untouched" (o6 == Cons (t1, Cons (b1, Cons (body, Nil))));
+let _ = check "out of scope: the list still has the b" (Formatting.has f6 b1);
+let _ = check "out of scope: the tree still has its four nodes" (list_len r6 == 4);
 let _ = check "the rewrite runs" (h5 && not cx5);
 let _ = check "the formatting element leaves the list" (not (Formatting.has f5 b1));
 // The p's child is now a b, and the text is under that b rather than the p.

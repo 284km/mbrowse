@@ -85,6 +85,10 @@ let _ = check "li closes li" "<li>a<li>b"
 // check agreeing with the code was worth nothing: they were wrong together.
 let _ = check "li closes li across a div" "<li><div><li>"
   "<html>\n  <head>\n  <body>\n    <li>\n      <div>\n    <li>";
+// A formatting element out of scope is not adopted at all: the token is ignored, and the
+// element closes later when what bounds the scope is gone.
+let _ = check "a font out of scope is not adopted" "<font><table></font></table></font>"
+  "<html>\n  <head>\n  <body>\n    <font>\n      <table>";
 // Text fostered out of a table joins the text already there: one node, not two.
 let _ = check "fostered text merges with the text before it" "<div>a<table>b</table>"
   "<html>\n  <head>\n  <body>\n    <div>\n      \"ab\"\n      <table>";

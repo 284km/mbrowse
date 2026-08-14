@@ -11,6 +11,12 @@
 // a cloned element, and that half is **not here** — `run` reports it rather than
 // guessing, so a caller can tell "done" from "not attempted".
 //
+// Two boundaries, not one. `is_special` is where the walk that looks for a furthest block
+// stops. `scope_stop` is where "is this element in scope" stops, and it is a much shorter
+// list — a `<table>` bounds scope and does not stop the walk. Both are passed in, because
+// collapsing them makes `<font><table></font>` rewrite the inside of the table instead of
+// ignoring the token, and the same collapse has now been the bug four times in this parser.
+//
 // The three things this stands on — the arena, the list, reconstruction — are each
 // checked on their own, so when this is wrong, what it is standing on will not be.
 
@@ -30,6 +36,21 @@ module Aaa {
     match open_ids with
     | Nil -> Nil
     | Cons (x, rest) -> if x == id then rest else _pop_through rest id;
+
+  // Whether the formatting element is in SCOPE — a different list from the special
+  // category, and the fourth time in this parser that two boundaries wanted one name. A
+  // `<table>` bounds scope; it does not stop the walk that finds a furthest block. So
+  // `<font><table></font></table></font>` ignores the first `</font>` outright rather than
+  // rewriting anything inside the table, and the font closes at the second one, when the
+  // table is gone and it is the current node.
+  let rec _in_scope = fn (arena: anode list) -> fn (open_ids: int list) ->
+                      fn (fmt: int) -> fn (scope_stop: str -> bool) ->
+    match open_ids with
+    | Nil -> false
+    | Cons (x, rest) ->
+      if x == fmt then true
+      else if scope_stop (_name_of arena x) then false
+      else _in_scope arena rest fmt scope_stop;
 
   // The furthest block: walking from the current node back toward the formatting
   // element, the special element nearest to it. Nothing before `fmt` is reached means
@@ -121,6 +142,7 @@ module Aaa {
   // a formatting element that is still listed.
   and run = fn (arena: anode list) -> fn (open_ids: int list) -> fn (afe: afe list) ->
             fn (subject: str) -> fn (is_special: str -> bool) ->
+            fn (scope_stop: str -> bool) ->
     // Step 1: the current node is the subject and was never a formatting element.
     match open_ids with
     | Cons (cur, rest) ->
@@ -132,6 +154,11 @@ module Aaa {
         // Listed but not open: the list is stale, so correct the list and stop.
         else if not (_in open_ids fmt) then
           (arena, open_ids, Formatting.remove afe fmt, true, false)
+        // Open but out of scope: the token is consumed and NOTHING happens. Reported as
+        // handled, because "handled" means the caller must not fall through to the ordinary
+        // end-tag path — not that the tree changed.
+        else if not (_in_scope arena open_ids fmt scope_stop) then
+          (arena, open_ids, afe, true, false)
         else
           let fb = furthest_block arena open_ids fmt is_special in
           if fb < 0 then

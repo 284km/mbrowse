@@ -647,7 +647,7 @@ module Tree {
             // token would find it again on the next pass round and never make progress.
             else if name == "a" && Formatting.find afe "a" >= 0 then
               let (a2, o2, l2, _handled, _complex) =
-                Aaa.run arena open_ids afe "a" _is_special in
+                Aaa.run arena open_ids afe "a" _is_special _scope_stop in
               // Every `a` entry before the marker goes, not just the one that was found.
               // The agency clones the element it adopts and puts the clone back on the list,
               // so removing one id leaves another `a` for the same token to find, and the
@@ -661,7 +661,7 @@ module Tree {
             // list, which is why `<nobr><nobr><nobr>` is three siblings.
             else if name == "nobr" && _end_tag_matches arena open_ids "nobr" then
               let (a2, o2, l2, _handled, _complex) =
-                Aaa.run arena open_ids afe "nobr" _is_special in
+                Aaa.run arena open_ids afe "nobr" _is_special _scope_stop in
               let rec strip = fn (l: afe list) ->
                 let h = Formatting.find l "nobr" in
                 if h < 0 then l else strip (Formatting.remove l h) in
@@ -818,7 +818,7 @@ module Tree {
           // ordinary path, which is the standard's "any other end tag".
           else if _is_formatting name then
             let (a, o, l, handled, complex) =
-              Aaa.run arena open_ids afe name _is_special in
+              Aaa.run arena open_ids afe name _is_special _scope_stop in
             if handled then go rest mode a o l
             else if _end_tag_matches arena open_ids name then
               go rest mode arena (_pop_through arena open_ids name) afe
