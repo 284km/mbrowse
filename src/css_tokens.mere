@@ -108,15 +108,25 @@ module Css {
           let rec ws = fn (k: int) -> if k < n && _is_ws (at k) then ws (k + 1) else k in
           go (ws i) (Cons (Bare " ", out))
         else if c == "\"" || c == "'" then
-          let rec str_end = fn (k: int) -> fn (acc: str) ->
-            if k >= n then (k, acc)
-            else if at k == c then (k + 1, acc)
-            else if at k == "\\" && at (k + 1) == "\n" then str_end (k + 2) acc
+          // Three ways a string can end, and the suite distinguishes all three: the
+          // matching quote, a raw newline, and the end of the input. A newline inside a
+          // string is not a string at all — the standard calls it a bad-string and the
+          // newline is not consumed, so what follows it is tokenized afresh. Running to
+          // the end of the input *is* a string, plus an error saying so.
+          let rec str_end = fn (k: int) -> fn (acc: str) -> fn (how: str) ->
+            if k >= n then (k, acc, "eof")
+            else if at k == c then (k + 1, acc, "ok")
+            else if at k == "\n" || at k == "\r" then (k, acc, "bad")
+            else if at k == "\\" && (at (k + 1) == "\n" || at (k + 1) == "\r") then
+              str_end (k + 2) acc how
             else if at k == "\\" then
-              let (t, k2) = esc_at k in str_end k2 (acc ++ t)
-            else str_end (k + 1) (acc ++ at k) in
-          let (e, v) = str_end (i + 1) "" in
-          go e (Cons (Named ("string", v), out))
+              let (t, k2) = esc_at k in str_end k2 (acc ++ t) how
+            else str_end (k + 1) (acc ++ at k) how in
+          let (e, v, how) = str_end (i + 1) "" "ok" in
+          if how == "bad" then go e (Cons (Named ("error", "bad-string"), out))
+          else if how == "eof" then
+            go e (Cons (Named ("error", "eof-in-string"), Cons (Named ("string", v), out)))
+          else go e (Cons (Named ("string", v), out))
         else if c == "@" && _is_name_start (at (i + 1)) then
           let e = name_end (i + 1) in
           go e (Cons (Named ("at-keyword", substring src (i + 1) e), out))
