@@ -140,8 +140,14 @@ a line whose text is 71.2 wide into a column of 71, and that column was sized fr
 
 Anonymous boxes are in. A run of inline children inside a block container becomes one anonymous block, and
 a `display: table-cell` with no table around it is block-level — the standard wraps it in an anonymous
-table, row group and row, so it takes a line of its own. What is left is floats, and a replaced element
-with no intrinsic size.
+table, row group and row, so it takes a line of its own. A float is out of flow, and not in the same way an absolutely positioned box is: it is placed at the
+containing block's left edge below whatever floats came before it, the cursor does not move past it, and
+the parent's height ignores it **unless the parent establishes a block formatting context** — being
+positioned, floated, a table cell or anything but `overflow: visible` does that. What such a box contains
+is the float's *margin* box, not its border box.
+
+What is left is where a float shortens the line beside it, floats placed side by side, and a replaced
+element with no intrinsic size.
 
 That list is re-derived from the failures each time rather than carried forward, because it has been
 wrong twice: it once named `font-size`, which **not one of the 126 documents sets**, and then floats,
