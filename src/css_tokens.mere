@@ -122,6 +122,12 @@ module Css {
             if k >= n then (k, acc, "eof")
             else if at k == c then (k + 1, acc, "ok")
             else if at k == "\n" || at k == "\r" then (k, acc, "bad")
+            else if at k == "\\" && at (k + 1) == "" then
+              // A backslash as the last thing in the input is dropped, not turned into
+              // U+FFFD: inside a string there is nothing for it to escape and the string
+              // simply ends. Outside one it is a delimiter. The replacement character is
+              // for an escape that names no code point, which this is not.
+              str_end (k + 1) acc how
             else if at k == "\\" && (at (k + 1) == "\n" || at (k + 1) == "\r") then
               str_end (k + 2) acc how
             else if at k == "\\" then
@@ -186,8 +192,13 @@ module Css {
               let ue = upto b0 in
               let rec rtrim = fn (k: int) ->
                 if k > b0 && _is_ws (at (k - 1)) then rtrim (k - 1) else k in
-              go (if ue >= n then ue else ue + 1)
-                 (Cons (Named ("url", substring src b0 (rtrim ue)), out))
+              let u = Named ("url", substring src b0 (rtrim ue)) in
+              // A url that runs off the end of the input is still a url, plus an error
+              // saying it never closed — the same shape as an unterminated string, and
+              // for the same reason: a stylesheet missing one bracket should not lose
+              // everything after it.
+              if ue >= n then go ue (Cons (Named ("error", "eof-in-url"), Cons (u, out)))
+              else go (ue + 1) (Cons (u, out))
         else go (i + 1) (Cons (Bare c, out)) in
     go 0 Nil;
 
