@@ -1,0 +1,42 @@
+// The list of active formatting elements, on the parts that have a defined answer
+// without the algorithm around them.
+
+import "../src/formatting.mere";
+
+let check = fn (label: str) -> fn (b: bool) ->
+  print (label ++ ": " ++ (if b then "ok" else "MISMATCH"));
+
+let a1 = Cons (attr { name = "x", value = "1" }, Nil);
+let a2 = Cons (attr { name = "x", value = "2" }, Nil);
+
+// Noah's Ark keeps three and drops the earliest on the fourth.
+let l3 = Formatting.push (Formatting.push (Formatting.push Nil 1 "b" a1) 2 "b" a1) 3 "b" a1;
+let l4 = Formatting.push l3 4 "b" a1;
+let _ = check "three identical are kept" (len l3 == 3);
+let _ = check "the fourth drops the earliest" (len l4 == 3);
+let _ = check "and the earliest is the one gone" (not (Formatting.has l4 1));
+let _ = check "while the newest is there" (Formatting.has l4 4);
+
+// Different attributes are a different element, so the clause does not apply.
+let ld = Formatting.push (Formatting.push (Formatting.push
+           (Formatting.push Nil 1 "b" a1) 2 "b" a1) 3 "b" a1) 5 "b" a2;
+let _ = check "different attributes are not identical" (len ld == 4);
+
+// A marker bounds everything: the count, the search, and what clearing forgets.
+let lm = Formatting.push (Formatting.push_marker l3) 9 "i" Nil;
+let _ = check "find stops at the marker" (Formatting.find lm "b" == 0 - 1);
+let _ = check "find sees past nothing else" (Formatting.find lm "i" == 9);
+let _ = check "clearing forgets to the marker" (len (Formatting.clear_to_marker lm) == 3);
+let lam = Formatting.push (Formatting.push_marker l3) 10 "b" a1;
+let _ = check "the ark counts only to the marker" (len lam == 5);
+
+// find is the last one in the standard's order, which is the newest here.
+let l2 = Formatting.push (Formatting.push Nil 1 "b" a1) 2 "b" a2;
+let _ = check "find takes the newest" (Formatting.find l2 "b" == 2);
+let _ = check "remove takes it out" (not (Formatting.has (Formatting.remove l2 2) 2));
+
+// Reopening order is oldest first, or the nesting comes out inverted.
+let ord = Formatting.entries_after_marker l2;
+let _ = check "reopening order is oldest first"
+  (match ord with Cons ((i, _, _), _) -> i == 1 | Nil -> false);
+0

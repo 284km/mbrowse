@@ -32,8 +32,13 @@
 // The first half of that now exists in src/nodes.mere — a flat arena where a node
 // remembers its parent by id, so moving a subtree is one field. It is checked against
 // this representation rather than trusted: the same document built both ways
-// serializes identically. What is left is the list of active formatting elements and
-// the algorithm itself, and then this builder moves onto the arena.
+// serializes identically.
+//
+// The second half is src/formatting.mere — the list of active formatting elements,
+// with the marker discipline and the Noah's Ark clause, checked on the parts that
+// have a defined answer without the algorithm around them.
+//
+// What is left is the algorithm itself, and then this builder moves onto the arena.
 
 import "mere-html/tokenizer.mere";
 import "dom.mere";

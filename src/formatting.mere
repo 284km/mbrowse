@@ -1,0 +1,97 @@
+// The list of active formatting elements.
+//
+// The other half of what the adoption agency needs, and the half that is a data
+// structure rather than an algorithm. It exists because of one fact about how people
+// write HTML: `<b>` can be left open across a block boundary, and the standard's
+// answer is not to guess but to remember which formatting elements were open and
+// reopen them on the other side.
+//
+// Newest first, because every operation the standard defines on it either looks at
+// the newest end or walks back from it.
+//
+// A marker is pushed when an element is entered that formatting must not escape — a
+// table cell, a caption, an object — and "clear up to the last marker" is how leaving
+// one forgets what was inside it. Without markers, a `<b>` inside a cell would be
+// reopened outside the table.
+
+import "nodes.mere";
+
+type afe =
+  | AMarker
+  | AElem of (int * str * attr list);
+
+module Formatting {
+  let _same = fn (a: attr list) -> fn (b: attr list) ->
+    // Order matters here, which is what the standard says: two elements count as
+    // identical when their attributes match, and it does not sort them.
+    let rec go = fn (xs: attr list) -> fn (ys: attr list) ->
+      match (xs, ys) with
+      | (Nil, Nil) -> true
+      | (Cons (x, xr), Cons (y, yr)) ->
+        if x.name == y.name && x.value == y.value then go xr yr else false
+      | _ -> false in
+    go a b;
+
+  // Noah's Ark: at most three entries for the same element may be in the list at
+  // once, counting only back to the last marker. The fourth pushes the earliest out.
+  // Three rather than one because `<b><b><b>` is a real thing people write and the
+  // tree is supposed to reflect it — and rather than unbounded because a page that
+  // opens ten thousand of them should not cost ten thousand reopenings.
+  let _ark = fn (list: afe list) -> fn (name: str) -> fn (attrs: attr list) ->
+    let rec scan = fn (xs: afe list) -> fn (seen: int) -> fn (out: afe list) ->
+      match xs with
+      | Nil -> list_rev out
+      | Cons (AMarker, rest) -> list_append (list_rev out) (Cons (AMarker, rest))
+      | Cons (AElem (id, n, a), rest) ->
+        if n == name && _same a attrs then
+          if seen >= 2 then
+            // This is the fourth: drop it and keep the rest as they are.
+            list_append (list_rev out) rest
+          else scan rest (seen + 1) (Cons (AElem (id, n, a), out))
+        else scan rest seen (Cons (AElem (id, n, a), out)) in
+    scan list 0 Nil;
+
+  let push = fn (list: afe list) -> fn (id: int) -> fn (name: str) ->
+             fn (attrs: attr list) ->
+    Cons (AElem (id, name, attrs), _ark list name attrs);
+
+  let push_marker = fn (list: afe list) -> Cons (AMarker, list);
+
+  let rec clear_to_marker = fn (list: afe list) ->
+    match list with
+    | Nil -> Nil
+    | Cons (AMarker, rest) -> rest
+    | Cons (_, rest) -> clear_to_marker rest;
+
+  // "The last element with this tag name between the end of the list and the last
+  // marker" — the entry the adoption agency starts from. Newest first, so the first
+  // match walking forward is the last one in the standard's ordering.
+  let rec find = fn (list: afe list) -> fn (name: str) ->
+    match list with
+    | Nil -> 0 - 1
+    | Cons (AMarker, _) -> 0 - 1
+    | Cons (AElem (id, n, _), rest) -> if n == name then id else find rest name;
+
+  let rec remove = fn (list: afe list) -> fn (id: int) ->
+    match list with
+    | Nil -> Nil
+    | Cons (AElem (i, n, a), rest) ->
+      if i == id then rest else Cons (AElem (i, n, a), remove rest id)
+    | Cons (AMarker, rest) -> Cons (AMarker, remove rest id);
+
+  let rec has = fn (list: afe list) -> fn (id: int) ->
+    match list with
+    | Nil -> false
+    | Cons (AElem (i, _, _), rest) -> if i == id then true else has rest id
+    | Cons (AMarker, rest) -> has rest id;
+
+  // Oldest first, for the reopening pass: the standard reconstructs from the entry
+  // after the last marker forward, so that nesting comes out in the original order.
+  let entries_after_marker = fn (list: afe list) ->
+    let rec go = fn (xs: afe list) -> fn (out: (int * str * attr list) list) ->
+      match xs with
+      | Nil -> out
+      | Cons (AMarker, _) -> out
+      | Cons (AElem (id, n, a), rest) -> go rest (Cons ((id, n, a), out)) in
+    go list Nil;
+}
