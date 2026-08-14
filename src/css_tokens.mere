@@ -188,11 +188,37 @@ module Css {
             if at b0 == "\"" || at b0 == "'" then
               go (e + 1) (Cons (Named ("function", v), out))
             else
-              let rec upto = fn (k: int) -> if k >= n || at k == ")" then k else upto (k + 1) in
-              let ue = upto b0 in
-              let rec rtrim = fn (k: int) ->
-                if k > b0 && _is_ws (at (k - 1)) then rtrim (k - 1) else k in
-              let u = Named ("url", substring src b0 (rtrim ue)) in
+              // Built as it is scanned, like a name, because an escape inside a url
+              // still stands for something other than its own characters. It is the one
+              // thing a url has to interpret — everything else it copies, which is the
+              // point of it being its own token.
+              // Whitespace inside a url may only be trailing: once it has appeared,
+              // the only things allowed are the closing bracket and the end of the
+              // input. Anything else is a bad-url, and the remnants are consumed to the
+              // bracket — a url with a space in the middle was never a url, and
+              // guessing which half was meant is worse than saying so.
+              let rec upto = fn (k: int) -> fn (acc: str) -> fn (ws: bool) ->
+                if k >= n || at k == ")" then (k, acc, false)
+                else if at k == "\\" && esc_ok k then
+                  if ws then (k, acc, true)
+                  else let (t, k2) = esc_at k in upto k2 (acc ++ t) ws
+                else if _is_ws (at k) then upto (k + 1) acc true
+                else if ws then (k, acc, true)
+                // A url is copied rather than parsed, but not everything may appear in
+                // one: a quote or an opening bracket means the author wrote something
+                // else and meant it, so it is a bad-url rather than a url containing a
+                // quote.
+                else if at k == "(" || at k == "\"" || at k == "'" then (k, acc, true)
+                else upto (k + 1) (acc ++ at k) ws in
+              let (ue0, v, bad) = upto b0 "" false in
+              if bad then
+                let rec rest = fn (k: int) -> if k >= n || at k == ")" then k else rest (k + 1) in
+                let re = rest ue0 in
+                go (if re >= n then re else re + 1)
+                   (Cons (Named ("error", "bad-url"), out))
+              else
+              let ue = ue0 in
+              let u = Named ("url", v) in
               // A url that runs off the end of the input is still a url, plus an error
               // saying it never closed — the same shape as an unterminated string, and
               // for the same reason: a stylesheet missing one bracket should not lose
