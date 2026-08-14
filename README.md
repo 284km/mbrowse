@@ -37,10 +37,17 @@ Dependencies are vendored into `.mere_modules/` (Mere resolves
 so a checkout builds without fetching anything. `scripts/vendor.sh` is what put them
 there.
 
-**What the checks are not yet**: html5lib-tests' tree-construction suite is not
-vendored — its files are not where the tokenizer's are and the path has to be found
-first — so `test/tree_check.mere` is hand-written, which is the weaker kind of
+**What the checks are not yet**, and the reason is worth stating: html5lib-tests
+**has no tree-construction suite**. Its directories are `encoding`, `lint_lib`,
+`serializer` and `tokenizer` — the tree-construction data that every parser used to be
+measured against is not in that repository, and assuming it was is what this looked
+for first. So `test/tree_check.mere` is hand-written, which is the weaker kind of
 evidence: those are the cases we thought of.
+
+Finding a normative suite for tree construction — web-platform-tests is the obvious
+place to look next — comes before writing many more of these by hand. What is there is
+an `encoding` suite, which is the gate for the character-encoding sniffing that reads
+`<meta charset>`, and that is the next thing to need one.
 
 ## Building
 

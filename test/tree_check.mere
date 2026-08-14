@@ -3,10 +3,12 @@
 // something wrong, because a document that does neither would be checking the
 // tokenizer.
 //
-// The real suite (html5lib-tests tree-construction) is not vendored yet: its files
-// are not where the tokenizer's are and the path has to be found first. These are
-// hand-written until then, and that is a weaker kind of evidence — they are the
-// cases we thought of.
+// html5lib-tests **has no tree-construction suite** — its directories are `encoding`,
+// `lint_lib`, `serializer` and `tokenizer`. The data every parser used to be measured
+// against is not in that repository, which is worth writing down because looking for
+// it there is the obvious first move and it fails quietly with a 404 that reads like
+// a wrong path. These are hand-written until a normative suite is found, and that is
+// the weaker kind of evidence: they are the cases we thought of.
 
 import "../src/tree.mere";
 
