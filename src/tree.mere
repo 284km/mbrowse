@@ -290,6 +290,16 @@ module Tree {
     | Cons (x, rest) ->
       if _name_of arena x == name then x else _open_id_of arena rest name;
 
+  // "In scope" — and it is NOT the special category, which is the third time in this file
+  // that two boundaries wore one name. The special category is where the adoption agency
+  // stops walking. Scope is a much shorter list, and the difference is `li`: `</ul>` closes
+  // its list through an open `<li>` because an li does not bound scope, while the agency
+  // would have stopped there. Using the special category for both meant `<ul><li>x</ul>`
+  // ignored its own end tag and everything after it stayed in the list.
+  let _scope_stop = fn (n: str) ->
+    n == "applet" || n == "caption" || n == "html" || n == "table" || n == "td"
+    || n == "th" || n == "marquee" || n == "object" || n == "template";
+
   let rec _end_tag_matches = fn (arena: anode list) -> fn (open_ids: int list) ->
                              fn (name: str) ->
     match open_ids with
@@ -297,7 +307,7 @@ module Tree {
     | Cons (x, rest) ->
       let n = _name_of arena x in
       if n == name then true
-      else if _is_special n then false
+      else if _scope_stop n then false
       else _end_tag_matches arena rest name;
 
   // The formatting elements: the ones the adoption agency exists for, because these
@@ -533,7 +543,11 @@ module Tree {
               // itself in the body instead of inside itself.
               let (a, o) = push_el arena open_ids name attrs in
               go rest mode a o afe
-            else if _is_void name then
+            // Only the head's OWN void elements belong here. `_is_void` is a list of
+            // childless elements, not a list of head elements, and a `<wbr>` or a `<br>`
+            // before the body starts the body — it does not join the head.
+            else if name == "base" || name == "basefont" || name == "bgsound"
+                    || name == "link" || name == "meta" then
               let (a, o) = push_el arena open_ids name attrs in
               go rest mode a (drop1 o) afe
             else go ts "after head" arena (drop1 open_ids) afe
@@ -630,6 +644,16 @@ module Tree {
               // token goes round for ever. Removing one was a ten-minute hang.
               let rec strip = fn (l: afe list) ->
                 let h = Formatting.find l "a" in
+                if h < 0 then l else strip (Formatting.remove l h) in
+              go ts mode a2 o2 (strip l2)
+            // A `<nobr>` with a nobr already in scope runs the agency for it first — the
+            // same shape as the `<a>` rule above, with scope as the condition instead of the
+            // list, which is why `<nobr><nobr><nobr>` is three siblings.
+            else if name == "nobr" && _end_tag_matches arena open_ids "nobr" then
+              let (a2, o2, l2, _handled, _complex) =
+                Aaa.run arena open_ids afe "nobr" _is_special in
+              let rec strip = fn (l: afe list) ->
+                let h = Formatting.find l "nobr" in
                 if h < 0 then l else strip (Formatting.remove l h) in
               go ts mode a2 o2 (strip l2)
             // A second `<select>` closes the first rather than nesting inside it, and the

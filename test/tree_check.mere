@@ -85,6 +85,16 @@ let _ = check "li closes li" "<li>a<li>b"
 // check agreeing with the code was worth nothing: they were wrong together.
 let _ = check "li closes li across a div" "<li><div><li>"
   "<html>\n  <head>\n  <body>\n    <li>\n      <div>\n    <li>";
+// Scope is not the special category. An li does not bound scope, so </ul> closes its list
+// through one; the adoption agency would have stopped there.
+let _ = check "an end tag closes through an open li" "<ul>how<li>do</ul>you"
+  "<html>\n  <head>\n  <body>\n    <ul>\n      \"how\"\n      <li>\n        \"do\"\n    \"you\"";
+// A nobr in scope makes the next nobr a sibling, via the agency.
+let _ = check "three nobrs are three siblings" "<nobr><nobr><nobr>"
+  "<html>\n  <head>\n  <body>\n    <nobr>\n    <nobr>\n    <nobr>";
+// A void element is not a head element: a wbr before the body starts the body.
+let _ = check "a wbr does not join the head" "<wbr><strike>a"
+  "<html>\n  <head>\n  <body>\n    <wbr>\n    <strike>\n      \"a\"";
 // A p does not reconstruct the formatting elements — only the formatting elements and the
 // tags with no rule of their own do. Reconstructing for everything put a b before every p.
 let _ = check "a p does not reopen a b in front of itself" "<p id=a><b><p id=b></b>TEST"
