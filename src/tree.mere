@@ -66,9 +66,11 @@
 //    `Nodes.last_child` is how it knows, which was the one thing the nested form did
 //    on the way in and the arena has to do in place.
 //
-// 2. **The adoption agency's other half** — the bookmark and the cloned element —
-//    which can only be written on top of 1, because moving a node between parents is
-//    what it does and the nested form cannot.
+// 2. ~~The adoption agency's other half.~~ Done, in src/aaa.mere, and checked on
+//    `<b>1<p>2</b>` — the clone of the `<b>` becomes the paragraph's child and the
+//    text moves into it. **Nothing calls it yet**, which is why the corpus still says
+//    95 of 189: wiring it into this builder's end-tag handling is the next step, and
+//    it is the one that will move the number.
 //
 // The four pieces under both are each checked on their own, which is the point of
 // having built them separately: when the rewrite is wrong, what it is standing on

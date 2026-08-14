@@ -44,10 +44,82 @@ module Aaa {
         else go rest (if is_special (_name_of arena x) then x else best) in
     go open_ids (0 - 1);
 
+  // The element immediately below another in the stack — the standard's "below" is
+  // toward the bottom, which in a newest-first list is further along.
+  let rec _below = fn (open_ids: int list) -> fn (id: int) ->
+    match open_ids with
+    | Nil -> 0
+    | Cons (x, rest) ->
+      if x == id then (match rest with Cons (y, _) -> y | Nil -> 0)
+      else _below rest id;
+
+  let rec _above = fn (open_ids: int list) -> fn (id: int) -> fn (prev: int) ->
+    match open_ids with
+    | Nil -> 0 - 1
+    | Cons (x, rest) -> if x == id then prev else _above rest id x;
+
+  let rec _remove_from = fn (open_ids: int list) -> fn (id: int) ->
+    match open_ids with
+    | Nil -> Nil
+    | Cons (x, rest) -> if x == id then rest else Cons (x, _remove_from rest id);
+
+  // Put `new_id` where `old_id` was, so that "replace the entry" does not also mean
+  // "move it to the end" — the order of this stack is the nesting of the document.
+  let rec _replace_in = fn (open_ids: int list) -> fn (old_id: int) -> fn (new_id: int) ->
+    match open_ids with
+    | Nil -> Nil
+    | Cons (x, rest) ->
+      if x == old_id then Cons (new_id, rest)
+      else Cons (x, _replace_in rest old_id new_id);
+
+  // Insert immediately below `anchor`.
+  let rec _insert_below = fn (open_ids: int list) -> fn (anchor: int) -> fn (id: int) ->
+    match open_ids with
+    | Nil -> Cons (id, Nil)
+    | Cons (x, rest) ->
+      if x == anchor then Cons (x, Cons (id, rest))
+      else Cons (x, _insert_below rest anchor id);
+
+  // The rewrite. The tree is reshaped around the furthest block: everything between
+  // it and the formatting element is re-parented into a chain, the block's children
+  // move into a clone of the formatting element, and the clone becomes the block's
+  // only child. That is why this needed an arena — every step moves a node that is
+  // already placed.
+  //
+  // The inner loop's three rounds are the standard's: after three, an element that is
+  // still listed is dropped from the list rather than cloned again, which is what
+  // stops a pathological document from cloning without bound.
+  let rec rewrite = fn (arena: anode list) -> fn (open_ids: int list) ->
+                fn (afe: afe list) -> fn (fmt: int) -> fn (fb: int) ->
+    let common = _below open_ids fmt in
+    let rec inner = fn (rounds: int) -> fn (node: int) -> fn (last_node: int) ->
+                    fn (a: anode list) -> fn (o: int list) -> fn (l: afe list) ->
+      let nxt = _below o node in
+      if rounds >= 3 || nxt == fmt || nxt == 0 then (a, o, l, last_node)
+      else if not (Formatting.has l nxt) then
+        inner (rounds + 1) nxt last_node a (_remove_from o nxt) l
+      else
+        let (a2, cl) = Nodes.clone a nxt (Nodes._nth a nxt).parent in
+        let l2 = Formatting.push (Formatting.remove l nxt) cl
+                   (Nodes._nth a nxt).name (Nodes._nth a nxt).attrs in
+        let o2 = _replace_in o nxt cl in
+        let a3 = Nodes.reparent a2 last_node cl in
+        inner (rounds + 1) cl cl a3 o2 l2 in
+    let (a1, o1, l1, last_node) = inner 0 fb fb arena open_ids afe in
+    let a2 = Nodes.reparent a1 last_node common in
+    // The formatting element's clone takes the block's children and becomes its child.
+    let (a3, fclone) = Nodes.clone a2 fmt fb in
+    let a4 = Nodes.move_children a3 fb fclone in
+    let a5 = Nodes.reparent a4 fclone fb in
+    let l2 = Formatting.push (Formatting.remove l1 fmt) fclone
+               (Nodes._nth a2 fmt).name (Nodes._nth a2 fmt).attrs in
+    let o2 = _insert_below (_remove_from o1 fmt) fb fclone in
+    (a5, o2, l2, true, false)
+
   // `handled` is false only when the caller must fall through to its own "any other
   // end tag" handling, which is what the standard says to do when the subject is not
   // a formatting element that is still listed.
-  let run = fn (arena: anode list) -> fn (open_ids: int list) -> fn (afe: afe list) ->
+  and run = fn (arena: anode list) -> fn (open_ids: int list) -> fn (afe: afe list) ->
             fn (subject: str) -> fn (is_special: str -> bool) ->
     // Step 1: the current node is the subject and was never a formatting element.
     match open_ids with
@@ -66,9 +138,6 @@ module Aaa {
             // The simple case: nothing special intervenes, so this is an ordinary
             // close that happens to have been recorded.
             (arena, _pop_through open_ids fmt, Formatting.remove afe fmt, true, false)
-          else
-            // The half that rewrites the tree. Reported, not guessed at: the last
-            // field says "there was a furthest block and this did not handle it".
-            (arena, open_ids, afe, false, true)
+          else rewrite arena open_ids afe fmt fb
     | Nil -> (arena, open_ids, afe, false, false);
 }

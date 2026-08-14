@@ -30,10 +30,24 @@ let _ = check "not a formatting element: not handled" (not h3 && not cx3);
 let (_, _, f4, h4, cx4) = Aaa.run a2 (Cons (body, Nil)) afe1 "b" special;
 let _ = check "stale entry is removed" (h4 && not cx4 && not (Formatting.has f4 b1));
 
-// <b>1<p>2</b> : a p is open inside the b, so this is the half that is not here.
+// <b>1<p>2</b> : a p is open inside the b, so the tree gets rewritten around it —
+// the b is reopened inside the p, which is the whole reason the algorithm exists.
 let (a5, p1) = Nodes.element a2 b1 "p" Nil;
-let (_, _, _, h5, cx5) = Aaa.run a5 (Cons (p1, Cons (b1, Cons (body, Nil)))) afe1 "b" special;
-let _ = check "furthest block is reported, not guessed" (not h5 && cx5);
+let (a6, tx) = Nodes.add_text a5 p1 "2";
+let (r, o5, f5, h5, cx5) = Aaa.run a6 (Cons (p1, Cons (b1, Cons (body, Nil)))) afe1 "b" special;
+let _ = check "the rewrite runs" (h5 && not cx5);
+let _ = check "the formatting element leaves the list" (not (Formatting.has f5 b1));
+// The p's child is now a b, and the text is under that b rather than the p.
+let _ = check "a clone of the b is the block's child"
+  (match Nodes.children_of r p1 with
+   | Cons (c, Nil) -> (Nodes._nth r c).name == "b"
+   | _ -> false);
+let _ = check "and the text moved into it"
+  (match Nodes.children_of r p1 with
+   | Cons (c, Nil) -> (match Nodes.children_of r c with
+                       | Cons (t, Nil) -> t == tx
+                       | _ -> false)
+   | _ -> false);
 
 // The furthest block is the special element nearest the formatting element.
 let (a6, d1) = Nodes.element a5 p1 "div" Nil;
