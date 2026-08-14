@@ -149,12 +149,22 @@ module Sniff {
             else if c == ">" then k
             else upto (k + 1) "" in
         let e = upto i "" in
+        // A tag with no `>` at all is not a tag: the input ended in the middle of
+        // it, and the standard's prescan takes nothing from one. `<meta charset=x`
+        // at end of file declares nothing.
+        if e >= n then ""
+        else
         let tag = substring src i (if e >= n then n else e) in
         let name = to_lower (substring tag 1 (if str_len tag >= 6 then 6 else str_len tag)) in
         if name == "meta " || name == "meta\t" || name == "meta\n"
            || name == "meta\r" || name == "meta/" then
-          let cs = _meta_declares tag in
-          if cs != "" then cs else go (e + 1)
+          // An unrecognised label does not count and does not stop the scan: a
+          // page whose first meta says `charset="bogus"` and whose second says
+          // something real is a page with a declaration. Resolving here rather than
+          // in the caller is what lets the scan continue.
+          match Encoding.label_of (_meta_declares tag) with
+          | Some name -> name
+          | None -> go (e + 1)
         else go (e + 1) in
     go 0;
 
@@ -168,8 +178,8 @@ module Sniff {
     else
       // A page that declares UTF-16 in ASCII cannot be in UTF-16, so the standard
       // reads that declaration as UTF-8.
-      match Encoding.label_of (prescan (str_of_bytes b)) with
-      | None -> "windows-1252"
-      | Some d ->
-        if d == "utf-16le" || d == "utf-16be" then "utf-8" else d;
+      let d = prescan (str_of_bytes b) in
+      if d == "" then "windows-1252"
+      else if d == "utf-16le" || d == "utf-16be" then "utf-8"
+      else d;
 }

@@ -19,8 +19,9 @@ command -v python3 >/dev/null 2>&1 || { echo "encoding_check: python3 needed to 
 # stopped being the first `>` and started being its own, and 72 -> 79 when the scan
 # stopped stopping at 1024 bytes: the standard says it *may* be aborted there, and
 # reading that as *does* loses the declaration on any page whose head opens with a
-# long comment. Two left.
-EXPECT_PASS=${EXPECT_PASS:-79}
+# long comment. And 79 -> 81 — all of them — when an unrecognised label stopped
+# ending the scan and an unterminated tag stopped counting as a tag.
+EXPECT_PASS=${EXPECT_PASS:-81}
 
 T="${TMPDIR:-/tmp}/mbrowse_enc.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 python3 "$ROOT/scripts/encoding_cases.py" "$ROOT/test/data" "$T/cases.txt" "$T/meta.txt"

@@ -57,7 +57,10 @@ attribute value may contain one, and `content="text/html; charset=x>"` ends the 
 four characters later than it looks. And 72 to **79** when the scan stopped stopping
 at 1024 bytes — the standard says the prescan *may* be aborted there, and reading
 "may" as "does" loses the declaration on any page whose head opens with a long
-comment. Two of the 81 are left.
+comment. **All 81 pass** since two more: an unrecognised label does not end the scan
+(a page whose first meta says `charset="bogus"` and whose second says something real
+has a declaration), and a tag with no `>` is not a tag — the input ended in the middle
+of it.
 
 Finding a normative suite for tree construction — web-platform-tests is the obvious
 place to look next — comes before writing many more of these by hand. What is there is
