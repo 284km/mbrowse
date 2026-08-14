@@ -101,5 +101,5 @@ module Sniff {
       match Encoding.label_of (prescan (str_of_bytes b)) with
       | None -> "windows-1252"
       | Some d ->
-        if d == "UTF-16LE" || d == "UTF-16BE" then "UTF-8" else d;
+        if d == "utf-16le" || d == "utf-16be" then "utf-8" else d;
 }

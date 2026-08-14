@@ -44,6 +44,13 @@ measured against is not in that repository, and assuming it was is what this loo
 for first. So `test/tree_check.mere` is hand-written, which is the weaker kind of
 evidence: those are the cases we thought of.
 
+For encoding sniffing there **is** one, and it is wired up: `scripts/encoding_check.sh`
+runs html5lib-tests' encoding suite, 46 of 81. Almost everything that fails is one
+thing — the vendored label table lists only the encodings it can decode, so a page
+declaring `iso-8859-2` reads as a page declaring nothing. Sniffing needs a label table
+that is complete whether or not a decoder exists for each entry, which is the same gap
+`utf-16` was and larger.
+
 Finding a normative suite for tree construction — web-platform-tests is the obvious
 place to look next — comes before writing many more of these by hand. What is there is
 an `encoding` suite, which is the gate for the character-encoding sniffing that reads

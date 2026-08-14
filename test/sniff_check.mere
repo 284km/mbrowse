@@ -19,9 +19,8 @@ let _ = check "http-equiv content"
 let _ = check "comment before" "<!-- <meta charset=utf-8> --><meta charset=utf-8>" "utf-8";
 let _ = check "BOM wins" (chr 239 ++ chr 187 ++ chr 191 ++ "<meta charset=utf-8>") "UTF-8";
 
-// Known gap, upstream: `utf-16` is a label in the Encoding Standard and the
-// vendored label table does not have it, so this answers windows-1252 where the
-// standard says UTF-8 (a page declaring UTF-16 in ASCII cannot be in it). Written
-// down as the case it is rather than left out.
-let _ = check "utf-16 declared (KNOWN GAP)" "<meta charset=utf-16>" "windows-1252";
+// A page declaring UTF-16 in ASCII cannot be in UTF-16, so the declaration reads as
+// UTF-8. This was the known gap of the previous commit — the vendored label table
+// had no `utf-16` at all, so the page looked undeclared — and it is fixed upstream.
+let _ = check "utf-16 declared" "<meta charset=utf-16>" "utf-8";
 0
