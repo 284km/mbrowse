@@ -85,6 +85,17 @@ let _ = check "li closes li" "<li>a<li>b"
 // check agreeing with the code was worth nothing: they were wrong together.
 let _ = check "li closes li across a div" "<li><div><li>"
   "<html>\n  <head>\n  <body>\n    <li>\n      <div>\n    <li>";
+// Three end-tag rules with three different boundaries, one check each.
+// `</ul>` uses scope, which an li does not bound, so it closes through one.
+let _ = check "ul closes through an li" "<ul><li>a</ul>b"
+  "<html>\n  <head>\n  <body>\n    <ul>\n      <li>\n        \"a\"\n    \"b\"";
+// `</span>` uses the special walk, and a button stops it — so the tag is ignored outright and
+// the text after it stays inside the button.
+let _ = check "span is ignored inside a button" "<span><button>foo</span>bar"
+  "<html>\n  <head>\n  <body>\n    <span>\n      <button>\n        \"foobar\"";
+// `</li>` uses list item scope, which a nested list DOES bound, so it is ignored there.
+let _ = check "li is ignored inside a nested list" "<ul><li><ul></li><li>a</li></ul>"
+  "<html>\n  <head>\n  <body>\n    <ul>\n      <li>\n        <ul>\n          <li>\n            \"a\"";
 // The two canonical adoption-agency shapes. The first is the one the algorithm exists for;
 // the second needs two passes of the outer loop, and the b that ends up around "world" is
 // the one the SECOND pass popped and left for reconstruction to reopen.

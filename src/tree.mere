@@ -310,15 +310,45 @@ module Tree {
     n == "applet" || n == "caption" || n == "html" || n == "table" || n == "td"
     || n == "th" || n == "marquee" || n == "object" || n == "template";
 
-  let rec _end_tag_matches = fn (arena: anode list) -> fn (open_ids: int list) ->
-                             fn (name: str) ->
+  // Three end-tag rules, three boundaries, and this file has now paid for confusing them
+  // five times. The standard has:
+  //
+  //   the block group (address...ul, p, li, dd, dt, the headings, form) — SCOPE
+  //   `</li>`                                                          — LIST ITEM scope,
+  //                                                                      which ol and ul bound
+  //   any other end tag                                                — the SPECIAL walk
+  //
+  // The differences are all load-bearing. `</ul>` closes through an open `<li>`, because an li
+  // does not bound scope. `</span>` inside a `<button>` is IGNORED, because a button is
+  // special and the walk stops at it — so the text after it stays in the button. And `</li>`
+  // inside a nested `<ul>` is ignored, because the inner list bounds list-item scope.
+  let _closes_by_scope = fn (n: str) ->
+    n == "address" || n == "article" || n == "aside" || n == "blockquote"
+    || n == "button" || n == "center" || n == "details" || n == "dialog" || n == "dir"
+    || n == "div" || n == "dl" || n == "fieldset" || n == "figcaption" || n == "figure"
+    || n == "footer" || n == "form" || _is_heading n || n == "header" || n == "hgroup"
+    || n == "listing" || n == "main" || n == "menu" || n == "nav" || n == "ol"
+    || n == "p" || n == "pre" || n == "section" || n == "summary" || n == "ul"
+    || n == "dd" || n == "dt";
+
+  let rec _walk_to = fn (arena: anode list) -> fn (open_ids: int list) ->
+                     fn (name: str) -> fn (stop: str -> bool) ->
     match open_ids with
     | Nil -> false
     | Cons (x, rest) ->
       let n = _name_of arena x in
       if n == name then true
-      else if _scope_stop n then false
-      else _end_tag_matches arena rest name;
+      else if stop n then false
+      else _walk_to arena rest name stop;
+
+  let _end_tag_matches = fn (arena: anode list) -> fn (open_ids: int list) ->
+                         fn (name: str) ->
+    if name == "li" then
+      // List item scope: everything scope bounds, and the lists as well.
+      _walk_to arena open_ids name
+        (fn (n: str) -> _scope_stop n || n == "ol" || n == "ul")
+    else if _closes_by_scope name then _walk_to arena open_ids name _scope_stop
+    else _walk_to arena open_ids name _is_special;
 
   // The formatting elements: the ones the adoption agency exists for, because these
   // are what people leave open across a block boundary.
@@ -771,6 +801,12 @@ module Tree {
           // the vendored suite predates that, the same way its select expectations do.
           if mode == "in head" && name == "html" then
             go ts "after head" arena (drop1 open_ids) afe
+          // `</html>` after the head opens the body and is then reprocessed there, which is
+          // why `<head></html><meta>` puts the meta in the BODY: by the time the meta arrives
+          // the head is behind us, not merely closed.
+          else if mode == "after head" && (name == "html" || name == "body") then
+            let (a, o) = _open_body true arena open_ids in
+            go ts "in body" a o afe
           else if mode == "in head" && name == "p" then go rest mode arena open_ids afe
           else if _cur_ns arena open_ids != "" then
             // Match on the local name: the element is called "svg path" and the tag
