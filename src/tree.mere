@@ -127,6 +127,23 @@ module Tree {
   let _eats_newline = fn (n: str) ->
     n == "pre" || n == "listing" || n == "textarea";
 
+  // The elements whose content is text and not markup. Their text belongs to them no
+  // matter which insertion mode is running.
+  let _is_text_holder = fn (n: str) ->
+    n == "title" || n == "style" || n == "script" || n == "textarea" || n == "xmp"
+    || n == "iframe" || n == "noembed" || n == "noframes" || n == "noscript"
+    || n == "plaintext";
+
+  // The head element, wherever the stack has got to — the standard calls this the head
+  // element pointer, and it needs one because a `<meta>` written after `</head>` still goes
+  // inside the head. There is only ever one, because a second `<head>` tag is ignored.
+  let _head_id = fn (arena: anode list) ->
+    let rec go = fn (xs: anode list) -> fn (i: int) ->
+      match xs with
+      | Nil -> 0 - 1
+      | Cons (x, rest) -> if x.name == "head" then i else go rest (i + 1) in
+    go arena 0;
+
   let _is_void = fn (n: str) ->
     n == "area" || n == "base" || n == "br" || n == "col" || n == "embed"
     || n == "hr" || n == "img" || n == "input" || n == "link" || n == "meta"
@@ -434,6 +451,15 @@ module Tree {
           let (a, _id) = Nodes.comment arena (_parent open_ids) data in
           go rest mode a open_ids afe
         | TChar data ->
+          // Text inside an element that holds text goes inside it, whatever the insertion
+          // mode says. The mode decides where an ELEMENT goes; a raw-text element has
+          // already decided where its own text goes by being open.
+          if _is_text_holder (match open_ids with
+                              | Nil -> ""
+                              | Cons (x, _r) -> _name_of arena x) then
+            let (a, _id) = Nodes.add_text arena (_parent open_ids) data in
+            go rest mode a open_ids afe
+          else
           // A frameset document has no text in it. Whitespace is kept and everything else
           // is dropped, one character at a time rather than one token at a time: the
           // corpus has `<frameset> te st`, whose whole answer is the two spaces.
@@ -443,8 +469,11 @@ module Tree {
             else
               let (a, _id) = Nodes.add_text arena (_parent open_ids) ws in
               go rest mode a open_ids afe
-          else if _is_ws data && mode != "in body" then go rest mode arena open_ids afe
-          else if mode == "in body" then
+          else if _is_ws data && mode != "in body" && mode != "after body" then
+            go rest mode arena open_ids afe
+          // After the body, characters are processed with the body's own rules — which is
+          // why the space in `X</html> ` joins the text rather than vanishing.
+          else if mode == "in body" || mode == "after body" then
             let fb = _foster_target arena open_ids in
             if fb >= 0 then
               let (a, _id) = Nodes.insert_before arena fb 1 "" Nil data in
@@ -476,8 +505,17 @@ module Tree {
               let (a, o) = push_el arena open_ids "head" Nil in
               go ts "in head" a o afe
           else if mode == "in head" then
-            if name == "title" || name == "style" || name == "script"
-               || _is_void name then
+            // A second `<head>` is nothing at all, not a second element.
+            if name == "head" then go rest mode arena open_ids afe
+            else if name == "title" || name == "style" || name == "script"
+                    || name == "noframes" || name == "noscript" then
+              // These stay OPEN until their end tag. Popping them the moment they arrive
+              // left their text with nowhere to go, and text in the head with nowhere to go
+              // opens the body — which is how `<style> EOF` put its own content next to
+              // itself in the body instead of inside itself.
+              let (a, o) = push_el arena open_ids name attrs in
+              go rest mode a o afe
+            else if _is_void name then
               let (a, o) = push_el arena open_ids name attrs in
               go rest mode a (drop1 o) afe
             else go ts "after head" arena (drop1 open_ids) afe
@@ -500,6 +538,18 @@ module Tree {
               let (a, o) = push_el arena open_ids "noframes" attrs in
               go rest mode a o afe
             else go rest mode arena open_ids afe
+          else if mode == "after head"
+                  && (name == "base" || name == "basefont" || name == "bgsound"
+                      || name == "link" || name == "meta" || name == "noframes"
+                      || name == "script" || name == "style" || name == "title")
+                  && _head_id arena >= 0 then
+            // `<head></head><style>` puts the style in the head, not after it. The element
+            // goes straight in as a child rather than by pushing the head back on the stack
+            // and taking it off again: the only reason the standard does that dance is to
+            // reuse its own in-head rules, and the effect is a child of the head.
+            let (a, id) = Nodes.element arena (_head_id arena) name attrs in
+            if _is_void name then go rest mode a open_ids afe
+            else go rest mode a (Cons (id, open_ids)) afe
           else if mode == "after head" then
             // A frameset is not in the body, it replaces it — so this is asked here, where
             // the body has not been opened yet, and the element goes under html.
@@ -540,7 +590,7 @@ module Tree {
             // until the two table questions were separated: with `_table_open`, a `<td>`
             // inside a cell reads as "no table open" and would be dropped instead of
             // closing the cell.
-            else if name == "frame"
+            else if name == "frame" || name == "head"
                     || ((name == "caption" || name == "col" || name == "colgroup"
                          || name == "tbody" || name == "td" || name == "tfoot"
                          || name == "th" || name == "thead" || name == "tr")

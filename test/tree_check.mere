@@ -85,6 +85,19 @@ let _ = check "li closes li" "<li>a<li>b"
 // check agreeing with the code was worth nothing: they were wrong together.
 let _ = check "li closes li across a div" "<li><div><li>"
   "<html>\n  <head>\n  <body>\n    <li>\n      <div>\n    <li>";
+// A raw-text element's content belongs to it, whatever insertion mode is running.
+let _ = check "style in the head keeps its own text" "<style>a\{b}</style>"
+  "<html>\n  <head>\n    <style>\n      \"a\{b}\"\n  <body>";
+let _ = check "title in the head keeps its own text" "<title>t</title>"
+  "<html>\n  <head>\n    <title>\n      \"t\"\n  <body>";
+// A head element written after </head> goes back into the head.
+let _ = check "a style after the head goes in the head" "<head></head><style>x</style>"
+  "<html>\n  <head>\n    <style>\n      \"x\"\n  <body>";
+let _ = check "and so does a meta" "<head></head><meta>"
+  "<html>\n  <head>\n    <meta>\n  <body>";
+// A second head tag is nothing at all.
+let _ = check "a second head is ignored" "<head><head>"
+  "<html>\n  <head>\n  <body>";
 // A void element still has to be placed: an <hr> closes an open <p>.
 let _ = check "hr closes p and a stray end tag makes another" "<p><hr></p>"
   "<html>\n  <head>\n  <body>\n    <p>\n    <hr>\n    <p>";
