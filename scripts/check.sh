@@ -6,7 +6,7 @@ set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "check: no mere — set MERE=/path/to/mere.exe" >&2; exit 1; }
-out=$("$MERE" "$ROOT/test/dom_check.mere"; "$MERE" "$ROOT/test/tree_check.mere"; "$MERE" "$ROOT/test/sniff_check.mere")
+out=$("$MERE" "$ROOT/test/dom_check.mere"; "$MERE" "$ROOT/test/tree_check.mere"; "$MERE" "$ROOT/test/sniff_check.mere"; "$MERE" "$ROOT/test/nodes_check.mere")
 echo "$out"
 echo "$out" | grep -q MISMATCH && { echo "check: failed" >&2; exit 1; }
 sh "$ROOT/scripts/tree_check.sh"

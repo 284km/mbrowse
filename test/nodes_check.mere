@@ -1,0 +1,41 @@
+// The arena against the nested representation: the same document, built both ways,
+// serialized the same. That is what makes it a replacement rather than a second
+// thing to keep in step.
+
+import "../src/nodes.mere";
+
+let check = fn (label: str) -> fn (got: str) -> fn (want: str) ->
+  print (label ++ ": " ++ (if got == want then "ok"
+    else "MISMATCH\n--- got ---\n" ++ got ++ "\n--- want ---\n" ++ want));
+
+// <html><head><body><p class=x>hi<!--c-->
+let a0 = Nodes.empty;
+let (a1, dt) = Nodes.doctype a0 0 "html";
+let (a2, html) = Nodes.element a1 0 "html" Nil;
+let (a3, head) = Nodes.element a2 html "head" Nil;
+let (a4, body) = Nodes.element a3 html "body" Nil;
+let (a5, p) = Nodes.element a4 body "p" (Cons (attr { name = "class", value = "x" }, Nil));
+let (a6, t) = Nodes.text a5 p "hi";
+let (a7, c) = Nodes.comment a6 body "c";
+
+let nested = Cons (Doctype ("html", "", ""),
+             Cons (Element ("html", Nil,
+                     Cons (Element ("head", Nil, Nil),
+                     Cons (Element ("body", Nil,
+                             Cons (Element ("p", Cons (attr { name = "class", value = "x" }, Nil),
+                                     Cons (Text "hi", Nil)),
+                             Cons (Comment "c", Nil))), Nil))), Nil));
+
+let _ = check "arena matches nested" (Nodes.serialize a7) (Dom.serialize nested);
+
+// The operation the nested form cannot do: move the text out of the p and under the
+// body, which is the shape the adoption agency needs.
+let moved = Nodes.reparent a7 t body;
+let _ = check "reparent moves a subtree" (Nodes.serialize moved)
+  (Dom.serialize (Cons (Doctype ("html", "", ""),
+   Cons (Element ("html", Nil,
+     Cons (Element ("head", Nil, Nil),
+     Cons (Element ("body", Nil,
+       Cons (Element ("p", Cons (attr { name = "class", value = "x" }, Nil), Nil),
+       Cons (Text "hi", Cons (Comment "c", Nil)))), Nil))), Nil))));
+0

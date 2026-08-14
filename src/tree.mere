@@ -25,11 +25,15 @@
 // the algorithm would run, the nodes it has to move are no longer reachable as
 // anything but a value inside their parent.
 //
-// So the adoption agency is not more rules on top of these. It is a change to how
-// the tree is held while it is being built: nodes that stay addressable after their
+// So the adoption agency is not more rules on top of these. It is a change to how the
+// tree is held while it is being built: nodes that stay addressable after their
 // element is closed, plus the list of active formatting elements the algorithm walks.
-// That is the next piece of work, and it is a bigger one than it looks from the
-// outside — which is why it is written down here rather than attempted in passing.
+//
+// The first half of that now exists in src/nodes.mere — a flat arena where a node
+// remembers its parent by id, so moving a subtree is one field. It is checked against
+// this representation rather than trusted: the same document built both ways
+// serializes identically. What is left is the list of active formatting elements and
+// the algorithm itself, and then this builder moves onto the arena.
 
 import "mere-html/tokenizer.mere";
 import "dom.mere";

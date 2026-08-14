@@ -1,0 +1,82 @@
+// A document tree whose nodes stay addressable after their element is closed.
+//
+// src/dom.mere holds a tree as nested values, which is the right shape for a
+// finished document and the wrong one for building it: the adoption agency algorithm
+// takes nodes that are already placed and moves them under a different parent, and a
+// node folded into its parent's value cannot be moved.
+//
+// So nodes live in a flat arena and remember their parent by id. "Move this subtree
+// under that element" becomes one field, and nothing else in the tree has to change
+// — which is the property the algorithm needs and the only reason this exists.
+//
+// The order children come out in is insertion order, which for a parser is document
+// order, so no sibling links are needed.
+
+import "dom.mere";
+
+// kind: 0 element, 1 text, 2 comment, 3 doctype.
+type anode = { kind: int, name: str, attrs: attr list, text: str, parent: int };
+
+module Nodes {
+  // The root is id 0 and stands for the document; every real node's parent chain
+  // ends there.
+  let empty = Cons (anode { kind = 0, name = "#document", attrs = Nil,
+                            text = "", parent = 0 - 1 }, Nil);
+
+  let rec _nth = fn (xs: anode list) -> fn (i: int) ->
+    match xs with
+    | Nil -> anode { kind = 0, name = "?", attrs = Nil, text = "", parent = 0 - 1 }
+    | Cons (x, rest) -> if i <= 0 then x else _nth rest (i - 1);
+
+  let count = fn (a: anode list) -> len a;
+
+  // Appending puts the new node last, so its id is the old count and children come
+  // back in the order they were added.
+  let add = fn (a: anode list) -> fn (n: anode) ->
+    (list_append a (Cons (n, Nil)), len a);
+
+  let element = fn (a: anode list) -> fn (parent: int) -> fn (name: str) ->
+                fn (attrs: attr list) ->
+    add a (anode { kind = 0, name = name, attrs = attrs, text = "", parent = parent });
+
+  let text = fn (a: anode list) -> fn (parent: int) -> fn (s: str) ->
+    add a (anode { kind = 1, name = "", attrs = Nil, text = s, parent = parent });
+
+  let comment = fn (a: anode list) -> fn (parent: int) -> fn (s: str) ->
+    add a (anode { kind = 2, name = "", attrs = Nil, text = s, parent = parent });
+
+  let doctype = fn (a: anode list) -> fn (parent: int) -> fn (s: str) ->
+    add a (anode { kind = 3, name = s, attrs = Nil, text = "", parent = parent });
+
+  // The one operation the nested representation cannot do.
+  let reparent = fn (a: anode list) -> fn (id: int) -> fn (new_parent: int) ->
+    let rec go = fn (xs: anode list) -> fn (i: int) -> fn (out: anode list) ->
+      match xs with
+      | Nil -> list_rev out
+      | Cons (x, rest) ->
+        let y = if i == id then anode { kind = x.kind, name = x.name,
+                                        attrs = x.attrs, text = x.text,
+                                        parent = new_parent } else x in
+        go rest (i + 1) (Cons (y, out)) in
+    go a 0 Nil;
+
+  // Back to the nested form, which is what the conformance harness compares.
+  let rec _kids_of = fn (a: anode list) -> fn (parent: int) ->
+    let n = len a in
+    let rec go = fn (i: int) -> fn (out: node list) ->
+      if i >= n then list_rev out
+      else
+        let x = _nth a i in
+        if x.parent != parent then go (i + 1) out
+        else
+          let nd =
+            if x.kind == 1 then Text x.text
+            else if x.kind == 2 then Comment x.text
+            else if x.kind == 3 then Doctype (x.name, "", "")
+            else Element (x.name, x.attrs, _kids_of a i) in
+          go (i + 1) (Cons (nd, out)) in
+    go 0 Nil;
+
+  let to_nodes = fn (a: anode list) -> _kids_of a 0;
+  let serialize = fn (a: anode list) -> Dom.serialize (to_nodes a);
+}
