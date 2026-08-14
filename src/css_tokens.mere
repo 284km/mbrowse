@@ -18,12 +18,17 @@ module Css {
   let _is_ws = fn (c: str) ->
     c == " " || c == "\t" || c == "\n" || c == "\r" || c == chr 12;
 
-  let _is_digit = fn (c: str) -> c >= "0" && c <= "9";
+  let _is_digit = fn (c: str) -> c != "" && c >= "0" && c <= "9";
 
   // Identifiers may start with a letter, an underscore, a dash, or anything non-ASCII —
   // the last because CSS decided that a name is what is not punctuation.
+  // The empty string is what `at` returns past the end of the input, and it is not a
+  // name start — asking `ord` about it is an error rather than an answer, which is how
+  // this showed up: cases died mid-run and the harness counted their missing output as
+  // a wrong answer instead of as a crash.
   let _is_name_start = fn (c: str) ->
-    (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_" || ord c > 127;
+    if c == "" then false
+    else (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_" || ord c > 127;
 
   let _is_name = fn (c: str) -> _is_name_start c || _is_digit c || c == "-";
 

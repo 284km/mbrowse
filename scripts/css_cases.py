@@ -69,8 +69,25 @@ if sys.argv[1] == "--compare":
     print("css_tokens: %d passed, %d failed, %d not covered (blocks and functions), of %d"
           % (p, f, sk, len(rows)))
     for w, a in bad:
-        print("  FAIL want: %s" % w.replace("\n", " | "))
-        print("       got:  %s" % a.replace("\n", " | "))
+        # Element-wise, not the whole line. These cases pack dozens of inputs into one,
+        # so a joined diff says "something in here" and leaves the reader to align two
+        # long strings by eye — which is how a case can sit one detail from passing
+        # without anyone knowing which detail.
+        wl, al = w.split("\n") if w else [], a.split("\n") if a else []
+        first = None
+        for k in range(max(len(wl), len(al))):
+            wk = wl[k] if k < len(wl) else "<nothing>"
+            ak = al[k] if k < len(al) else "<nothing>"
+            if wk != ak:
+                first = (k, wk, ak)
+                break
+        if first is None:
+            print("  FAIL (lengths %d vs %d, no differing element)" % (len(wl), len(al)))
+        else:
+            k, wk, ak = first
+            print("  FAIL at component value %d of %d:" % (k + 1, len(wl)))
+            print("       want: %s" % wk)
+            print("       got:  %s" % ak)
     if p != expect:
         print("css_tokens: expected exactly %d passing, got %d — raise EXPECT_PASS if this "
               "is the tokenizer growing" % (expect, p))
