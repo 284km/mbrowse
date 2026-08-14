@@ -347,6 +347,14 @@ module Layout {
         // A float is out of flow too, but not in the same way: it is placed at the containing block's
         // left edge below whatever floats came before it, the cursor does not move past it, and the
         // parent's height ignores it unless the parent establishes a formatting context.
+        //
+        // What is missing is not floats beside each other — that was written once and never fired,
+        // because the document it was written for has ONE float in it. The rule it actually needs is
+        // the other one: **a box that establishes a formatting context does not overlap a float, it is
+        // placed beside it.** In `block-formatting-contexts-013` a 50px float is followed by a sibling
+        // with `overflow: scroll`, and the browser puts that sibling at x=58 rather than under the
+        // float. So the next piece of work is a left edge that a normal block ignores and a formatting
+        // context respects, and not a second float position.
         else if st.float_ == "left" || st.float_ == "right" then
           let (fbs, fh, fmt2, fmb2) = _block f ua author ancestors tag attrs kids cbw st in
           let top = if fbot > y then fbot else y + _collapse 0 fmt2 in
