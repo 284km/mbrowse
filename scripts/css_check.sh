@@ -6,11 +6,18 @@
 # failures, because the tokenizer is not wrong about them, it does not get there. The
 # rest are pass or fail, and the pass count is pinned exactly.
 #
-# There are no failures left at this level: all 16 comparable cases pass. The 34 not
-# covered are the ones whose expected output nests — blocks and functions with children —
-# which is the next level of the suite and needs a parser over these tokens rather than
-# more tokens. Wiring that in is what will make this number go up, and it will go up by
-# taking cases out of "not covered" rather than out of "failed".
+# No failures at this level: all 16 comparable cases pass. The 34 not compared split into
+# two reasons, which the harness prints separately because calling both of them "blocks and
+# functions" was wrong for thirteen of them:
+#
+#   nested (19)          a function with children, or a block — a tree, which needs a
+#                        parser over these tokens and not more tokens
+#   numeric-fields (15)  a number, dimension or percentage, which the suite writes with
+#                        five fields (kind, representation, value, integer-or-number,
+#                        unit) where this emits two
+#
+# The second is not out of reach. It is a shape the tokenizer already produces and does
+# not say enough about, and it is the smaller of the two pieces of work.
 #
 # Usage:  MERE=/path/to/mere.exe sh scripts/css_check.sh
 set -e
