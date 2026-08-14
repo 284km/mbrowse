@@ -87,6 +87,29 @@ module Tree {
     || n == "hr" || n == "img" || n == "input" || n == "link" || n == "meta"
     || n == "param" || n == "source" || n == "track" || n == "wbr";
 
+  let _is_heading = fn (n: str) ->
+    n == "h1" || n == "h2" || n == "h3" || n == "h4" || n == "h5" || n == "h6";
+
+  // The elements that close a same-kind open element rather than nesting inside it:
+  // a second `<li>` ends the first, `<h2>` ends an open `<h1>`, `<dd>` ends a `<dt>`.
+  // Documents rely on this constantly and write neither end tag.
+  let _same_kind = fn (open_name: str) -> fn (name: str) ->
+    if _is_heading name then _is_heading open_name
+    else if name == "li" then open_name == "li"
+    else if name == "dd" || name == "dt" then open_name == "dd" || open_name == "dt"
+    else false;
+
+  let rec _open_same_kind = fn (stack: frame list) -> fn (name: str) ->
+    match stack with
+    | Nil -> ""
+    | Cons (f, rest) ->
+      if _same_kind f.fname name then f.fname
+      // A same-kind element only counts while nothing block-level intervenes:
+      // `<li><div><li>` is two list items, `<li><div>` alone is not.
+      else if f.fname == "div" || f.fname == "p" || f.fname == "body"
+              || f.fname == "html" then ""
+      else _open_same_kind rest name;
+
   // A paragraph is closed by anything that starts a new block.
   let _closes_p = fn (n: str) ->
     n == "address" || n == "article" || n == "aside" || n == "blockquote"
@@ -162,6 +185,9 @@ module Tree {
               let s1 = _push stack name attrs in
               let (s2, r2) = _pop s1 roots in
               go rest mode s2 r2
+            else if _open_same_kind stack name != "" then
+              let (s, r) = _pop_through stack roots (_open_same_kind stack name) in
+              go ts mode s r
             else if _closes_p name && _open_has stack "p" then
               let (s, r) = _pop_through stack roots "p" in
               go ts mode s r
