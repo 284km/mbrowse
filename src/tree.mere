@@ -227,6 +227,13 @@ module Tree {
       walk open_ids
     else "";
 
+  // Whether the CURRENT node has this name — the bottom of the stack and nothing else.
+  // Several rules turn on it, and each of them is wrong if it walks.
+  let _cur_is = fn (arena: anode list) -> fn (open_ids: int list) -> fn (name: str) ->
+    match open_ids with
+    | Nil -> false
+    | Cons (x, _rest) -> _name_of arena x == name;
+
   // The id of the nearest open element with this name. `_open_has` answers whether, and
   // three places also need which.
   let rec _open_id_of = fn (arena: anode list) -> fn (open_ids: int list) ->
@@ -434,6 +441,29 @@ module Tree {
             if (name == "html" || name == "body") && _open_has arena open_ids name then
               let hit = _open_id_of arena open_ids name in
               go rest mode (Nodes.merge_attrs arena hit attrs) open_ids afe
+            // Not the whole "in select" insertion mode. The current standard ignores most
+            // start tags inside a select; the vendored corpus does not — its own `#errors`
+            // lines list `html, body, select, b, option` as open at once, so its reference
+            // implementation put the `<b>` inside. Only the three rules both agree on are
+            // here. The divergence from what browsers do today is a limitation and is said
+            // out loud rather than left as a silence, because implementing the corpus's
+            // older behaviour on purpose and not knowing it is older are different states.
+            //
+            // A second `<select>` closes the first rather than nesting inside it, and the
+            // token is consumed doing it — the standard says to treat it as `</select>`.
+            // What comes after lands wherever the outer select was.
+            else if name == "select" && _open_has arena open_ids "select" then
+              go rest mode arena (_pop_through arena open_ids "select") afe
+            // An `<option>` closes an open one, and an `<optgroup>` closes an option and
+            // then an optgroup — one each, and only when it is the current node, which is
+            // why this is not the walk the list items use. Both re-process the token, so
+            // `<select><optgroup><option><optgroup>` pops twice by going round twice.
+            else if name == "option" && _cur_is arena open_ids "option" then
+              go ts mode arena (drop1 open_ids) afe
+            else if name == "optgroup"
+                    && (_cur_is arena open_ids "option"
+                        || _cur_is arena open_ids "optgroup") then
+              go ts mode arena (drop1 open_ids) afe
             // `<image>` is `<img>`. The standard says so in one line and calls it a
             // historical mistake; the corpus checks the mistake is honoured.
             else if name == "image" then
@@ -457,6 +487,14 @@ module Tree {
             else if _closes_p name && _open_has arena open_ids "p" then
               go ts mode arena (_pop_through arena open_ids "p") afe
             else
+              // Anything inserted reopens the formatting elements that are listed but no
+              // longer open — the standard reconstructs before "any other start tag" and
+              // not only before text. `<select><b><option><select><option>` is where it
+              // shows: the second option lands inside a reopened b.
+              let (arena, open_ids, afe) =
+                let (a0, o0, l0, _p0) =
+                  Reconstruct.run arena open_ids afe (_parent open_ids) in
+                (a0, o0, l0) in
               // The elements a table needs and the document did not write. Asked
               // before the push so that the cell lands under a row that exists.
               let (ai, oi) =

@@ -85,6 +85,14 @@ let _ = check "li closes li" "<li>a<li>b"
 // check agreeing with the code was worth nothing: they were wrong together.
 let _ = check "li closes li across a div" "<li><div><li>"
   "<html>\n  <head>\n  <body>\n    <li>\n      <div>\n    <li>";
+// An option closes an option; an optgroup closes an option and then an optgroup.
+let _ = check "an option closes an option" "<select><option>a<option>b"
+  "<html>\n  <head>\n  <body>\n    <select>\n      <option>\n        \"a\"\n      <option>\n        \"b\"";
+let _ = check "an optgroup closes an option and an optgroup" "<select><optgroup><option><optgroup>"
+  "<html>\n  <head>\n  <body>\n    <select>\n      <optgroup>\n        <option>\n      <optgroup>";
+// A second select closes the first instead of nesting, and consumes itself doing it.
+let _ = check "a select closes a select" "<select><option><select><option>"
+  "<html>\n  <head>\n  <body>\n    <select>\n      <option>\n    <option>";
 // The newline after `<pre>` is not content, so these two are the same tree.
 let _ = check "a newline right after pre is dropped" "<pre>\nfoo</pre>"
   "<html>\n  <head>\n  <body>\n    <pre>\n      \"foo\"";
