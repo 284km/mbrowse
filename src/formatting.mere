@@ -79,6 +79,41 @@ module Formatting {
       if i == id then rest else Cons (AElem (i, n, a), remove rest id)
     | Cons (AMarker, rest) -> Cons (AMarker, remove rest id);
 
+  // Replace an entry where it is. `push` puts the new one at the newest end, and the order
+  // of this list IS the nesting order of the document — moving an entry changes what
+  // reconstruction rebuilds and the order it rebuilds it in.
+  let rec replace = fn (list: afe list) -> fn (old_id: int) -> fn (id: int) ->
+                    fn (name: str) -> fn (attrs: attr list) ->
+    match list with
+    | Nil -> Nil
+    | Cons (AElem (i, n, a), rest) ->
+      if i == old_id then Cons (AElem (id, name, attrs), rest)
+      else Cons (AElem (i, n, a), replace rest old_id id name attrs)
+    | Cons (AMarker, rest) -> Cons (AMarker, replace rest old_id id name attrs);
+
+  // Where an entry is, counting markers. The adoption agency needs a position rather than
+  // an id: its bookmark outlives the entry it was taken from.
+  let index_of = fn (list: afe list) -> fn (id: int) ->
+    let rec go = fn (l: afe list) -> fn (i: int) ->
+      match l with
+      | Nil -> 0 - 1
+      | Cons (AElem (x, _n, _a), rest) -> if x == id then i else go rest (i + 1)
+      | Cons (AMarker, rest) -> go rest (i + 1) in
+    go list 0;
+
+  // Insert at a position. This list is newest-first, so the standard's "immediately after
+  // node" — its list runs oldest to newest — is immediately BEFORE node here, which is what
+  // inserting at node's own index does.
+  let insert_at = fn (list: afe list) -> fn (idx: int) -> fn (id: int) ->
+                  fn (name: str) -> fn (attrs: attr list) ->
+    let rec go = fn (l: afe list) -> fn (i: int) ->
+      if i >= idx then Cons (AElem (id, name, attrs), l)
+      else
+        match l with
+        | Nil -> Cons (AElem (id, name, attrs), Nil)
+        | Cons (x, rest) -> Cons (x, go rest (i + 1)) in
+    go list 0;
+
   let rec has = fn (list: afe list) -> fn (id: int) ->
     match list with
     | Nil -> false

@@ -85,6 +85,13 @@ let _ = check "li closes li" "<li>a<li>b"
 // check agreeing with the code was worth nothing: they were wrong together.
 let _ = check "li closes li across a div" "<li><div><li>"
   "<html>\n  <head>\n  <body>\n    <li>\n      <div>\n    <li>";
+// The two canonical adoption-agency shapes. The first is the one the algorithm exists for;
+// the second needs two passes of the outer loop, and the b that ends up around "world" is
+// the one the SECOND pass popped and left for reconstruction to reopen.
+let _ = check "the agency's own example" "<b>1<p>2</b>3"
+  "<html>\n  <head>\n  <body>\n    <b>\n      \"1\"\n    <p>\n      <b>\n        \"2\"\n      \"3\"";
+let _ = check "two passes of the outer loop" "<font><p>hello<b>cruel</font>world"
+  "<html>\n  <head>\n  <body>\n    <font>\n    <p>\n      <font>\n        \"hello\"\n        <b>\n          \"cruel\"\n      <b>\n        \"world\"";
 // A formatting element out of scope is not adopted at all: the token is ignored, and the
 // element closes later when what bounds the scope is gone.
 let _ = check "a font out of scope is not adopted" "<font><table></font></table></font>"
