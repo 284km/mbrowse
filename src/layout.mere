@@ -407,9 +407,21 @@ module Layout {
           // overlaps the block, which is why it is not a plain sum. Anything with real content on
           // either side falls through to laying the element out as a block, below.
           let (spl_before, spl_blk, spl_after) = _split_at_block ua author ancestors kids in
+          // The pieces no longer have to be empty. A piece with content is a line box like any other;
+          // a piece with none is still a fragment when the element has an edge on that side, and is
+          // nothing at all when it does not. `max(its lines, one if there is an edge)` says both.
+          //
+          // What they still may not contain is ANOTHER block. This splits at the first one, and an
+          // element with several — `<span>…<div>Four</div><div>Five</div>…</span>` — would have its
+          // remaining blocks laid out as inline content by the piece that holds them. The pieces are
+          // laid out here rather than inside the branch precisely so that they can be asked: `_inline`
+          // already reports whether it met a block, which is the same question in the same words.
+          let (pbs, plines, ps_blk) = _inline f ua author (Cons (e, ancestors)) spl_before cbw
+                                              font_size in
+          let (abs_, alines, as_blk) = _inline f ua author (Cons (e, ancestors)) spl_after cbw
+                                               font_size in
           let simple_split =
-            saw && _collapse_ws (_inline_text spl_before "") == ""
-            && _collapse_ws (_inline_text spl_after "") == ""
+            saw && not ps_blk && not as_blk
             && (match spl_blk with Cons (_b, _r) -> true | Nil -> false) in
           if simple_split then
             match spl_blk with
@@ -453,20 +465,24 @@ module Layout {
                              Style.inherited ua author "direction" "ltr" par up == "rtl" in
                 let start_edge = if rtl2 then st.br + st.pr else st.bl + st.pl in
                 let end_edge = if rtl2 then st.bl + st.pl else st.br + st.pr in
-                let pre = start_edge > 0 in
-                let post = end_edge > 0 in
-                // A fragment is a line tall plus both borders, and its border overlaps the block on the
-                // side it touches — so a leading one adds a border and a line above, and a trailing one
-                // a line and a border below.
-                let uh = (if pre then st.bt + lh else 0) + bh
-                         + (if post then lh + st.bb else 0) in
-                let adv = (if pre then lh else 0) + bt2 + bh + bb2 + (if post then lh else 0) in
-                let uy = if pre then top - st.bt else top + bt2 in
-                let by = (if pre then top + lh else top) + bt2 in
+                let pre_n = if plines > 0 then plines else (if start_edge > 0 then 1 else 0) in
+                let post_n = if alines > 0 then alines else (if end_edge > 0 then 1 else 0) in
+                let pre_h = pre_n * lh in
+                let post_h = post_n * lh in
+                // A fragment's border overlaps the block on the side it touches, so the union gains a
+                // border only where there is a fragment to carry one.
+                let uh = (if pre_h > 0 then st.bt else 0) + pre_h + bh + post_h
+                         + (if post_h > 0 then st.bb else 0) in
+                let adv = pre_h + bt2 + bh + bb2 + post_h in
+                let uy = top - (if pre_h > 0 then st.bt else 0) in
+                let by = top + pre_h + bt2 in
                 let me = box { tag = to_lower tag, x = 0, y = uy, w = cbw, h = uh } in
                 _stack f ua author ancestors rest cbw (top + adv) 0 swallow_first
                        (if not seen then 0 else first_mt) true (top + adv) fs
-                       (list_append (list_rev (_shift bbs 0 by)) (Cons (me, acc)))
+                       (list_append (list_rev (list_append (_shift pbs 0 top)
+                                       (list_append (_shift bbs 0 by)
+                                          (_shift abs_ 0 (by + bh + bb2)))))
+                          (Cons (me, acc)))
               | _ -> _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom
                             fs acc
           else if saw then
