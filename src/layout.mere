@@ -434,8 +434,12 @@ module Layout {
                             (_attr battrs "style") in
                 // The block is a sibling of the inline's pieces, so it is laid out at the containing
                 // block's full width with its OWN style — not the inline's.
+                // The block piece's ancestors do NOT include the inline it came out of. An inline box
+                // is not a containing block for a block-level box, so the direction that places this one
+                // is the enclosing BLOCK's — `<div ltr><span rtl><div block>` puts the block left to
+                // right, and reading the span's direction puts it ten pixels the other way.
                 let (bbs, bh, bmt, bmb) =
-                  _block f ua author (Cons (e, ancestors)) btag battrs bkids cbw bst in
+                  _block f ua author ancestors btag battrs bkids cbw bst in
                 let top = y + _collapse open_mb 0 in
                 let lh = Font.line_height f font_size in
                 // Two heights, and they are not the same one. The element's BOX is the union of its
