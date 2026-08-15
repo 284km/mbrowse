@@ -101,7 +101,7 @@ wrong direction for a gate to move.
 ## Layout, and its gate before it
 
 ```
-sh scripts/layout_check.sh        # geometry: 107 of 126, box sequence: 126 of 126
+sh scripts/layout_check.sh        # geometry: 117 of 126, box sequence: 126 of 126
 ```
 
 The gate exists and the engine does not, which is the same order the CSS corpus arrived in. Both
@@ -119,16 +119,25 @@ running later, for what geometry does not check: colour, stacking, and where the
 
 `src/style.mere` is the UA stylesheet, the selectors and the cascade; `src/layout.mere` is normal flow
 with the box model, collapsing margins, inline formatting, tables, floats and out-of-flow boxes.
-**107 of the 126 pass.** Normal flow with the box model and collapsing margins; inline formatting with
-line breaking measured in font units; tables with shrink-to-fit columns and border-spacing; floats, which
-escape upward until a box contains them; out-of-flow boxes, with `left` and `top` when they say
-something; percentage heights, which resolve against the containing block or against nothing; `direction`,
-inherited by walking the ancestor chain; and the **block-in-inline split**, transcribed from
-`getClientRects` rather than derived — the expectations record the union of an element's fragments, and a
-union does not say what it is a union of.
+**117 of the 126 pass.** Normal flow with the box model and collapsing margins; inline formatting with
+line breaking measured in font units; tables with shrink-to-fit columns, `border-spacing` and a `<tfoot>`
+laid out last but reported where it was written; floats, which shrink to fit, escape upward until a box
+contains them, and sit beside a line rather than on it; out-of-flow boxes, which blockify and take `left`
+and `top` when they say something; relative positioning; percentage heights; `direction`, inherited by
+walking the ancestor chain; and the **block-in-inline split** — an inline with blocks in it becomes a
+sequence of fragments and blocks, each fragment carrying the element's edge on the side it is on.
 
-The 19 that remain are each their own feature: a split that has to recurse when the block is nested two
-inlines deep, `clear`, auto margins, `inline-block`, and a table's row-group heights.
+The split was transcribed rather than derived. An expectation records the UNION of an element's fragments,
+and a union does not say what it is a union of; `getClientRects` does, and the surprising fragment is the
+middle one — the block is itself a fragment of the inline, which is why the height could not be reached by
+putting the block beside or inside anything.
+
+The 9 that remain are blocked on two structural pieces rather than nine features. Four need the split to
+recurse into a piece that itself contains a block, two levels of inline down. Three need a second pass
+that assigns positions top-down after the sizes are known: an absolutely positioned box with no positioned
+ancestor is placed against the initial containing block, and that origin cannot be known before the box is
+placed — the gap above a box depends on that box's own margin, which is the same circularity the
+collapsing margins have.
 
 Two numbers are reported, because they fail for different reasons. The **box sequence** — which
 elements generate boxes, in what order — is the parser and the box tree, and it is already right
