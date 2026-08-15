@@ -244,15 +244,19 @@ module Layout {
                    // The float cursor. The hoist above already worked out how wide the floats are so the
                    // line could start after them; the boxes themselves are emitted HERE, where document
                    // order is, because a box list that is right except for its order is wrong.
-                   fn (fcur: int) -> fn (acc: box list) ->
+                   fn (fcur: int) ->
+                   // The widest any line has been. A box that spans lines is as wide as its widest
+                   // fragment, not as wide as the container — and with `width: 0` the container is no
+                   // width at all while the text still has to go somewhere.
+                   fn (maxx: int) -> fn (acc: box list) ->
       match ns with
-      | Nil -> (acc, x, line, gap, saw, fcur)
+      | Nil -> (acc, x, line, gap, saw, fcur, if x > maxx then x else maxx)
       | Cons (n, rest) ->
         match n with
         | Text t ->
           // Split on the collapsed text so an empty piece marks where a space was.
           let (x2, l2, g2, p2) = words (str_split (_collapse_runs t) " ") x line gap true placed in
-          walk rest x2 l2 g2 saw p2 (online || p2) fcur acc
+          walk rest x2 l2 g2 saw p2 (online || p2) fcur (if x > maxx then x else maxx) acc
         | Element (tag, attrs, ks) ->
           // An element's box starts at its first GLYPH, not at the cursor. A space owed from before it
           // belongs to the text outside, so counting the cursor made every inline element four pixels
@@ -275,15 +279,15 @@ module Layout {
             // its own box goes down here so that it lands in document order.
             let fw = Font.text_units f (_collapse_ws (_inline_text ks "")) + est.bl + est.pl
                      + est.pr + est.br in
-            walk rest x line gap saw placed online (fcur + fw)
+            walk rest x line gap saw placed online (fcur + fw) maxx
               (list_append acc
                  (Cons (box { tag = to_lower tag, x = Font.scale f fcur size, y = 0,
                               w = Font.scale f fw size, h = Font.line_height f size, pinned = false }, Nil)))
           else
           let lead = Font.text_units_of_px f (est.bl + est.pl) size in
           let trail = Font.text_units_of_px f (est.pr + est.br) size in
-          let (inner, x2u, l2, g2, saw2, fcur2) = walk ks (x + lead) line gap saw placed
-                                                     (online || lead + trail > 0) fcur Nil in
+          let (inner, x2u, l2, g2, saw2, fcur2, mx2) = walk ks (x + lead) line gap saw placed
+                                                          (online || lead + trail > 0) fcur maxx Nil in
           let x2 = x2u + trail in
           // The union of the element's fragments, which for one line is where it started to where it
           // ended. A box spanning two lines is reported by the browser as the whole span from the
@@ -295,13 +299,19 @@ module Layout {
           // The WIDTH is the scaled difference, not the difference of two scaled numbers. Rounding each
           // end and subtracting rounds twice and lands a pixel out — the same "scale once" the glyph
           // advances and the table columns already needed, met a third time.
-          let bw = if l2 == sl then Font.scale f (x2 - sx) size else cw - bx in
+          // Across lines, the box is as wide as its widest fragment. `cw - bx` is the container, which
+          // is right when the container is what the lines were measured against and zero when the
+          // container is zero — and text in a zero-width container still has a width.
+          let across = let m = if mx2 > x2 then mx2 else x2 in
+                       let byw = Font.scale f m size - bx in
+                       if byw > cw - bx then byw else cw - bx in
+          let bw = if l2 == sl then Font.scale f (x2 - sx) size else across in
           // Relative positioning moves an inline fragment and its contents after they are laid out,
           // exactly as it does a block: the cursor, the line and everything after are unmoved.
           let rdx = if est.position == "relative" && est.left >= 0 then est.left else 0 in
           let rdy = if est.position == "relative" && est.top >= 0 then est.top else 0 in
           walk rest x2 l2 g2 (saw2 || _is_block_level est.display) (placed || x2 > sx)
-               (online || lead + trail > 0 || x2 > sx) fcur2
+               (online || lead + trail > 0 || x2 > sx) fcur2 (if mx2 > maxx then mx2 else maxx)
                (list_append (_shift inner rdx rdy)
                   (Cons (box { tag = to_lower tag, x = bx + rdx, y = sl * lh - est.bt + rdy,
                                w = if bw < 0 then 0 else bw,
@@ -315,8 +325,8 @@ module Layout {
                                h = if l2 == sl && x2 == sx && est.bt + est.bb == 0
                                       && not online && lead + trail == 0 then 0
                                    else (l2 - sl + 1) * lh + est.bt + est.bb, pinned = false }, acc)))
-        | Comment _c -> walk rest x line gap saw placed online fcur acc
-        | Doctype (_p, _q, _r) -> walk rest x line gap saw placed online fcur acc in
+        | Comment _c -> walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) acc
+        | Doctype (_p, _q, _r) -> walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) acc in
     // Floats come out of the inline content before anything is placed. A float is not on the line — it
     // is beside it — so it takes room at the line's left edge, everything else starts after it, and a run
     // holding nothing but a float makes no line at all. Hoisting them first is what lets the element that
@@ -342,7 +352,8 @@ module Layout {
             floats rest fx2 (list_append acc (_shift a2 rdx rdy))
         | _ -> floats rest fx acc in
     let (float_w, _fbs) = floats kids 0 Nil in
-    let (bs, x, line, _g, saw, _fc) = walk kids float_w 0 false false false false 0 Nil in
+    let (bs, x, line, _g, saw, _fc, _mx) =
+      walk kids float_w 0 false false false false 0 0 Nil in
     let n = if x == float_w && line == 0 then 0 else line + 1 in
     // The third answer: whether anything block-level turned up inside. Asking that as a QUERY before
     // laying out means walking every descendant of every element and resolving its style each time —
