@@ -18,6 +18,9 @@ import "css_rules.mere";
 // means for width and height: auto.
 type sty = {
   display: str, position: str, float_: str, spacing: int, overflow: str,
+  // Where an atomic inline-level box sits on its line. Only a layout question for the boxes that
+  // are ON a line at all, which is why it lives beside `display` and not beside the box model.
+  valign: str,
   left: int, top: int,                 // -1 when the property said nothing
   w: int, h: int,                      // -1 for auto
   w_pct: int, h_pct: int,              // -1 when not a percentage
@@ -542,6 +545,10 @@ module Style {
       // Anything but `visible` makes a box establish a formatting context, which is why it is here:
       // this is a layout question wearing a painting property's name.
       overflow = let v = to_lower (get "overflow") in if v == "" then "visible" else v,
+      // The CSS property only. `valign="bottom"` on a table cell is the presentational form of the
+      // same thing and is NOT read here — presentational attributes are not mapped to style at all
+      // yet, which is a separate gap the corpus also names.
+      valign = let v = to_lower (get "vertical-align") in if v == "" then "baseline" else v,
       // `auto` and absent are the same answer here — both mean "the box goes where it would have gone",
       // which is the static position, and only a length says otherwise.
       left = let v = get "left" in if v == "" || to_lower v == "auto" then 0 - 1 else px_of v,

@@ -32,19 +32,19 @@
 # whole time. A corpus does not only tell you whether you are right. It tells you what to do
 # next, and it is the only thing here that can.
 #
-# The taxonomy, re-derived from the failures at 186 of 228 with all 228 box sequences right. **It is re-derived every time and
+# The taxonomy, re-derived from the failures at 195 of 228 with all 228 box sequences right. **It is re-derived every time and
 # never carried forward**, because it has been wrong four times: it once named `font-size`,
 # which not one document sets; then floats, which were a tenth of it; then anonymous boxes; then
 # floats beside each other, which was really a formatting context dodging one.
 #
-#   14  `display: inline-block` and `display: inline-table` are laid out as block-level, so they
-#       get a line of their own instead of sharing one. Every shape of one defect.
-#    7  a `<div>` whose height is wrong on its own, and 4 more whose width is — shrink-to-fit and
+#    6  a `<table>` sized wrong, all six of them documents whose table carries `height="200"` or
+#       `valign="bottom"` — PRESENTATIONAL ATTRIBUTES, which are not mapped to style at all. The
+#       cascade never sees them. That is a whole missing layer and not a layout bug.
+#    6  a `<div>` whose height is wrong on its own, and 4 more whose width is: shrink-to-fit and
 #       percentage heights, mostly in the `blocks-` family.
-#    8  `vertical-align`, which is what the table-cell documents want now that their cells have
-#       contents: `valign="bottom"` puts a paragraph at the bottom of a 200px cell.
 #    4  the block-in-inline split, where a fragment wants to be taller than its line.
-#    9  the rest, one or two documents each.
+#    4  a `<p>` holding inline-blocks that wrap, where `text-indent` also applies.
+#    7  the rest, one or two documents each.
 #
 # **Both sides measure with the same font, and they have to.** The expectations were first taken with
 # whatever font the browser defaulted to — on that machine a system font that cannot be
@@ -67,7 +67,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "layout_check: no mere — set MERE=..." >&2; exit 1; }
 DATA="$ROOT/test/data/layout"
-EXPECT_PASS=${EXPECT_PASS:-186}
+EXPECT_PASS=${EXPECT_PASS:-195}
 
 T="${TMPDIR:-/tmp}/mbrowse_layout.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 

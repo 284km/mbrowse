@@ -51,7 +51,9 @@ module Layout {
   // an anonymous table is generated around them wherever one is missing, and an anonymous table is a
   // block.
   let _is_block_level = fn (d: str) ->
-    d == "block" || d == "inline-block" || d == "table" || d == "table-cell" || d == "table-row"
+    // NOT `inline-block`, which is inline-LEVEL: it takes a place on a line rather than a line of
+    // its own. It was here, and being here is what gave it one.
+    d == "block" || d == "table" || d == "table-cell" || d == "table-row"
     || d == "table-row-group" || d == "table-caption";
 
   // The same style with its HORIZONTAL edges removed, and only those. The vertical ones do not belong
@@ -68,7 +70,7 @@ module Layout {
   // is put there rather than threaded in as a special case.
   let _with_width = fn (st: sty) -> fn (w: int) ->
     sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
-          overflow = st.overflow, left = st.left, top = st.top,
+          overflow = st.overflow, valign = st.valign, left = st.left, top = st.top,
           w = w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
           mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = st.pr, pb = st.pb, pl = st.pl,
@@ -76,7 +78,7 @@ module Layout {
 
   let _no_h_edges = fn (st: sty) ->
     sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
-          overflow = st.overflow, left = st.left, top = st.top,
+          overflow = st.overflow, valign = st.valign, left = st.left, top = st.top,
           w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
           mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = 0, pb = st.pb, pl = 0,
@@ -198,199 +200,6 @@ module Layout {
         else go (i + 1) (out ++ c) false in
     go 0 "" false;
 
-  // The inline content of a box, laid out into lines, with a box for every inline element in it.
-  //
-  // The second half of that is why this exists rather than a line count: an inline element has a box
-  // and the gate compares it. Returning only a height dropped every `<span>` and `<strong>` in the
-  // corpus and the box-sequence number fell from 126 to 57 in one commit — which is what that second
-  // number is for.
-  //
-  // Everything is carried in font units until the end. `x` is how far along the current line the
-  // cursor is, `line` counts from zero, and `gap` says a space is owed before the next word — a space
-  // between two text nodes belongs to neither of them, so it cannot be part of either string.
-  let _inline = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
-                fn (anc: elem list) -> fn (kids: node list) -> fn (cw: int) -> fn (size: int) ->
-                fn (rtl: bool) ->
-    let cap = if cw <= 0 then 0 else (cw * f.upem) / size in
-    let space = Font.text_units f " " in
-    let lh = Font.line_height f size in
-    // `gap` is a space owed from BEFORE this list — the boundary between two text nodes. Inside one
-    // list the separator is implied by the split itself, so every word after the first gets a space
-    // whatever the flag says, and the flag applies only to the first. Carrying it forward instead put
-    // a space between `<span>One</span>` and `<span>Two</span>`, where the source has none.
-    let rec words = fn (ws: str list) -> fn (x: int) -> fn (line: int) -> fn (gap: bool) ->
-                    fn (first: bool) -> fn (placed: bool) ->
-      match ws with
-      | Nil -> (x, line, gap, placed)
-      | Cons (w, rest) ->
-        // An empty piece is where a space was, and a trailing one is how a list says it ended in one.
-        if w == "" then words rest x line true first placed
-        else
-          let wu = Font.text_units f w in
-          let need = if first then gap else true in
-          if not placed then words rest (x + wu) line false false true
-          else if x + (if need then space else 0) + wu <= cap then
-            words rest (x + (if need then space else 0) + wu) line false false true
-          // A word that does not fit starts the next line, and one wider than the whole line gets a
-          // line of its own and overflows — which is what a browser does rather than cutting it.
-          else words rest wu (line + 1) false false true in
-    let rec walk = fn (ns: node list) -> fn (x: int) -> fn (line: int) -> fn (gap: bool) ->
-                   fn (saw: bool) -> fn (placed: bool) ->
-                   // `placed` is "a glyph went down", which decides whether a space is owed. `online` is
-                   // "there is a line here at all", which an inline's own border makes true without
-                   // placing anything and a float never does. Two questions, and one flag answering both
-                   // makes either the spaces or the empty boxes wrong.
-                   fn (online: bool) ->
-                   // The float cursor. The hoist above already worked out how wide the floats are so the
-                   // line could start after them; the boxes themselves are emitted HERE, where document
-                   // order is, because a box list that is right except for its order is wrong.
-                   fn (fcur: int) ->
-                   // The widest any line has been. A box that spans lines is as wide as its widest
-                   // fragment, not as wide as the container — and with `width: 0` the container is no
-                   // width at all while the text still has to go somewhere.
-                   fn (maxx: int) -> fn (acc: box list) ->
-      match ns with
-      | Nil -> (acc, x, line, gap, saw, fcur, if x > maxx then x else maxx)
-      | Cons (n, rest) ->
-        match n with
-        | Text t ->
-          // Split on the collapsed text so an empty piece marks where a space was.
-          let (x2, l2, g2, p2) = words (str_split (_collapse_runs t) " ") x line gap true placed in
-          walk rest x2 l2 g2 saw p2 (online || p2) fcur (if x > maxx then x else maxx) acc
-        | Element (tag, attrs, ks) ->
-          // An element's box starts at its first GLYPH, not at the cursor. A space owed from before it
-          // belongs to the text outside, so counting the cursor made every inline element four pixels
-          // too early and five too wide — which reads as a rounding error and is a space.
-          // ...but only when there is something before it on the line. White space at the START of a
-          // line box is removed, so a space owed at x = 0 is owed to nothing: adding it there put every
-          // ...and only when something has actually been PLACED on the line. A border has taken room
-          // without placing anything, so `x > 0` is not the question: white space at the start of a line
-          // is removed even where an ancestor's border has already advanced the cursor, and asking about
-          // the cursor put every nested inline one space in from where it belongs.
-          // ...and only when the element that follows the space actually puts a glyph down. A space
-          // before an element that places nothing is a space at the end of the line, and a line's
-          // trailing white space is removed — so an empty `<span>` with a border sits against the text
-          // before it and not four pixels off it.
-          let empty_el = _collapse_ws (_inline_text ks "") == "" in
-          let sx = if gap && placed && not empty_el then x + space else x in
-          let sl = line in
-          // The children are walked into a FRESH accumulator so the element's own box can be placed
-          // in front of them afterwards. Consing it onto the same accumulator put a nested inline
-          // element after its own children in document order, which the box-sequence number sees.
-          // An inline element's own padding and borders take room ON the line.
-          let est = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") in
-          // `<br>` ends the line. It is the one element whose whole effect is on line breaking, so it
-          // cannot come out of the cascade — there is no property that says "break here" — and it was
-          // missing entirely: `Test<br/>Test` came out one line of two words rather than two lines.
-          //
-          // Its own box is at the cursor and is zero wide and one line tall, which is what the browser
-          // reports for it. At the CURSOR and not past a pending space: a space before a break is at
-          // the end of a line, and a line's trailing white space is removed.
-          if to_lower tag == "br" then
-            walk rest 0 (line + 1) false saw false false fcur (if x > maxx then x else maxx)
-              (Cons (box { tag = "br", x = Font.scale f x size, y = line * lh, w = 0, h = lh,
-                           pinned = false }, acc))
-          else
-          if est.float_ == "left" || est.float_ == "right" then
-            // Beside the line, not on it: it does not move the cursor, does not make the line exist, and
-            // its own box goes down here so that it lands in document order.
-            let fw = Font.text_units f (_collapse_ws (_inline_text ks "")) + est.bl + est.pl
-                     + est.pr + est.br in
-            walk rest x line gap saw placed online (fcur + fw) maxx
-              (list_append acc
-                 (Cons (box { tag = to_lower tag, x = Font.scale f fcur size, y = 0,
-                              w = Font.scale f fw size, h = Font.line_height f size, pinned = false }, Nil)))
-          else
-          let lead = Font.text_units_of_px f (est.bl + est.pl) size in
-          let trail = Font.text_units_of_px f (est.pr + est.br) size in
-          // The children start where the BOX starts — past the space owed from before it and past this
-          // element's own left edge. Starting them at the plain cursor made the box a space narrower
-          // than its own border: five pixels of border reported as one.
-          //
-          // An element that consumes nothing still has to hand the space back, which is why the gap is
-          // restored afterwards rather than passed in. Swallowing it cost eleven documents once.
-          let (inner, x2u, l2, g2a, saw2, fcur2, mx2) = walk ks (sx + lead) line false saw placed
-                                                           (online || lead + trail > 0) fcur maxx Nil in
-          let g2 = if x2u == sx + lead then gap else g2a in
-          // Still not right for `block-in-inline-nested-002-ref`, and the residue is one space: the
-          // browser puts an inline element four pixels to the left of where this does, once, at the
-          // boundary between a text run and the element after it. The width is right now and the offset
-          // is not, which means the space is being counted on both sides of the same boundary somewhere
-          // — measured, not yet located.
-          let x2 = x2u + trail in
-          // The union of the element's fragments, which for one line is where it started to where it
-          // ended. A box spanning two lines is reported by the browser as the whole span from the
-          // first line's start to the last line's end, and that is what this gives.
-          // A right-to-left line is filled from the right, so a fragment's left edge is the width less
-          // where it ENDS. Mirroring the whole extent rather than each coordinate keeps the box the same
-          // size it was, which is the only part of it the direction does not change.
-          let bx = if rtl then cw - Font.scale f x2 size else Font.scale f sx size in
-          // The WIDTH is the scaled difference, not the difference of two scaled numbers. Rounding each
-          // end and subtracting rounds twice and lands a pixel out — the same "scale once" the glyph
-          // advances and the table columns already needed, met a third time.
-          // Across lines, the box is as wide as its widest fragment. `cw - bx` is the container, which
-          // is right when the container is what the lines were measured against and zero when the
-          // container is zero — and text in a zero-width container still has a width.
-          let across = let m = if mx2 > x2 then mx2 else x2 in
-                       let byw = Font.scale f m size - bx in
-                       if byw > cw - bx then byw else cw - bx in
-          let bw = if l2 == sl then Font.scale f (x2 - sx) size else across in
-          // Relative positioning moves an inline fragment and its contents after they are laid out,
-          // exactly as it does a block: the cursor, the line and everything after are unmoved.
-          let rdx = if est.position == "relative" && est.left >= 0 then est.left else 0 in
-          let rdy = if est.position == "relative" && est.top >= 0 then est.top else 0 in
-          // NOT the union with its descendants. `block-in-inline-nested-002-ref` wants a `<span>` with
-          // no border of its own to be ten pixels taller than its line because the child inside it has a
-          // 5px border — and making every element's box cover its descendants cost two other documents,
-          // so that is not the rule. What the browser reports is the union of the element's own
-          // FRAGMENTS; whatever makes the fragment taller in that one case is not the child's border box
-          // as such, and has not been measured yet.
-          walk rest x2 l2 g2 (saw2 || _is_block_level est.display) (placed || x2 > sx)
-               (online || lead + trail > 0 || x2 > sx) fcur2 (if mx2 > maxx then mx2 else maxx)
-               (list_append (_shift inner rdx rdy)
-                  (Cons (box { tag = to_lower tag, x = bx + rdx, y = sl * lh - est.bt + rdy,
-                               w = if bw < 0 then 0 else bw,
-                               // An element that advanced nothing and has no edges has no height — but
-                               // only when there is no LINE for it to sit on. Inside others that have
-                               // taken room it is on their line and is a line tall.
-                               h = if l2 == sl && x2 == sx && est.bt + est.bb == 0
-                                      && not online && lead + trail == 0 then 0
-                                   else (l2 - sl + 1) * lh + est.bt + est.bb, pinned = false }, acc)))
-        | Comment _c -> walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) acc
-        | Doctype (_p, _q, _r) -> walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) acc in
-    // Floats come out of the inline content before anything is placed. A float is not on the line — it
-    // is beside it — so it takes room at the line's left edge, everything else starts after it, and a run
-    // holding nothing but a float makes no line at all. Hoisting them first is what lets the element that
-    // contained one report a zero-width box at the line's new start, which is what the browser does.
-    let rec floats = fn (ns: node list) -> fn (fx: int) -> fn (acc: box list) ->
-      match ns with
-      | Nil -> (fx, acc)
-      | Cons (n, rest) ->
-        match n with
-        | Element (tag, attrs, ks) ->
-          let est = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") in
-          if est.float_ == "left" || est.float_ == "right" then
-            let w = Font.text_units f (_collapse_ws (_inline_text ks "")) + est.bl + est.pl
-                    + est.pr + est.br in
-            floats rest (fx + w) acc
-          else
-            // A fresh accumulator, so the shift below touches only what this element contained.
-            let (fx2, a2) = floats ks fx Nil in
-            // A float inside a relatively positioned inline moves with it, because relative positioning
-            // moves everything the element contains and a float is still contained by it.
-            let rdx = if est.position == "relative" && est.left >= 0 then est.left else 0 in
-            let rdy = if est.position == "relative" && est.top >= 0 then est.top else 0 in
-            floats rest fx2 (list_append acc (_shift a2 rdx rdy))
-        | _ -> floats rest fx acc in
-    let (float_w, _fbs) = floats kids 0 Nil in
-    let (bs, x, line, _g, saw, _fc, _mx) =
-      walk kids float_w 0 false false false false 0 0 Nil in
-    let n = if x == float_w && line == 0 then 0 else line + 1 in
-    // The third answer: whether anything block-level turned up inside. Asking that as a QUERY before
-    // laying out means walking every descendant of every element and resolving its style each time —
-    // which is note 166's square, and here it was worse than a square and did not finish. Reporting it
-    // from the walk that was happening anyway costs nothing, and the caller retries.
-    (list_rev bs, n, saw);
 
 
   // How many lines this text takes at this width. Greedy, breaking at spaces, which is what the
@@ -556,7 +365,7 @@ module Layout {
           let ctx_rtl = match ancestors with
                         | Nil -> false
                         | Cons (c, up) -> Style.inherited ua author "direction" "ltr" c up == "rtl" in
-          let (ibs, ilines, saw) = _inline f ua author ancestors run cbw font_size ctx_rtl in
+          let (ibs, ilines, ih, saw) = _inline f ua author ancestors run cbw font_size ctx_rtl in
           // An inline element with a block inside it is SPLIT by the standard. This does not split it;
           // it lays that element out as a block instead, which puts the boxes in the right order at the
           // right width and is the closer of the two wrong answers.
@@ -581,10 +390,10 @@ module Layout {
           // laid out here rather than inside the branch precisely so that they can be asked: `_inline`
           // already reports whether it met a block, which is the same question in the same words.
           let piece_rtl = Style.inherited ua author "direction" "ltr" e ancestors == "rtl" in
-          let (pbs, plines, ps_blk) = _inline f ua author (Cons (e, ancestors)) spl_before cbw
-                                              font_size piece_rtl in
-          let (abs_, alines, as_blk) = _inline f ua author (Cons (e, ancestors)) spl_after cbw
-                                               font_size piece_rtl in
+          let (pbs, plines, _pih, ps_blk) = _inline f ua author (Cons (e, ancestors)) spl_before cbw
+                                                    font_size piece_rtl in
+          let (abs_, alines, _aih, as_blk) = _inline f ua author (Cons (e, ancestors)) spl_after cbw
+                                                     font_size piece_rtl in
           // The general split. An inline element with block-level boxes in it becomes a sequence of
           // pieces and blocks: fragment, block, fragment, block, ..., fragment. Each fragment is a line
           // box carrying the element's edge on the side it is on — the FIRST fragment has the start edge
@@ -609,7 +418,7 @@ module Layout {
               // it is not inline content at all — it is a block container's content — so it goes through
               // the stack, which already knows how to split what is inside it. The inline pass reports
               // that as it goes, so the question costs nothing to ask.
-              let (pbs2a, plines2a, pblk) =
+              let (pbs2a, plines2a, _pih2, pblk) =
                 _inline f ua author (Cons (e, ancestors)) bef cbw font_size piece_rtl in
               let (pbs2, plines2) =
                 if not pblk then (pbs2a, plines2a)
@@ -689,7 +498,7 @@ module Layout {
                    (list_append (list_rev (_shift fbs sdx2 (top + sdy2))) acc)
           else
             let top = y + _collapse open_mb 0 in
-            let h = ilines * Font.line_height f font_size in
+            let h = ih in
             _stack f ua author ancestors after cbw cbh (top + h) 0 swallow_first first_mt true (top + h)
                    fs (list_append (list_rev (_shift ibs 0 top)) acc)
         else if st.display == "none" then
@@ -816,9 +625,9 @@ module Layout {
           // puts the block below it, so the anonymous block has to contain the text AND the leading
           // fragment of the inline beside it. That is the recursive split, and nothing short of it gets
           // those two words onto the same line.
-          let (ibs, ilines, _saw2) = _inline f ua author ancestors run cbw font_size ctx_rtl in
+          let (ibs, _ilines, ih2, _saw2) = _inline f ua author ancestors run cbw font_size ctx_rtl in
           let top = y + _collapse open_mb 0 in
-          let h = ilines * Font.line_height f font_size in
+          let h = ih2 in
           _stack f ua author ancestors after cbw cbh (top + h) 0 swallow_first first_mt true (top + h)
                  fs (list_append (list_rev (_shift ibs 0 top)) acc)
       | _ -> _stack f ua author ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom fs acc
@@ -848,6 +657,328 @@ module Layout {
   //
   // What is NOT here: colspan and rowspan, column groups, captions, and collapsed borders. Each would
   // change which cell owns which width, and the corpus will say when one is needed.
+  // The inline content of a box, laid out into lines, with a box for every inline element in it.
+  //
+  // The second half of that is why this exists rather than a line count: an inline element has a box
+  // and the gate compares it. Returning only a height dropped every `<span>` and `<strong>` in the
+  // corpus and the box-sequence number fell from 126 to 57 in one commit — which is what that second
+  // number is for.
+  //
+  // Everything is carried in font units until the end. `x` is how far along the current line the
+  // cursor is, `line` counts from zero, and `gap` says a space is owed before the next word — a space
+  // between two text nodes belongs to neither of them, so it cannot be part of either string.
+  and _inline = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
+                fn (anc: elem list) -> fn (kids: node list) -> fn (cw: int) -> fn (size: int) ->
+                fn (rtl: bool) ->
+    let cap = if cw <= 0 then 0 else (cw * f.upem) / size in
+    let space = Font.text_units f " " in
+    let lh = Font.line_height f size in
+    // A line is not a fixed height. It is as tall as the tallest thing above the baseline plus the
+    // deepest below it, and the STRUT — the invisible box the containing element's own font puts on
+    // every line whether anything is written there or not — sets the floor for both. Text alone gives
+    // exactly `lh`, which is why this was invisible until something else could be on a line.
+    //
+    // The descender is negative in the font, so it is negated to become a depth. `asc` is taken as the
+    // remainder rather than scaled on its own: `asc + desc` has to be `lh` exactly, and two roundings
+    // that each land right can still sum to one pixel wrong.
+    let desc = Font.scale f (0 - f.descender) size in
+    let asc = lh - desc in
+    // What is on each line, as a sparse list of `(line, above, below)`. Sparse because a line with
+    // nothing but text contributes nothing this does not already know, and most documents have no
+    // entries at all.
+    // Three numbers and not two, because `vertical-align: top` is not a contribution to the baseline at
+    // all — it is a floor under the line's TOTAL height. Expressing it as "all of it above the baseline"
+    // made a 30px box on a 22px line come out 35: its own height, and then the strut's descent under a
+    // baseline it was never aligned to. Two documents said so.
+    let hline = fn (hs: (int * int * int * int) list) -> fn (i: int) ->
+      let rec go = fn (cs: (int * int * int * int) list) -> fn (a: int) -> fn (b: int) ->
+                   fn (m: int) ->
+        match cs with
+        | Nil -> if a + b > m then a + b else m
+        | Cons (c, more) ->
+          let (li, ca, cb, cm) = c in
+          if li == i then go more (if ca > a then ca else a) (if cb > b then cb else b)
+                                  (if cm > m then cm else m)
+          else go more a b m in
+      go hs asc desc 0 in
+    // Where the baseline sits inside line `i`, which is what everything on the line is placed against.
+    // Where the baseline sits inside line `i`. Room added by a floor goes BELOW it, which is what
+    // keeps a top-aligned box from moving the text beside it.
+    let hbase = fn (hs: (int * int * int * int) list) -> fn (i: int) ->
+      let rec go = fn (cs: (int * int * int * int) list) -> fn (a: int) ->
+        match cs with
+        | Nil -> a
+        | Cons (c, more) ->
+          let (li, ca, _cb, _cm) = c in
+          if li == i then go more (if ca > a then ca else a) else go more a in
+      go hs asc in
+    let ltop = fn (hs: (int * int * int * int) list) -> fn (i: int) ->
+      let rec go = fn (j: int) -> fn (a: int) ->
+        if j >= i then a else go (j + 1) (a + hline hs j) in
+      go 0 0 in
+    // `gap` is a space owed from BEFORE this list — the boundary between two text nodes. Inside one
+    // list the separator is implied by the split itself, so every word after the first gets a space
+    // whatever the flag says, and the flag applies only to the first. Carrying it forward instead put
+    // a space between `<span>One</span>` and `<span>Two</span>`, where the source has none.
+    let rec words = fn (ws: str list) -> fn (x: int) -> fn (line: int) -> fn (gap: bool) ->
+                    fn (first: bool) -> fn (placed: bool) ->
+      match ws with
+      | Nil -> (x, line, gap, placed)
+      | Cons (w, rest) ->
+        // An empty piece is where a space was, and a trailing one is how a list says it ended in one.
+        if w == "" then words rest x line true first placed
+        else
+          let wu = Font.text_units f w in
+          let need = if first then gap else true in
+          if not placed then words rest (x + wu) line false false true
+          else if x + (if need then space else 0) + wu <= cap then
+            words rest (x + (if need then space else 0) + wu) line false false true
+          // A word that does not fit starts the next line, and one wider than the whole line gets a
+          // line of its own and overflows — which is what a browser does rather than cutting it.
+          else words rest wu (line + 1) false false true in
+    // Floats come out of the inline content before anything is placed. A float is not on the line — it
+    // is beside it — so it takes room at the line's left edge, everything else starts after it, and a run
+    // holding nothing but a float makes no line at all. Hoisting them first is what lets the element that
+    // contained one report a zero-width box at the line's new start, which is what the browser does.
+    let rec floats = fn (ns: node list) -> fn (fx: int) -> fn (acc: box list) ->
+      match ns with
+      | Nil -> (fx, acc)
+      | Cons (n, rest) ->
+        match n with
+        | Element (tag, attrs, ks) ->
+          let est = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") in
+          if est.float_ == "left" || est.float_ == "right" then
+            let w = Font.text_units f (_collapse_ws (_inline_text ks "")) + est.bl + est.pl
+                    + est.pr + est.br in
+            floats rest (fx + w) acc
+          else
+            // A fresh accumulator, so the shift below touches only what this element contained.
+            let (fx2, a2) = floats ks fx Nil in
+            // A float inside a relatively positioned inline moves with it, because relative positioning
+            // moves everything the element contains and a float is still contained by it.
+            let rdx = if est.position == "relative" && est.left >= 0 then est.left else 0 in
+            let rdy = if est.position == "relative" && est.top >= 0 then est.top else 0 in
+            floats rest fx2 (list_append acc (_shift a2 rdx rdy))
+        | _ -> floats rest fx acc in
+    let (float_w, _fbs) = floats kids 0 Nil in
+    // Laid out once for the line heights and, only if something on a line was not text, once more with
+    // them known. The second pass is what places the boxes: a box's y is the top of its line, and the
+    // top of a line is the sum of the heights of the lines above it, so nothing can be placed until
+    // every line's height is known. Line BREAKING does not depend on the heights, so the two passes
+    // agree on which line everything is on.
+    //
+    // The cost is two layouts of every atomic box on the line, and two of everything inside it. Nested
+    // atomic boxes would be a power of the depth; the corpus goes two deep and the guard below means
+    // most documents never make the second pass at all.
+    let onepass = fn (hs: (int * int * int * int) list) ->
+      let rec walk = fn (ns: node list) -> fn (x: int) -> fn (line: int) -> fn (gap: bool) ->
+                     fn (saw: bool) -> fn (placed: bool) ->
+                     // `placed` is "a glyph went down", which decides whether a space is owed. `online` is
+                     // "there is a line here at all", which an inline's own border makes true without
+                     // placing anything and a float never does. Two questions, and one flag answering both
+                     // makes either the spaces or the empty boxes wrong.
+                     fn (online: bool) ->
+                     // The float cursor. The hoist above already worked out how wide the floats are so the
+                     // line could start after them; the boxes themselves are emitted HERE, where document
+                     // order is, because a box list that is right except for its order is wrong.
+                     fn (fcur: int) ->
+                     // The widest any line has been. A box that spans lines is as wide as its widest
+                     // fragment, not as wide as the container — and with `width: 0` the container is no
+                     // width at all while the text still has to go somewhere.
+                     fn (maxx: int) ->
+                     // What has been found out about the lines so far, threaded rather than returned
+                     // from a second traversal: the walk already visits everything exactly once.
+                     fn (hc: (int * int * int * int) list) -> fn (acc: box list) ->
+        match ns with
+        | Nil -> (acc, x, line, gap, saw, fcur, (if x > maxx then x else maxx), hc)
+        | Cons (n, rest) ->
+          match n with
+          | Text t ->
+            // Split on the collapsed text so an empty piece marks where a space was.
+            let (x2, l2, g2, p2) = words (str_split (_collapse_runs t) " ") x line gap true placed in
+            walk rest x2 l2 g2 saw p2 (online || p2) fcur (if x > maxx then x else maxx) hc acc
+          | Element (tag, attrs, ks) ->
+            // An element's box starts at its first GLYPH, not at the cursor. A space owed from before it
+            // belongs to the text outside, so counting the cursor made every inline element four pixels
+            // too early and five too wide — which reads as a rounding error and is a space.
+            // ...but only when there is something before it on the line. White space at the START of a
+            // line box is removed, so a space owed at x = 0 is owed to nothing: adding it there put every
+            // ...and only when something has actually been PLACED on the line. A border has taken room
+            // without placing anything, so `x > 0` is not the question: white space at the start of a line
+            // is removed even where an ancestor's border has already advanced the cursor, and asking about
+            // the cursor put every nested inline one space in from where it belongs.
+            // ...and only when the element that follows the space actually puts a glyph down. A space
+            // before an element that places nothing is a space at the end of the line, and a line's
+            // trailing white space is removed — so an empty `<span>` with a border sits against the text
+            // before it and not four pixels off it.
+            let empty_el = _collapse_ws (_inline_text ks "") == "" in
+            let sx = if gap && placed && not empty_el then x + space else x in
+            let sl = line in
+            // The children are walked into a FRESH accumulator so the element's own box can be placed
+            // in front of them afterwards. Consing it onto the same accumulator put a nested inline
+            // element after its own children in document order, which the box-sequence number sees.
+            // An inline element's own padding and borders take room ON the line.
+            let est = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") in
+            // `<br>` ends the line. It is the one element whose whole effect is on line breaking, so it
+            // cannot come out of the cascade — there is no property that says "break here" — and it was
+            // missing entirely: `Test<br/>Test` came out one line of two words rather than two lines.
+            //
+            // Its own box is at the cursor and is zero wide and one line tall, which is what the browser
+            // reports for it. At the CURSOR and not past a pending space: a space before a break is at
+            // the end of a line, and a line's trailing white space is removed.
+            if to_lower tag == "br" then
+              walk rest 0 (line + 1) false saw false false fcur (if x > maxx then x else maxx) hc
+                (Cons (box { tag = "br", x = Font.scale f x size, y = ltop hs line, w = 0,
+                             h = hline hs line, pinned = false }, acc))
+            else
+            if est.float_ == "left" || est.float_ == "right" then
+              // Beside the line, not on it: it does not move the cursor, does not make the line exist, and
+              // its own box goes down here so that it lands in document order.
+              let fw = Font.text_units f (_collapse_ws (_inline_text ks "")) + est.bl + est.pl
+                       + est.pr + est.br in
+              walk rest x line gap saw placed online (fcur + fw) maxx hc
+                (list_append acc
+                   (Cons (box { tag = to_lower tag, x = Font.scale f fcur size, y = 0,
+                                w = Font.scale f fw size, h = Font.line_height f size, pinned = false }, Nil)))
+            else
+            if est.display == "inline-block" || est.display == "inline-table" then
+              // An ATOMIC inline-level box. It sits on the line like a word: it does not break, nothing
+              // inside it is on this line, and the line grows to hold it. It was laid out as
+              // block-level, which gave it a line of its own — one document out of 126 and fourteen out
+              // of 228, and the comment admitting it read like a note for later until the corpus was
+              // wide enough to price it.
+              let ae = _elem_of tag attrs in
+              let ist = if est.w >= 0 || est.w_pct >= 0 then est
+                        else _with_width est (_max_content f ua author (Cons (ae, anc)) ks) in
+              let (abs0, ah, _am1, _am2, _afe) = _block f ua author anc tag attrs ks cw (0 - 1) ist in
+              let abw = match abs0 with Nil -> 0 | Cons (m0, _r0) -> m0.w in
+              // The MARGIN box is what takes room on the line; `_block` reports the border box.
+              let advu = Font.text_units_of_px f (ist.ml + abw + ist.mr) size in
+              // It breaks like a word and for the same reason: what does not fit goes on the next line,
+              // and what is wider than the whole line gets a line of its own and overflows.
+              let sxa = if gap && placed then x + space else x in
+              let (ax, al) = if not placed then (x, line)
+                             else if sxa + advu <= cap then (sxa, line)
+                             else (0, line + 1) in
+              // Where its baseline is, which is the whole of why a line is not a fixed height.
+              //
+              // An atomic box with in-flow line boxes of its own puts its LAST line's baseline on the
+              // line's, so it sits exactly like text. One with none — its content is blocks, or there is
+              // no content — puts its bottom MARGIN edge there instead and hangs entirely above the
+              // baseline. That is the difference between an inline-block of text being exactly as tall
+              // as the line it is on and one holding a block making the line taller than itself by the
+              // strut's descent, which is five pixels that look like an off-by-one and are not.
+              let rec kid_block = fn (xs: node list) ->
+                match xs with
+                | Nil -> false
+                | Cons (k2, more3) ->
+                  match k2 with
+                  | Element (kt, ka, _kk) ->
+                    if _is_block_level (style_of ua author (_elem_of kt ka) (Cons (ae, anc))
+                                          (_attr ka "style")).display
+                    then true else kid_block more3
+                  | _ -> kid_block more3 in
+              let has_lines = not (kid_block ks) && _collapse_ws (_inline_text ks "") != "" in
+              let mh = ist.mt + ah + ist.mb in
+              let a_below = if has_lines then desc else 0 in
+              let a_above = mh - a_below in
+              // `vertical-align: top` puts the box's top at the LINE's top rather than its baseline
+              // anywhere. It still has to make the line tall enough to hold it, which is why it
+              // contributes its whole height above and nothing below — the same arithmetic reaching the
+              // same place from the other end. Only `top` and the baseline are here; the corpus has not
+              // asked for the others.
+              let top_aligned = est.valign == "top" in
+              let ay = if top_aligned then ltop hs al
+                       else ltop hs al + hbase hs al - a_above in
+              walk rest (ax + advu) al false saw true true fcur
+                   (if ax + advu > maxx then ax + advu else maxx)
+                   (Cons ((al, (if top_aligned then 0 else a_above),
+                           (if top_aligned then 0 else a_below),
+                           (if top_aligned then mh else 0)), hc))
+                   (list_append (list_rev (_shift abs0 (Font.scale f ax size) (ay + ist.mt))) acc)
+            else
+            let lead = Font.text_units_of_px f (est.bl + est.pl) size in
+            let trail = Font.text_units_of_px f (est.pr + est.br) size in
+            // The children start where the BOX starts — past the space owed from before it and past this
+            // element's own left edge. Starting them at the plain cursor made the box a space narrower
+            // than its own border: five pixels of border reported as one.
+            //
+            // An element that consumes nothing still has to hand the space back, which is why the gap is
+            // restored afterwards rather than passed in. Swallowing it cost eleven documents once.
+            let (inner, x2u, l2, g2a, saw2, fcur2, mx2, hc2) =
+              walk ks (sx + lead) line false saw placed (online || lead + trail > 0) fcur maxx hc Nil in
+            let g2 = if x2u == sx + lead then gap else g2a in
+            // Still not right for `block-in-inline-nested-002-ref`, and the residue is one space: the
+            // browser puts an inline element four pixels to the left of where this does, once, at the
+            // boundary between a text run and the element after it. The width is right now and the offset
+            // is not, which means the space is being counted on both sides of the same boundary somewhere
+            // — measured, not yet located.
+            let x2 = x2u + trail in
+            // The union of the element's fragments, which for one line is where it started to where it
+            // ended. A box spanning two lines is reported by the browser as the whole span from the
+            // first line's start to the last line's end, and that is what this gives.
+            // A right-to-left line is filled from the right, so a fragment's left edge is the width less
+            // where it ENDS. Mirroring the whole extent rather than each coordinate keeps the box the same
+            // size it was, which is the only part of it the direction does not change.
+            let bx = if rtl then cw - Font.scale f x2 size else Font.scale f sx size in
+            // The WIDTH is the scaled difference, not the difference of two scaled numbers. Rounding each
+            // end and subtracting rounds twice and lands a pixel out — the same "scale once" the glyph
+            // advances and the table columns already needed, met a third time.
+            // Across lines, the box is as wide as its widest fragment. `cw - bx` is the container, which
+            // is right when the container is what the lines were measured against and zero when the
+            // container is zero — and text in a zero-width container still has a width.
+            let across = let m = if mx2 > x2 then mx2 else x2 in
+                         let byw = Font.scale f m size - bx in
+                         if byw > cw - bx then byw else cw - bx in
+            let bw = if l2 == sl then Font.scale f (x2 - sx) size else across in
+            // Relative positioning moves an inline fragment and its contents after they are laid out,
+            // exactly as it does a block: the cursor, the line and everything after are unmoved.
+            let rdx = if est.position == "relative" && est.left >= 0 then est.left else 0 in
+            let rdy = if est.position == "relative" && est.top >= 0 then est.top else 0 in
+            // NOT the union with its descendants. `block-in-inline-nested-002-ref` wants a `<span>` with
+            // no border of its own to be ten pixels taller than its line because the child inside it has a
+            // 5px border — and making every element's box cover its descendants cost two other documents,
+            // so that is not the rule. What the browser reports is the union of the element's own
+            // FRAGMENTS; whatever makes the fragment taller in that one case is not the child's border box
+            // as such, and has not been measured yet.
+            walk rest x2 l2 g2 (saw2 || _is_block_level est.display) (placed || x2 > sx)
+                 (online || lead + trail > 0 || x2 > sx) fcur2 (if mx2 > maxx then mx2 else maxx) hc2
+                 (list_append (_shift inner rdx rdy)
+                    (Cons (box { tag = to_lower tag, x = bx + rdx, y = ltop hs sl - est.bt + rdy,
+                                 w = if bw < 0 then 0 else bw,
+                                 // An element that advanced nothing and has no edges has no height — but
+                                 // only when there is no LINE for it to sit on. Inside others that have
+                                 // taken room it is on their line and is a line tall.
+                                 h = if l2 == sl && x2 == sx && est.bt + est.bb == 0
+                                        && not online && lead + trail == 0 then 0
+                                     else ltop hs (l2 + 1) - ltop hs sl + est.bt + est.bb,
+                                 pinned = false }, acc)))
+          | Comment _c ->
+            walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) hc acc
+          | Doctype (_p, _q, _r) ->
+            walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) hc acc in
+      walk kids float_w 0 false false false false 0 0 Nil Nil in
+    let (bs0, x0, line0, _g0, saw0, _fc0, _mx0, hc0) = onepass Nil in
+    // Nothing but text on any line means the first pass already placed everything against the right
+    // tops, and the second is skipped. This is the common case by a long way.
+    let (bs, x, line, saw, hc) =
+      match hc0 with
+      | Nil -> (bs0, x0, line0, saw0, hc0)
+      | Cons (_c0, _r0) ->
+        let (bs1, x1, line1, _g1, saw1, _fc1, _mx1, hc1) = onepass hc0 in
+        (bs1, x1, line1, saw1, hc1) in
+    let n = if x == float_w && line == 0 then 0 else line + 1 in
+    // The third answer: whether anything block-level turned up inside. Asking that as a QUERY before
+    // laying out means walking every descendant of every element and resolving its style each time —
+    // which is note 166's square, and here it was worse than a square and did not finish. Reporting it
+    // from the walk that was happening anyway costs nothing, and the caller retries.
+    //
+    // The HEIGHT is returned as well as the line count, and they are no longer the same fact. A caller
+    // that multiplies a count by the line height gets the wrong answer for any line that had something
+    // taller than text on it; a caller that still wants the count — the block-in-inline split does —
+    // gets that too.
+    (list_rev bs, n, ltop hc n, saw)
+
   and _table = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
                fn (anc: elem list) -> fn (kids: node list) -> fn (st: sty) -> fn (avail: int) ->
     let sp = st.spacing in
@@ -1094,18 +1225,18 @@ module Layout {
     // anonymous block boxes come to for whitespace-only inline content.
     let inline_only = not is_table && not (has_block kids)
                       && _collapse_ws (_inline_text kids "") != "" in
-    let (ibs, ilines, _sawb) =
+    let (ibs, _ilines, ih3, _sawb) =
       if inline_only then
         _inline f ua author inner_ancestors kids cw font_size
           (Style.inherited ua author "direction" "ltr" e ancestors == "rtl")
-      else (Nil, 0, false) in
+      else (Nil, 0, 0, false) in
     let (bs, used, open_mb, first_mt, bottom, fbot) =
       if is_table then (tbs, th, 0, 0, th, 0)
       // A block met inside what looked like inline content means it was not inline content. The flag
       // comes back from the walk rather than being asked for beforehand, and here it is the difference
       // between laying a document out as one paragraph and laying it out at all.
       else if inline_only && not _sawb then
-        let h = ilines * Font.line_height f font_size in (ibs, h, 0, 0, h, 0)
+        let h = ih3 in (ibs, h, 0, 0, h, 0)
       else _stack f ua author inner_ancestors kids cw (if st.h >= 0 then st.h else 0 - 1) 0 0 (not sep_top) 0 false 0 (0, 0) Nil in
     // The fragment's origin is (the containing block's content left, this border box's top): x is
     // measured from outside the margin because a horizontal margin is an offset, y from the border
