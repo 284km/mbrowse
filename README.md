@@ -101,7 +101,7 @@ wrong direction for a gate to move.
 ## Layout, and its gate before it
 
 ```
-sh scripts/layout_check.sh        # geometry: 0 of 126, box sequence: 126 of 126
+sh scripts/layout_check.sh        # geometry: 82 of 126, box sequence: 126 of 126
 ```
 
 The gate exists and the engine does not, which is the same order the CSS corpus arrived in. Both
@@ -118,49 +118,21 @@ cannot be passed by drawing nothing, because the numbers are specific. Reftests 
 running later, for what geometry does not check: colour, stacking, and where the ink lands.
 
 `src/style.mere` is the UA stylesheet, the selectors and the cascade; `src/layout.mere` is normal flow
-with the box model, collapsing margins, and inline formatting. Ten of the 126 pass. Text has a height
-now — a line is `(ascender - descender + lineGap)` scaled, 22px for this font at 16px — and words wrap
-at the containing block's width, compared in font units so the wrap point never turns on a rounding.
+with the box model, collapsing margins, inline formatting, tables, floats and out-of-flow boxes.
+**82 of the 126 pass.**
 
-An absolutely positioned box is out of flow: laid out at its static position, but the cursor does not
-move past it and the parent's height does not grow. That was 94 of the 116 failures at the time —
-`html` came out as tall as if the box were in flow.
+The 44 that do not have no dominant cause left — the largest group is four documents. Most of them want
+the real **block-in-inline split**: an inline element containing a block-level box is cut into a piece
+before it, the block, and a piece after, with the block becoming a sibling at the containing block's full
+width and the inline element reported as the union of its fragments. This lays such an element out as a
+block instead, which is the closer of the two wrong answers — right order, right width for the inline,
+wrong width for the block and short on height.
 
-What is left is in the gate's header, grouped by **the first box whose geometry differs** rather than by
-what a layout engine usually needs. That distinction cost something: the header used to name `font-size`
-as the next thing, and **not one of the 126 documents sets it**. The corpus was one grep away. That 8-pixel error is fixed, and it was not the body's own margin: **the cursor and the content height
-were one number.** `y` includes the margin still hanging after the last child, because that is where
-the next child goes; the height is measured to the last child's border box. And a box with nothing in it
-and no border or padding lets margins collapse *through* — an empty `<div>` after a paragraph is placed
-after the collapsed margin, which puts it below its own parent's bottom edge and adds nothing to that
-parent's height. Table layout is in: a table shrinks to fit its content rather than filling its container, rows share a
-column's width, and `border-spacing` insets every cell including at the edges. Columns are measured in
-**font units**, not pixels — rounding a column's width first and then asking whether the text fits wraps
-a line whose text is 71.2 wide into a column of 71, and that column was sized from that very text.
-
-Anonymous boxes are in. A run of inline children inside a block container becomes one anonymous block, and
-a `display: table-cell` with no table around it is block-level — the standard wraps it in an anonymous
-table, row group and row, so it takes a line of its own. A float is out of flow, and not in the same way an absolutely positioned box is: it is placed at the
-containing block's left edge below whatever floats came before it, the cursor does not move past it, and
-the parent's height ignores it **unless the parent establishes a block formatting context** — being
-positioned, floated, a table cell or anything but `overflow: visible` does that. What such a box contains
-is the float's *margin* box, not its border box.
-
-And a box that establishes a formatting context does not **overlap** a float — it is placed beside it, in
-whatever width is left. An ordinary block ignores the float entirely and only its line boxes are
-shortened; that difference is the whole of what `overflow: scroll` does to a sibling of a float.
-
-What is left is where a float shortens the line beside it, and a replaced element with no intrinsic
-size.
-
-That list is re-derived from the failures each time rather than carried forward, because it has been
-wrong twice: it once named `font-size`, which **not one of the 126 documents sets**, and then floats,
-which turned out to be a tenth of what was left. Both times the guess was what a layout engine usually
-needs; both times the corpus was one command away.
-
-The UA stylesheet is written as CSS and parsed by the same parser as everything else, rather than as
-a table of constants. A table would be a second place where "what a `<p>` is" is written down, and
-the two would drift.
+The order of that work was found by re-deriving the failures from the gate every time rather than keeping
+a list, and the list was wrong four times running: it named `font-size`, which **not one of the 126
+documents sets**; floats, which were a tenth; anonymous boxes, which were most of it; and floats beside
+each other, where the case wanted a formatting context dodging one float. Every guess was what a layout
+engine usually needs. Every answer was in the file that was already open.
 
 Two numbers are reported, because they fail for different reasons. The **box sequence** — which
 elements generate boxes, in what order — is the parser and the box tree, and it is already right
