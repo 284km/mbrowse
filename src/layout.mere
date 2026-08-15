@@ -832,7 +832,36 @@ module Layout {
         let gbox = box { tag = to_lower gt, x = sp, y = gy, w = sum_cols, h = gy2 - sp - gy } in
         lay more (gy2 - sp)
             (list_append acc (Cons (gbox, _drop acc a2))) in
-    let (bs, endy) = lay groups 0 Nil in
+    // A `<tfoot>` is laid out after the bodies whatever order it was written in, and a `<thead>` before
+    // them — but both are still REPORTED where the document put them. Two different orders over the same
+    // groups: one decides the y, the other decides the box list, and using one for both puts the footer's
+    // rows in the middle of the table.
+    let tag_of = fn (g: (str * attr list * node list * sty)) ->
+      let (t, _a, _k, _s) = g in to_lower t in
+    let heads = list_filter groups (fn (g: (str * attr list * node list * sty)) ->
+                                      tag_of g == "thead") in
+    let foots = list_filter groups (fn (g: (str * attr list * node list * sty)) ->
+                                      tag_of g == "tfoot") in
+    let bodies = list_filter groups (fn (g: (str * attr list * node list * sty)) ->
+                                       tag_of g != "thead" && tag_of g != "tfoot") in
+    let (hbs, y1) = lay heads 0 Nil in
+    let (bbs0, y2) = lay bodies y1 Nil in
+    let (fbs0, y3) = lay foots y2 Nil in
+    let bbs = bbs0 in
+    let fbs = fbs0 in
+    // Written before the bodies means reported before them, which is the only thing left to decide.
+    let foot_first =
+      let rec go = fn (gs: (str * attr list * node list * sty) list) ->
+        match gs with
+        | Nil -> false
+        | Cons (g, more) ->
+          if tag_of g == "tfoot" then true
+          else if tag_of g == "thead" then go more
+          else false in
+      go groups in
+    let bs = list_append hbs (if foot_first then list_append fbs bbs
+                              else list_append bbs fbs) in
+    let endy = y3 in
     // The last row already left a spacing behind it, so one more closes the table and two would count
     // the gap after the final row twice.
     (bs, table_w, endy + sp)
