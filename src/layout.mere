@@ -555,8 +555,22 @@ module Layout {
             let rec pieces = fn (ns2: node list) -> fn (yy: int) -> fn (isfirst: bool) ->
                              fn (acc2: box list) -> fn (uy0: int) -> fn (lastb: int) ->
               let (bef, blk, aft) = _split_at_block ua author (Cons (e, ancestors)) ns2 in
-              let (pbs2, plines2, _p2) =
+              // A piece can itself contain a block, inside an inline element further down. When it does
+              // it is not inline content at all — it is a block container's content — so it goes through
+              // the stack, which already knows how to split what is inside it. The inline pass reports
+              // that as it goes, so the question costs nothing to ask.
+              let (pbs2a, plines2a, pblk) =
                 _inline f ua author (Cons (e, ancestors)) bef cbw font_size piece_rtl in
+              let (pbs2, plines2) =
+                if not pblk then (pbs2a, plines2a)
+                else
+                  let (sbs, _sy, _smb, _sfm, sbot, _sfb) =
+                    _stack f ua author (Cons (e, ancestors)) bef cbw cbh 0 0 false 0 false 0 (0, 0)
+                           Nil in
+                  // Its height is already in pixels, so it is turned back into a count of lines for the
+                  // arithmetic below to divide out again. Not elegant; the alternative is threading a
+                  // height where every other piece has a line count.
+                  (sbs, (sbot + Font.line_height f font_size - 1) / Font.line_height f font_size) in
               let has_blk = match blk with Cons (_b2, _r2) -> true | Nil -> false in
               // A middle fragment carries no edge: the element's two edges are at its two ends.
               let edge = if isfirst then start_edge else (if has_blk then 0 else end_edge) in
