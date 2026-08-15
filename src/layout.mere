@@ -129,7 +129,8 @@ module Layout {
     Style.resolve (list_append h1 (list_append h2 h3)) e.tag;
 
   let _elem_of = fn (tag: str) -> fn (attrs: attr list) ->
-    elem { tag = to_lower tag, id = _attr attrs "id", cls = to_lower (_attr attrs "class") };
+    elem { tag = to_lower tag, id = _attr attrs "id", cls = to_lower (_attr attrs "class"),
+           sty_attr = _attr attrs "style" };
 
   // ---- inline content ------------------------------------------------------------
 
@@ -767,7 +768,18 @@ module Layout {
     // box because a vertical one collapsed into the gap above. So a child clears this box's own
     // left margin as well as its border and padding — leaving `st.ml` out put every nested box at
     // the wrong x and only the outermost one right.
-    let inner = _shift bs (st.ml + st.bl + st.pl) (st.bt + st.pt) in
+    let bw_total = st.bl + st.pl + cw + st.pr + st.br in
+    // The CONTAINING BLOCK's direction, not this box's own. `direction` lays out what is inside a box;
+    // a `<div direction: rtl>` is still placed from the left of an ordinary body, and only its children
+    // are placed from the right. Reading it off the element itself moved the div to x = 690.
+    let rtl = match ancestors with
+              | Nil -> false
+              | Cons (par, up) -> Style.inherited ua author "direction" "ltr" par up == "rtl" in
+    let bx0 = if rtl then cbw - st.mr - bw_total else st.ml in
+    // The children clear the same edge the box was placed from, which in a right-to-left containing
+    // block is not the left margin. Using `st.ml` here while the box itself was placed from the right
+    // put every child of an RTL box at the wrong x and only the box right.
+    let inner = _shift bs (bx0 + st.bl + st.pl) (st.bt + st.pt) in
     // The margin still hanging at the end is inside this box only if something separates it from
     // the bottom edge; otherwise it escapes and is the parent's to place.
     // To the last child's border box, and then the trailing margin only when something separates it
@@ -777,8 +789,11 @@ module Layout {
                     else if makes_bfc && fbot > in_flow_h then fbot
                     else in_flow_h in
     let h = st.bt + st.pt + content_h + st.pb + st.bb in
-    let me = box { tag = to_lower tag, x = st.ml, y = 0,
-                   w = st.bl + st.pl + cw + st.pr + st.br, h = h } in
+    // In a right-to-left containing block a box is placed from the RIGHT edge, so its offset is what is
+    // left after its own width and its right margin — the same margin read from the other end. With this
+    // missing, a block with `margin: 10px` in a 100px RTL container sat at 10 where the browser puts it
+    // at 0.
+    let me = box { tag = to_lower tag, x = bx0, y = 0, w = bw_total, h = h } in
     (Cons (me, inner), h,
      (if sep_top then st.mt else _collapse st.mt first_mt),
      (if sep_bot then st.mb else _collapse st.mb open_mb));

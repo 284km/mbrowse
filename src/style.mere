@@ -32,7 +32,11 @@ type sty = {
 //
 // Three fields rather than a list of classes because no selector in the corpus has two classes,
 // and a list would be a general answer to a question nobody has asked yet.
-type elem = { tag: str, id: str, cls: str };
+// `sty_attr` is the element's own `style=` text, and it is here so that an ANCESTOR can be resolved.
+// Inheritance is walked up this chain rather than threaded down as a computed value, and a chain whose
+// links do not carry their inline styles cannot answer what `direction` an ancestor set.
+// A selector's compound leaves it empty: a selector never has one.
+type elem = { tag: str, id: str, cls: str, sty_attr: str };
 
 // A selector is a chain of compounds with combinators between them, newest last. `child` says
 // whether the step before it must be the direct parent.
@@ -138,7 +142,7 @@ module Style {
 
 
 
-  let _empty_simple = elem { tag = "", id = "", cls = "" };
+  let _empty_simple = elem { tag = "", id = "", cls = "" , sty_attr = "" };
 
   // Component values to steps. The hash carries its type flag joined by U+0001 — the CSS
   // tokenizer puts it there — so the id is what comes before that.
@@ -153,11 +157,11 @@ module Style {
         match v with
         | Named (k, val) ->
           if k == "ident" then go rest (elem { tag = to_lower val, id = cur.id,
-                                                 cls = cur.cls }) child acc
+                                                 cls = cur.cls, sty_attr = "" }) child acc
           else if k == "hash" then
             let i = str_index_of val (chr 1) in
             let id = if i < 0 then val else substring val 0 i in
-            go rest (elem { tag = cur.tag, id = id, cls = cur.cls }) child acc
+            go rest (elem { tag = cur.tag, id = id, cls = cur.cls , sty_attr = "" }) child acc
           // A selector with a kind this does not understand does not match ANYTHING. Skipping the
           // token instead reads `body &gt; span` — which is what a `<style>` element contains, because
           // its text is raw and character references are not decoded in it — as `body span`, and
@@ -168,7 +172,7 @@ module Style {
           if s == "." then
             match rest with
             | Cons (Named (_k2, cname), r2) ->
-              go r2 (elem { tag = cur.tag, id = cur.id, cls = to_lower cname }) child acc
+              go r2 (elem { tag = cur.tag, id = cur.id, cls = to_lower cname , sty_attr = "" }) child acc
             | _ -> go rest cur child acc
           else if s == ">" then
             // A combinator ends the compound before it. The `>` sets the flag on the NEXT one,
@@ -416,7 +420,36 @@ module Style {
 
   // ---- what layout asks ----------------------------------------------------------
 
-  // **There is no inheritance here, and that is a hole rather than a simplification.** A declaration
+  // The declarations an inline `style=` contributes, above every selector. Shared with the walk below so
+  // that an ancestor's inline style counts the same way its stylesheet rules do.
+  let inline_hits = fn (text: str) ->
+    let rec go = fn (rs: rule list) -> fn (acc: hit list) ->
+      match rs with
+      | Nil -> acc
+      | Cons (r, rest) ->
+        match r with
+        | Decl (name, value, _i) ->
+          go rest (Cons (hit { prop = to_lower name, value = value_text value,
+                               spec = 2 * 100000, order = 0 }, acc))
+        | _ -> go rest acc in
+    if text == "" then Nil else go (Rules.declaration_list text) Nil;
+
+  // The computed value of an INHERITED property. Walked up the ancestor chain rather than threaded down
+  // as a computed value, because every call site already has the chain and none has the parent's style —
+  // the chain is by far the smaller change, and its cost is the depth of the tree rather than its size.
+  let rec inherited = fn (ua: prepared list) -> fn (author: prepared list) -> fn (prop: str) ->
+                      fn (dflt: str) -> fn (e: elem) -> fn (anc: elem list) ->
+    let hs = list_append (hits_for ua 0 e anc 0)
+               (list_append (hits_for author 1 e anc 0) (inline_hits e.sty_attr)) in
+    let own = winner hs prop in
+    if own != "" then to_lower own
+    else
+      match anc with
+      | Nil -> dflt
+      | Cons (p, rest) -> inherited ua author prop dflt p rest;
+
+  // **The rest of the cascade still has no inheritance, and that is a hole rather than a simplification.**
+  // `inherited` above is one property's worth of it, asked for by name where a caller knows it needs one. A declaration
   // reaches an element only through a selector that matches it; a property whose value comes from an
   // ancestor because the property INHERITS is not modelled at all.
   //

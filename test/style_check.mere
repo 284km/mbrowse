@@ -29,8 +29,8 @@ let _ = check "pt is four thirds of a px" (Style.px_of "12pt" == 16);
 // The UA stylesheet, through the same parser as everything else.
 let ua = Style.prepare Style.ua_sheet;
 let of_tag = fn (t: str) -> fn (anc: elem list) ->
-  Style.resolve (Style.hits_for ua 0 (elem { tag = t, id = "", cls = "" }) anc 0) t;
-let body_anc = Cons (elem { tag = "body", id = "", cls = "" }, Nil);
+  Style.resolve (Style.hits_for ua 0 (elem { tag = t, id = "", cls = "" , sty_attr = "" }) anc 0) t;
+let body_anc = Cons (elem { tag = "body", id = "", cls = "" , sty_attr = "" }, Nil);
 let _ = check "body has its eight pixels" ((of_tag "body" Nil).ml == 8);
 let _ = check "a paragraph has its em" ((of_tag "p" body_anc).mt == 16);
 let _ = check "and nothing sideways" ((of_tag "p" body_anc).ml == 0);
@@ -46,36 +46,36 @@ let sheet = Style.prepare
 let w_of = fn (e: elem) -> fn (anc: elem list) ->
   (Style.resolve (Style.hits_for sheet 1 e anc 0) e.tag).w;
 let _ = check "a tag matches"
-  (w_of (elem { tag = "div", id = "", cls = "" }) Nil == 1);
+  (w_of (elem { tag = "div", id = "", cls = "" , sty_attr = "" }) Nil == 1);
 let _ = check "a class beats a tag"
-  (w_of (elem { tag = "div", id = "", cls = "c" }) Nil == 2);
+  (w_of (elem { tag = "div", id = "", cls = "c" , sty_attr = "" }) Nil == 2);
 let _ = check "an id beats a class"
-  (w_of (elem { tag = "div", id = "i", cls = "c" }) Nil == 3);
+  (w_of (elem { tag = "div", id = "i", cls = "c" , sty_attr = "" }) Nil == 3);
 let _ = check "a descendant selector reaches through"
-  (w_of (elem { tag = "p", id = "", cls = "" })
-        (Cons (elem { tag = "section", id = "", cls = "" },
-               Cons (elem { tag = "div", id = "", cls = "" }, Nil))) == 4);
+  (w_of (elem { tag = "p", id = "", cls = "" , sty_attr = "" })
+        (Cons (elem { tag = "section", id = "", cls = "" , sty_attr = "" },
+               Cons (elem { tag = "div", id = "", cls = "" , sty_attr = "" }, Nil))) == 4);
 let _ = check "a child selector does not"
-  (w_of (elem { tag = "span", id = "", cls = "" })
-        (Cons (elem { tag = "section", id = "", cls = "" },
-               Cons (elem { tag = "div", id = "", cls = "" }, Nil))) == 0 - 1);
+  (w_of (elem { tag = "span", id = "", cls = "" , sty_attr = "" })
+        (Cons (elem { tag = "section", id = "", cls = "" , sty_attr = "" },
+               Cons (elem { tag = "div", id = "", cls = "" , sty_attr = "" }, Nil))) == 0 - 1);
 let _ = check "but it does when it is the parent"
-  (w_of (elem { tag = "span", id = "", cls = "" })
-        (Cons (elem { tag = "div", id = "", cls = "" }, Nil)) == 5);
+  (w_of (elem { tag = "span", id = "", cls = "" , sty_attr = "" })
+        (Cons (elem { tag = "div", id = "", cls = "" , sty_attr = "" }, Nil)) == 5);
 // A class attribute is a list, so `foo` must not match `foobar`.
 let cls_sheet = Style.prepare ".foo \{ width: 7px }\n";
 let _ = check "a class is matched whole, not as a substring"
   ((Style.resolve (Style.hits_for cls_sheet 1
-      (elem { tag = "div", id = "", cls = "foobar" }) Nil 0) "div").w == 0 - 1);
+      (elem { tag = "div", id = "", cls = "foobar" , sty_attr = "" }) Nil 0) "div").w == 0 - 1);
 let _ = check "and matched when it is one of several"
   ((Style.resolve (Style.hits_for cls_sheet 1
-      (elem { tag = "div", id = "", cls = "a foo b" }) Nil 0) "div").w == 7);
+      (elem { tag = "div", id = "", cls = "a foo b" , sty_attr = "" }) Nil 0) "div").w == 7);
 
 // The author wins over the UA even with a weaker selector, because origin outranks specificity.
 let author = Style.prepare "div \{ margin-top: 3px }\n";
 let both = Style.resolve
-  (list_append (Style.hits_for ua 0 (elem { tag = "p", id = "", cls = "" }) body_anc 0)
-               (Style.hits_for author 1 (elem { tag = "p", id = "", cls = "" }) body_anc 0)) "p";
+  (list_append (Style.hits_for ua 0 (elem { tag = "p", id = "", cls = "" , sty_attr = "" }) body_anc 0)
+               (Style.hits_for author 1 (elem { tag = "p", id = "", cls = "" , sty_attr = "" }) body_anc 0)) "p";
 let _ = check "the UA still applies where the author is silent" (both.mt == 16);
 
 // Shorthands. Four sides from one, two, three or four values, and a border's width found among
@@ -85,7 +85,7 @@ let sh = Style.prepare
    ++ "#d \{ margin: 1px 2px 3px 4px }\n#e \{ margin: 5px; margin-top: 9px }\n"
    ++ "#f \{ border: solid 2px black }\n#g \{ border: none }\n#h \{ border: solid black }\n");
 let by_id = fn (i: str) ->
-  Style.resolve (Style.hits_for sh 1 (elem { tag = "div", id = i, cls = "" }) Nil 0) "div";
+  Style.resolve (Style.hits_for sh 1 (elem { tag = "div", id = i, cls = "" , sty_attr = "" }) Nil 0) "div";
 let a1 = by_id "a";
 let _ = check "one value is all four" (a1.mt == 1 && a1.mr == 1 && a1.mb == 1 && a1.ml == 1);
 let b1 = by_id "b";
