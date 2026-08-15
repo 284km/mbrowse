@@ -191,6 +191,7 @@ module Layout {
   // between two text nodes belongs to neither of them, so it cannot be part of either string.
   let _inline = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
                 fn (anc: elem list) -> fn (kids: node list) -> fn (cw: int) -> fn (size: int) ->
+                fn (rtl: bool) ->
     let cap = if cw <= 0 then 0 else (cw * f.upem) / size in
     let space = Font.text_units f " " in
     let lh = Font.line_height f size in
@@ -245,7 +246,10 @@ module Layout {
           // The union of the element's fragments, which for one line is where it started to where it
           // ended. A box spanning two lines is reported by the browser as the whole span from the
           // first line's start to the last line's end, and that is what this gives.
-          let bx = Font.scale f sx size in
+          // A right-to-left line is filled from the right, so a fragment's left edge is the width less
+          // where it ENDS. Mirroring the whole extent rather than each coordinate keeps the box the same
+          // size it was, which is the only part of it the direction does not change.
+          let bx = if rtl then cw - Font.scale f x2 size else Font.scale f sx size in
           // The WIDTH is the scaled difference, not the difference of two scaled numbers. Rounding each
           // end and subtracting rounds twice and lands a pixel out — the same "scale once" the glyph
           // advances and the table columns already needed, met a third time.
@@ -392,7 +396,10 @@ module Layout {
           // `<div><span style="display:table-cell">…</span><span>…</span></div>` land on two lines,
           // which is what the browser does.
           let (run, after) = _inline_run f ua author ancestors ns in
-          let (ibs, ilines, saw) = _inline f ua author ancestors run cbw font_size in
+          let ctx_rtl = match ancestors with
+                        | Nil -> false
+                        | Cons (c, up) -> Style.inherited ua author "direction" "ltr" c up == "rtl" in
+          let (ibs, ilines, saw) = _inline f ua author ancestors run cbw font_size ctx_rtl in
           // An inline element with a block inside it is SPLIT by the standard. This does not split it;
           // it lays that element out as a block instead, which puts the boxes in the right order at the
           // right width and is the closer of the two wrong answers.
@@ -416,10 +423,11 @@ module Layout {
           // remaining blocks laid out as inline content by the piece that holds them. The pieces are
           // laid out here rather than inside the branch precisely so that they can be asked: `_inline`
           // already reports whether it met a block, which is the same question in the same words.
+          let piece_rtl = Style.inherited ua author "direction" "ltr" e ancestors == "rtl" in
           let (pbs, plines, ps_blk) = _inline f ua author (Cons (e, ancestors)) spl_before cbw
-                                              font_size in
+                                              font_size piece_rtl in
           let (abs_, alines, as_blk) = _inline f ua author (Cons (e, ancestors)) spl_after cbw
-                                               font_size in
+                                               font_size piece_rtl in
           let simple_split =
             saw && not ps_blk && not as_blk
             && (match spl_blk with Cons (_b, _r) -> true | Nil -> false) in
@@ -594,7 +602,10 @@ module Layout {
           _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom fs acc
         else
           let (run, after) = _inline_run f ua author ancestors ns in
-          let (ibs, ilines, _saw2) = _inline f ua author ancestors run cbw font_size in
+          let ctx_rtl = match ancestors with
+                        | Nil -> false
+                        | Cons (c, up) -> Style.inherited ua author "direction" "ltr" c up == "rtl" in
+          let (ibs, ilines, _saw2) = _inline f ua author ancestors run cbw font_size ctx_rtl in
           let top = y + _collapse open_mb 0 in
           let h = ilines * Font.line_height f font_size in
           _stack f ua author ancestors after cbw (top + h) 0 swallow_first first_mt true (top + h)
@@ -805,7 +816,9 @@ module Layout {
     let inline_only = not is_table && not (has_block kids)
                       && _collapse_ws (_inline_text kids "") != "" in
     let (ibs, ilines, _sawb) =
-      if inline_only then _inline f ua author inner_ancestors kids cw font_size
+      if inline_only then
+        _inline f ua author inner_ancestors kids cw font_size
+          (Style.inherited ua author "direction" "ltr" e ancestors == "rtl")
       else (Nil, 0, false) in
     let (bs, used, open_mb, first_mt, bottom, fbot) =
       if is_table then (tbs, th, 0, 0, th, 0)
