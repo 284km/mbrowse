@@ -416,6 +416,21 @@ module Style {
 
   // ---- what layout asks ----------------------------------------------------------
 
+  // **There is no inheritance here, and that is a hole rather than a simplification.** A declaration
+  // reaches an element only through a selector that matches it; a property whose value comes from an
+  // ancestor because the property INHERITS is not modelled at all.
+  //
+  // It has not cost much yet because the properties block geometry needs — display, width, height, the
+  // margins, paddings and borders — do not inherit. The ones that do are the next layer's: `direction`,
+  // `font-size`, `line-height`, `color`. The corpus already has a document that turns on it —
+  // `block-in-inline-empty-002` is `empty-001` with `direction: rtl` on the `<body>`, and the span two
+  // levels down is laid out right to left because of it, which puts the inline's edge fragment BEFORE
+  // the block instead of after.
+  //
+  // Adding it means resolving styles top-down with the parent's computed values in hand, rather than
+  // per element from the hit list. That is a change of shape, which is why it is written down here
+  // instead of being bolted on: `resolve` takes a list of declarations and knows nothing about where
+  // the element is.
   let resolve = fn (hs: hit list) -> fn (tag: str) ->
     let get = fn (p: str) -> winner hs p in
     // A longhand beats the shorthand it belongs to when both are present, which is only right
