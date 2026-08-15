@@ -47,6 +47,23 @@ module Layout {
     d == "block" || d == "table" || d == "table-cell" || d == "table-row"
     || d == "table-row-group" || d == "table-caption";
 
+  // The same style with its HORIZONTAL edges removed, and only those. The vertical ones do not belong
+  // to the block piece either, and taking them out makes the block land at the right y while making the
+  // inline's own box shorter — and the inline is already short of the 49 the split produces. Neither
+  // choice moves the gate; this one leaves each box individually closer to the browser, which is the
+  // tie-break when the count cannot decide.
+  //
+  // The same style with its horizontal edges removed. Written out because a record here is replaced
+  // whole, and the alternative — a flag threaded into `_block` — would put the special case in the
+  // general path instead of at the one call site that needs it.
+  let _no_h_edges = fn (st: sty) ->
+    sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
+          overflow = st.overflow,
+          w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
+          mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
+          pt = st.pt, pr = 0, pb = st.pb, pl = 0,
+          bt = st.bt, br = 0, bb = st.bb, bl = 0 };
+
   let _shift = fn (bs: box list) -> fn (dx: int) -> fn (dy: int) ->
     list_map bs (fn (b: box) ->
       box { tag = b.tag, x = b.x + dx, y = b.y + dy, w = b.w, h = b.h });
@@ -367,7 +384,12 @@ module Layout {
           // time — note 166's square, and here worse than one: it did not finish in ten minutes. The
           // walk that was happening anyway reports what it met, and only the head is redone.
           if saw then
-            let (fbs, fh, fmt2, fmb2) = _block f ua author ancestors tag attrs kids cbw st in
+            // The block piece of a split is a SIBLING of the inline pieces, not a child of the inline —
+            // so the inline's horizontal padding and borders do not narrow it. Laying the whole element
+            // out as a block keeps those edges and takes ten pixels off the block inside it, which is
+            // the one part of the substitution that can be corrected without doing the split.
+            let (fbs, fh, fmt2, fmb2) =
+              _block f ua author ancestors tag attrs kids cbw (_no_h_edges st) in
             let top = y + _collapse open_mb fmt2 in
             _stack f ua author ancestors rest cbw (top + fh) fmb2 swallow_first
                    (if not seen then fmt2 else first_mt) true (top + fh) fs
