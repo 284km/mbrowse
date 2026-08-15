@@ -490,7 +490,25 @@ module Style {
         let (t, r, b, ll) = _sides (get short) in
         if which == 0 then t else if which == 1 then r
         else if which == 2 then b else ll in
-    let len = fn (v: str) -> if v == "" then 0 else let q = px_of v in if q < 0 then 0 else q in
+    // One name, two questions, met again. A negative PADDING is not a value the property accepts: the
+    // declaration is invalid and the initial value stands, which is what clamping at zero gives. A
+    // negative MARGIN is ordinary — it pulls the next box up over this one — and clamping it dropped
+    // every one of them silently. Twelve documents in the corpus set one.
+    //
+    // `px_of` answers -2 for "not a length at all", which is not a negative margin and has to be told
+    // apart from one before the sign can be believed. `margin: auto` arrives that way.
+    let plen = fn (v: str) -> if v == "" then 0 else let q = px_of v in if q < 0 then 0 else q in
+    //
+    // And the test has to be on the STRING, not on what `px_of` answered. Its two sentinels, -1 for
+    // `auto` and -2 for a percentage, live inside the range of a value that may now be negative: a
+    // sentinel stops being a sentinel the moment the range it hid in widens. Reading -1 back as a
+    // number moved four documents a pixel to the left, which is `margin-left: auto` arriving as a
+    // one-pixel negative margin.
+    let mlen = fn (v: str) ->
+      if v == "" then 0
+      else
+        let lv = to_lower v in
+        if lv == "auto" || str_index_of lv "%" >= 0 then 0 else px_of v in
     let bw = fn (which: int) ->
       let one = get ("border-" ++ (if which == 0 then "top" else if which == 1 then "right"
                                    else if which == 2 then "bottom" else "left")) in
@@ -534,14 +552,14 @@ module Style {
           else let q = px_of hv in if q == 0 - 2 then 0 - 1 else q,
       w_pct = if wv == "" then 0 - 1 else pct_of wv,
       h_pct = if hv == "" then 0 - 1 else pct_of hv,
-      mt = len (side "margin" "margin-top" 0),
-      mr = len (side "margin" "margin-right" 1),
-      mb = len (side "margin" "margin-bottom" 2),
-      ml = len (side "margin" "margin-left" 3),
-      pt = len (side "padding" "padding-top" 0),
-      pr = len (side "padding" "padding-right" 1),
-      pb = len (side "padding" "padding-bottom" 2),
-      pl = len (side "padding" "padding-left" 3),
+      mt = mlen (side "margin" "margin-top" 0),
+      mr = mlen (side "margin" "margin-right" 1),
+      mb = mlen (side "margin" "margin-bottom" 2),
+      ml = mlen (side "margin" "margin-left" 3),
+      pt = plen (side "padding" "padding-top" 0),
+      pr = plen (side "padding" "padding-right" 1),
+      pb = plen (side "padding" "padding-bottom" 2),
+      pl = plen (side "padding" "padding-left" 3),
       bt = bw 0, br = bw 1, bb = bw 2, bl = bw 3
     };
 }

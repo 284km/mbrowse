@@ -72,7 +72,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "layout_check: no mere — set MERE=..." >&2; exit 1; }
 DATA="$ROOT/test/data/layout"
-EXPECT_PASS=${EXPECT_PASS:-175}
+EXPECT_PASS=${EXPECT_PASS:-186}
 
 T="${TMPDIR:-/tmp}/mbrowse_layout.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 

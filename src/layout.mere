@@ -279,6 +279,18 @@ module Layout {
           // element after its own children in document order, which the box-sequence number sees.
           // An inline element's own padding and borders take room ON the line.
           let est = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") in
+          // `<br>` ends the line. It is the one element whose whole effect is on line breaking, so it
+          // cannot come out of the cascade — there is no property that says "break here" — and it was
+          // missing entirely: `Test<br/>Test` came out one line of two words rather than two lines.
+          //
+          // Its own box is at the cursor and is zero wide and one line tall, which is what the browser
+          // reports for it. At the CURSOR and not past a pending space: a space before a break is at
+          // the end of a line, and a line's trailing white space is removed.
+          if to_lower tag == "br" then
+            walk rest 0 (line + 1) false saw false false fcur (if x > maxx then x else maxx)
+              (Cons (box { tag = "br", x = Font.scale f x size, y = line * lh, w = 0, h = lh,
+                           pinned = false }, acc))
+          else
           if est.float_ == "left" || est.float_ == "right" then
             // Beside the line, not on it: it does not move the cursor, does not make the line exist, and
             // its own box goes down here so that it lands in document order.
