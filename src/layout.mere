@@ -474,7 +474,11 @@ module Layout {
                 let uh = (if pre_h > 0 then st.bt else 0) + pre_h + bh + post_h
                          + (if post_h > 0 then st.bb else 0) in
                 let adv = pre_h + bt2 + bh + bb2 + post_h in
-                let uy = top - (if pre_h > 0 then st.bt else 0) in
+                // The union starts at the first fragment's border box when there is one, and at the
+                // BLOCK's border box when there is not — which is past the block's top margin, because
+                // a margin is space around a fragment and not part of one. Generalising the pieces lost
+                // that second case and put four documents ten pixels high.
+                let uy = if pre_h > 0 then top - st.bt else top + bt2 in
                 let by = top + pre_h + bt2 in
                 let me = box { tag = to_lower tag, x = 0, y = uy, w = cbw, h = uh } in
                 _stack f ua author ancestors rest cbw (top + adv) 0 swallow_first
