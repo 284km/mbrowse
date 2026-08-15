@@ -101,7 +101,7 @@ wrong direction for a gate to move.
 ## Layout, and its gate before it
 
 ```
-sh scripts/layout_check.sh        # geometry: 84 of 126, box sequence: 126 of 126
+sh scripts/layout_check.sh        # geometry: 107 of 126, box sequence: 126 of 126
 ```
 
 The gate exists and the engine does not, which is the same order the CSS corpus arrived in. Both
@@ -119,25 +119,16 @@ running later, for what geometry does not check: colour, stacking, and where the
 
 `src/style.mere` is the UA stylesheet, the selectors and the cascade; `src/layout.mere` is normal flow
 with the box model, collapsing margins, inline formatting, tables, floats and out-of-flow boxes.
-**84 of the 126 pass**, and the **block-in-inline split** is in for the shape the corpus has: an inline
-element containing a block-level box is cut into a piece before it, the block, and a piece after; the
-block is laid out at the containing block's full width with its own style, because it is a sibling of the
-inline's pieces rather than a child; and the element is reported as the union of its fragments.
+**107 of the 126 pass.** Normal flow with the box model and collapsing margins; inline formatting with
+line breaking measured in font units; tables with shrink-to-fit columns and border-spacing; floats, which
+escape upward until a box contains them; out-of-flow boxes, with `left` and `top` when they say
+something; percentage heights, which resolve against the containing block or against nothing; `direction`,
+inherited by walking the ancestor chain; and the **block-in-inline split**, transcribed from
+`getClientRects` rather than derived — the expectations record the union of an element's fragments, and a
+union does not say what it is a union of.
 
-That was transcribed rather than derived. The expectations record the union, and a union does not say
-what it is a union of — `getClientRects` does, where `getBoundingClientRect` shows only the total. It
-answers three fragments for the canonical case, and the surprising one is the middle: **the block is
-itself a fragment of the inline**, which is why the height could not be reached by putting the block
-beside or inside anything.
-
-The 42 that remain have no dominant cause — the largest group is three documents, and they do not share
-one.
-
-The order of that work was found by re-deriving the failures from the gate every time rather than keeping
-a list, and the list was wrong four times running: it named `font-size`, which **not one of the 126
-documents sets**; floats, which were a tenth; anonymous boxes, which were most of it; and floats beside
-each other, where the case wanted a formatting context dodging one float. Every guess was what a layout
-engine usually needs. Every answer was in the file that was already open.
+The 19 that remain are each their own feature: a split that has to recurse when the block is nested two
+inlines deep, `clear`, auto margins, `inline-block`, and a table's row-group heights.
 
 Two numbers are reported, because they fail for different reasons. The **box sequence** — which
 elements generate boxes, in what order — is the parser and the box tree, and it is already right
