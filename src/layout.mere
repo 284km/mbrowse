@@ -440,15 +440,33 @@ module Layout {
                 // none, whitespace after a block collapses to nothing and there is no box; with some,
                 // the fragment is a line tall plus both borders and its TOP border overlaps the block,
                 // which is why the union gains only `a line + the bottom border`.
-                let has_edges = st.bt + st.bb + st.bl + st.br + st.pl + st.pr > 0 in
-                // And the union starts at the block's BORDER box, not its margin box: a margin is
-                // space around the fragment and not part of it.
-                let uh = bh + (if has_edges then lh + st.bb else 0) in
-                let adv = bt2 + bh + bb2 + (if has_edges then lh else 0) in
-                let me = box { tag = to_lower tag, x = 0, y = top + bt2, w = cbw, h = uh } in
+                // Which side the element's edges are on decides where its fragments go, and the
+                // direction decides which side is the START. An edge at the start makes a fragment
+                // BEFORE the block; one at the end makes a fragment after. So `padding-right` is a
+                // trailing fragment in a left-to-right inline and a leading one in a right-to-left one,
+                // and `padding-left` is the other way about — which is three of the corpus's four
+                // `block-in-inline-empty` documents disagreeing with each other until the rule is put
+                // this way round rather than as "rtl swaps the order".
+                let rtl2 = match ancestors with
+                           | Nil -> false
+                           | Cons (par, up) ->
+                             Style.inherited ua author "direction" "ltr" par up == "rtl" in
+                let start_edge = if rtl2 then st.br + st.pr else st.bl + st.pl in
+                let end_edge = if rtl2 then st.bl + st.pl else st.br + st.pr in
+                let pre = start_edge > 0 in
+                let post = end_edge > 0 in
+                // A fragment is a line tall plus both borders, and its border overlaps the block on the
+                // side it touches — so a leading one adds a border and a line above, and a trailing one
+                // a line and a border below.
+                let uh = (if pre then st.bt + lh else 0) + bh
+                         + (if post then lh + st.bb else 0) in
+                let adv = (if pre then lh else 0) + bt2 + bh + bb2 + (if post then lh else 0) in
+                let uy = if pre then top - st.bt else top + bt2 in
+                let by = (if pre then top + lh else top) + bt2 in
+                let me = box { tag = to_lower tag, x = 0, y = uy, w = cbw, h = uh } in
                 _stack f ua author ancestors rest cbw (top + adv) 0 swallow_first
                        (if not seen then 0 else first_mt) true (top + adv) fs
-                       (list_append (list_rev (_shift bbs 0 (top + bt2))) (Cons (me, acc)))
+                       (list_append (list_rev (_shift bbs 0 by)) (Cons (me, acc)))
               | _ -> _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom
                             fs acc
           else if saw then
