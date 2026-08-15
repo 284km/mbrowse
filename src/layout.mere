@@ -686,6 +686,14 @@ module Layout {
           let ctx_rtl = match ancestors with
                         | Nil -> false
                         | Cons (c, up) -> Style.inherited ua author "direction" "ltr" c up == "rtl" in
+          // A run that begins with text can hold a block too, inside an inline element two levels down —
+          // `<span>First <span>line <span display:block>` is one of the corpus's. This branch does NOT
+          // retry the way the element branch does, and the reason is worth recording rather than
+          // rediscovering: shortening the run to the text in front of the first element was tried, and it
+          // splits a line that should not be split. The browser keeps `First` and `line` on ONE line and
+          // puts the block below it, so the anonymous block has to contain the text AND the leading
+          // fragment of the inline beside it. That is the recursive split, and nothing short of it gets
+          // those two words onto the same line.
           let (ibs, ilines, _saw2) = _inline f ua author ancestors run cbw font_size ctx_rtl in
           let top = y + _collapse open_mb 0 in
           let h = ilines * Font.line_height f font_size in
