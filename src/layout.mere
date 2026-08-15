@@ -206,7 +206,10 @@ module Layout {
           // An element's box starts at its first GLYPH, not at the cursor. A space owed from before it
           // belongs to the text outside, so counting the cursor made every inline element four pixels
           // too early and five too wide — which reads as a rounding error and is a space.
-          let sx = if gap then x + space else x in
+          // ...but only when there is something before it on the line. White space at the START of a
+          // line box is removed, so a space owed at x = 0 is owed to nothing: adding it there put every
+          // inline element four pixels in from the edge it should have started at.
+          let sx = if gap && x > 0 then x + space else x in
           let sl = line in
           // The children are walked into a FRESH accumulator so the element's own box can be placed
           // in front of them afterwards. Consing it onto the same accumulator put a nested inline
