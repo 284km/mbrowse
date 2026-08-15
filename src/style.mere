@@ -502,7 +502,16 @@ module Style {
       else 0 in
     // Not named in either sheet means `inline`, which is the initial value and the right answer
     // for every tag the UA sheet does not mention.
-    let disp = let d = get "display" in if d != "" then to_lower d else "inline" in
+    // Being taken out of flow BLOCKIFIES a box: an absolutely positioned or floated `display: inline`
+    // computes to `block`. It has to — an inline box is a run on a line, and a box that is not in the
+    // flow has no line to be a run on, so `width` and `height` would have nothing to apply to.
+    let pos0 = let v = to_lower (get "position") in if v == "" then "static" else v in
+    let flo0 = let v = to_lower (get "float") in if v == "" then "none" else v in
+    let disp0 = let d = get "display" in if d != "" then to_lower d else "inline" in
+    let disp = if disp0 == "none" then "none"
+               else if pos0 == "absolute" || pos0 == "fixed" || flo0 != "none" then
+                 (if disp0 == "inline" || disp0 == "inline-block" then "block" else disp0)
+               else disp0 in
     let wv = get "width" in
     let hv = get "height" in
     sty {
