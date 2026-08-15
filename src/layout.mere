@@ -286,8 +286,20 @@ module Layout {
           else
           let lead = Font.text_units_of_px f (est.bl + est.pl) size in
           let trail = Font.text_units_of_px f (est.pr + est.br) size in
-          let (inner, x2u, l2, g2, saw2, fcur2, mx2) = walk ks (x + lead) line gap saw placed
-                                                          (online || lead + trail > 0) fcur maxx Nil in
+          // The children start where the BOX starts — past the space owed from before it and past this
+          // element's own left edge. Starting them at the plain cursor made the box a space narrower
+          // than its own border: five pixels of border reported as one.
+          //
+          // An element that consumes nothing still has to hand the space back, which is why the gap is
+          // restored afterwards rather than passed in. Swallowing it cost eleven documents once.
+          let (inner, x2u, l2, g2a, saw2, fcur2, mx2) = walk ks (sx + lead) line false saw placed
+                                                           (online || lead + trail > 0) fcur maxx Nil in
+          let g2 = if x2u == sx + lead then gap else g2a in
+          // Still not right for `block-in-inline-nested-002-ref`, and the residue is one space: the
+          // browser puts an inline element four pixels to the left of where this does, once, at the
+          // boundary between a text run and the element after it. The width is right now and the offset
+          // is not, which means the space is being counted on both sides of the same boundary somewhere
+          // — measured, not yet located.
           let x2 = x2u + trail in
           // The union of the element's fragments, which for one line is where it started to where it
           // ended. A box spanning two lines is reported by the browser as the whole span from the
