@@ -32,24 +32,19 @@
 # whole time. A corpus does not only tell you whether you are right. It tells you what to do
 # next, and it is the only thing here that can.
 #
-# The taxonomy, re-derived from the failures at 175 of 228. **It is re-derived every time and
+# The taxonomy, re-derived from the failures at 186 of 228 with all 228 box sequences right. **It is re-derived every time and
 # never carried forward**, because it has been wrong four times: it once named `font-size`,
 # which not one document sets; then floats, which were a tenth of it; then anonymous boxes; then
 # floats beside each other, which was really a formatting context dodging one.
 #
-#   32  `display: inline-block` and `display: inline-table` are laid out as block-level, so they
-#       get a line of their own instead of sharing one. This is every shape of the same defect:
-#       the box below them starts 16px too low because it was pushed to the next line, the
-#       paragraph around them is a line too tall or too short, and where the content is a table
-#       cell the children do not come out at all — which is the 8 documents whose box SEQUENCE is
-#       wrong, the more fundamental of the two numbers.
-#    4  the block-in-inline split, where an inline element that contains a block reports the
-#       fragments around it. The remaining four want a fragment to be taller than its line.
-#    9  a `<div>` whose height or width is wrong on its own — shrink-to-fit and percentage
-#       heights, mostly in the `blocks-` family that came in with this widening.
-#    3  a line box's vertical extent: `inlines-002`, `inlines-020` and one more want a line taller
-#       than the strut, which is `vertical-align` and the leading above and below it.
-#    5  the rest, one document each.
+#   14  `display: inline-block` and `display: inline-table` are laid out as block-level, so they
+#       get a line of their own instead of sharing one. Every shape of one defect.
+#    7  a `<div>` whose height is wrong on its own, and 4 more whose width is — shrink-to-fit and
+#       percentage heights, mostly in the `blocks-` family.
+#    8  `vertical-align`, which is what the table-cell documents want now that their cells have
+#       contents: `valign="bottom"` puts a paragraph at the bottom of a 200px cell.
+#    4  the block-in-inline split, where a fragment wants to be taller than its line.
+#    9  the rest, one or two documents each.
 #
 # **Both sides measure with the same font, and they have to.** The expectations were first taken with
 # whatever font the browser defaulted to — on that machine a system font that cannot be

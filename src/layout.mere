@@ -920,33 +920,71 @@ module Layout {
           | Cons (r, rest) ->
             let (rt, _ra, rk, _rs) = r in
             let cells = _kids_of f ua author anc rk in
-            // Every cell in a row is as tall as the tallest, which is what makes a row a row.
-            let rec cell_h = fn (cs: (str * attr list * node list * sty) list) -> fn (us: int list) ->
-                             fn (best: int) ->
+            // A cell is a block container and its contents are LAID OUT, not estimated. They used to be
+            // estimated — a line count over the cell's text — which gave a plausible height for a cell
+            // holding one paragraph and no boxes at all for whatever was inside it. Eight documents in
+            // the corpus put something in a cell and all eight had the wrong box SEQUENCE, the more
+            // fundamental of the two numbers: the children were not there to be measured, so a plausible
+            // height was the best the estimate could ever have been.
+            //
+            // Laid out once and kept. The height decides the row and the boxes are the output; asking
+            // twice would lay every cell out twice for one answer. `_block` sizes a border box against
+            // the containing block it is handed, so the column's pixel width goes in and the cell comes
+            // back exactly as wide as the table decided.
+            //
+            // The width it is laid out at is not always the width it is REPORTED at, and the reason is
+            // the one this file has met three times before: round where the answer is read, not where it
+            // is computed. A column is as wide as the widest content in it, so that content fits in the
+            // column BY CONSTRUCTION — and a column whose true width is 73.4px is reported as 73, which
+            // the text no longer fits in. Handing the rounded number back to line breaking wrapped
+            // `Filler Text` onto two lines inside a column that had just been measured from it.
+            //
+            // So the box is reported at the rounded width and laid out at the width rounded UP, which is
+            // the smallest integer that keeps the property the column was built on. They differ by at
+            // most a pixel and only where the rounding went down.
+            let rec lay_cells = fn (cs: (str * attr list * node list * sty) list) ->
+                                fn (ws: int list) -> fn (us: int list) ->
+                                fn (out: (box list * int) list) ->
               match cs with
-              | Nil -> best
+              | Nil -> list_rev out
               | Cons (c, more2) ->
-                let (_ct, _ca, ck, cst) = c in
-                let cap = match us with Nil -> 0 | Cons (u, _r) -> u in
-                let txt = _collapse_ws (_inline_text ck "") in
-                let n = if txt == "" then 0 else _lines_in_units f txt cap in
-                let h = (if cst.h >= 0 then cst.h else n * lh) + cst.pt + cst.pb + cst.bt + cst.bb in
-                cell_h more2 (match us with Nil -> Nil | Cons (_u, rr) -> rr)
-                       (if h > best then h else best) in
-            let rh = cell_h cells cols 0 in
-            let rec place = fn (cs: (str * attr list * node list * sty) list) -> fn (ws: int list) ->
-                            fn (x: int) -> fn (a2: box list) ->
-              match cs with
-              | Nil -> a2
-              | Cons (c, more2) ->
-                let (ct, _ca, _ck, _cs) = c in
+                let (ct, ca, ck, cst) = c in
                 let cw2 = match ws with Nil -> 0 | Cons (w, _r) -> w in
+                let cu = match us with Nil -> 0 | Cons (u, _r) -> u in
+                let up = (cu * font_size + f.upem - 1) / f.upem + pad0 in
+                let (cbs, ch, _m1, _m2, _fe) =
+                  _block f ua author anc ct ca ck (if up > cw2 then up else cw2) (0 - 1) cst in
+                lay_cells more2 (match ws with Nil -> Nil | Cons (_w, rr) -> rr)
+                          (match us with Nil -> Nil | Cons (_u, rr2) -> rr2)
+                          (Cons ((cbs, ch), out)) in
+            let laid = lay_cells cells px_cols cols Nil in
+            // Every cell in a row is as tall as the tallest, which is what makes a row a row.
+            let rh = let rec go = fn (ls: (box list * int) list) -> fn (best: int) ->
+                       match ls with
+                       | Nil -> best
+                       | Cons (l, more2) ->
+                         let (_b2, h2) = l in go more2 (if h2 > best then h2 else best) in
+                     go laid 0 in
+            let rec place = fn (ls: (box list * int) list) -> fn (ws: int list) ->
+                            fn (x: int) -> fn (a2: box list) ->
+              match ls with
+              | Nil -> a2
+              | Cons (l, more2) ->
+                let (cbs, _ch) = l in
+                let cw2 = match ws with Nil -> 0 | Cons (w, _r) -> w in
+                // The cell's own box takes the ROW's height and not the height it was laid out at —
+                // that is the whole of what a row is. Its contents keep theirs and move with it.
+                let cell_bs = match cbs with
+                              | Nil -> Nil
+                              | Cons (me, inside) ->
+                                Cons (box { tag = me.tag, x = x, y = ry, w = cw2, h = rh,
+                                            pinned = false },
+                                      _shift inside x ry) in
                 place more2 (match ws with Nil -> Nil | Cons (_w, rr) -> rr) (x + cw2 + sp)
-                      (list_append a2
-                         (Cons (box { tag = to_lower ct, x = x, y = ry, w = cw2, h = rh, pinned = false }, Nil))) in
+                      (list_append a2 cell_bs) in
             let row_box = box { tag = to_lower rt, x = sp, y = ry, w = sum_cols, h = rh, pinned = false } in
             lay_rows rest (ry + rh + sp)
-                     (place cells px_cols sp (list_append a (Cons (row_box, Nil)))) in
+                     (place laid px_cols sp (list_append a (Cons (row_box, Nil)))) in
         let gy = y + sp in
         let (a2, gy2) = lay_rows (rows_of g) gy acc in
         // The group's own box is placed before its rows, so it is spliced in rather than appended: its
