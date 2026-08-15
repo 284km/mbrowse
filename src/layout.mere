@@ -423,7 +423,12 @@ module Layout {
         match n with
         | Element (tag, attrs, _k) ->
           let st = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") in
-          if _is_block_level st.display then (list_rev before, Cons (n, Nil), rest)
+          // Out of flow is not a split point. A float's display is blockified — it has to be, or its
+          // width and height would have nothing to apply to — and that made the splitter cut at it and
+          // lay it out as a block in the sequence, which is a line taller than a float ever is.
+          if st.float_ != "none" || st.position == "absolute" || st.position == "fixed" then
+            go rest (Cons (n, before))
+          else if _is_block_level st.display then (list_rev before, Cons (n, Nil), rest)
           else go rest (Cons (n, before))
         | _ -> go rest (Cons (n, before)) in
     go ns Nil;
@@ -530,83 +535,63 @@ module Layout {
                                               font_size piece_rtl in
           let (abs_, alines, as_blk) = _inline f ua author (Cons (e, ancestors)) spl_after cbw
                                                font_size piece_rtl in
-          let simple_split =
-            saw && not ps_blk && not as_blk
-            && (match spl_blk with Cons (_b, _r) -> true | Nil -> false) in
-          if simple_split then
-            match spl_blk with
-            | Nil -> _stack f ua author ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom
-                            fs acc
-            | Cons (bn, _r) ->
-              match bn with
-              | Element (btag, battrs, bkids) ->
-                let bst = style_of ua author (_elem_of btag battrs) (Cons (e, ancestors))
-                            (_attr battrs "style") in
-                // The block is a sibling of the inline's pieces, so it is laid out at the containing
-                // block's full width with its OWN style — not the inline's.
-                // The block piece's ancestors do NOT include the inline it came out of. An inline box
-                // is not a containing block for a block-level box, so the direction that places this one
-                // is the enclosing BLOCK's — `<div ltr><span rtl><div block>` puts the block left to
-                // right, and reading the span's direction puts it ten pixels the other way.
-                let (bbs, bh, bmt, bmb, _besc) =
-                  _block f ua author ancestors btag battrs bkids cbw cbh bst in
-                let top = y + _collapse open_mb 0 in
-                let lh = Font.line_height f font_size in
-                // Two heights, and they are not the same one. The element's BOX is the union of its
-                // fragments and includes the bottom border of the piece after the block. The FLOW
-                // advances only past the content — an inline's border hangs out below its line box and
-                // does not make its parent taller, which is the same thing a float does and the reason
-                // the two numbers had to be separated here as well.
-                // The block piece keeps its own margins. They are not the inline's to collapse with —
-                // the pieces on either side are inline boxes and a margin does not collapse through
-                // one — so they simply take room, above and below.
-                let bt2 = if bmt > 0 then bmt else 0 in
-                let bb2 = if bmb > 0 then bmb else 0 in
-                // The piece after the block is a fragment only if the element has edges of its own. With
-                // none, whitespace after a block collapses to nothing and there is no box; with some,
-                // the fragment is a line tall plus both borders and its TOP border overlaps the block,
-                // which is why the union gains only `a line + the bottom border`.
-                // Which side the element's edges are on decides where its fragments go, and the
-                // direction decides which side is the START. An edge at the start makes a fragment
-                // BEFORE the block; one at the end makes a fragment after. So `padding-right` is a
-                // trailing fragment in a left-to-right inline and a leading one in a right-to-left one,
-                // and `padding-left` is the other way about — which is three of the corpus's four
-                // `block-in-inline-empty` documents disagreeing with each other until the rule is put
-                // this way round rather than as "rtl swaps the order".
-                let rtl2 = match ancestors with
-                           | Nil -> false
-                           | Cons (par, up) ->
-                             Style.inherited ua author "direction" "ltr" par up == "rtl" in
-                let start_edge = if rtl2 then st.br + st.pr else st.bl + st.pl in
-                let end_edge = if rtl2 then st.bl + st.pl else st.br + st.pr in
-                let pre_n = if plines > 0 then plines else (if start_edge > 0 then 1 else 0) in
-                let post_n = if alines > 0 then alines else (if end_edge > 0 then 1 else 0) in
-                let pre_h = pre_n * lh in
-                let post_h = post_n * lh in
-                // A fragment's border overlaps the block on the side it touches, so the union gains a
-                // border only where there is a fragment to carry one.
-                let uh = (if pre_h > 0 then st.bt else 0) + pre_h + bh + post_h
-                         + (if post_h > 0 then st.bb else 0) in
-                let adv = pre_h + bt2 + bh + bb2 + post_h in
-                // The union starts at the first fragment's border box when there is one, and at the
-                // BLOCK's border box when there is not — which is past the block's top margin, because
-                // a margin is space around a fragment and not part of one. Generalising the pieces lost
-                // that second case and put four documents ten pixels high.
-                let uy = if pre_h > 0 then top - st.bt else top + bt2 in
-                let by = top + pre_h + bt2 in
-                // Relative positioning moves the whole split — the union box, the fragments and the
-                // block piece — and leaves the flow where it was, which is what it does everywhere else.
-                let sdx = if st.position == "relative" && st.left >= 0 then st.left else 0 in
-                let sdy = if st.position == "relative" && st.top >= 0 then st.top else 0 in
-                let me = box { tag = to_lower tag, x = sdx, y = uy + sdy, w = cbw, h = uh } in
-                _stack f ua author ancestors rest cbw cbh (top + adv) 0 swallow_first
-                       (if not seen then 0 else first_mt) true (top + adv) fs
-                       (list_append (list_rev (list_append (_shift pbs sdx (top + sdy))
-                                       (list_append (_shift bbs sdx (by + sdy))
-                                          (_shift abs_ sdx (by + bh + bb2 + sdy)))))
-                          (Cons (me, acc)))
-              | _ -> _stack f ua author ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom
-                            fs acc
+          // The general split. An inline element with block-level boxes in it becomes a sequence of
+          // pieces and blocks: fragment, block, fragment, block, ..., fragment. Each fragment is a line
+          // box carrying the element's edge on the side it is on — the FIRST fragment has the start edge
+          // and the LAST has the end edge, and the ones between are continuations with neither. Each
+          // block is laid out at the containing block's full width with its own style, because it is a
+          // sibling of the fragments and not a child of the inline.
+          //
+          // Three numbers come out and they are all different: where the union starts, where it ends, and
+          // where the FLOW gets to. The union is the box the browser reports; the flow is what the next
+          // sibling is placed after; and an inline's border hangs below its line without making its
+          // parent taller, which is why the last two are not the same.
+          let has_any_block = saw && (match spl_blk with Cons (_b, _r) -> true | Nil -> false) in
+          if has_any_block then
+            let start_edge = if piece_rtl then st.br + st.pr else st.bl + st.pl in
+            let end_edge = if piece_rtl then st.bl + st.pl else st.br + st.pr in
+            let lh = Font.line_height f font_size in
+            let top = y + _collapse open_mb 0 in
+            let rec pieces = fn (ns2: node list) -> fn (yy: int) -> fn (isfirst: bool) ->
+                             fn (acc2: box list) -> fn (uy0: int) -> fn (lastb: int) ->
+              let (bef, blk, aft) = _split_at_block ua author (Cons (e, ancestors)) ns2 in
+              let (pbs2, plines2, _p2) =
+                _inline f ua author (Cons (e, ancestors)) bef cbw font_size piece_rtl in
+              let has_blk = match blk with Cons (_b2, _r2) -> true | Nil -> false in
+              // A middle fragment carries no edge: the element's two edges are at its two ends.
+              let edge = if isfirst then start_edge else (if has_blk then 0 else end_edge) in
+              let pn = if plines2 > 0 then plines2 else (if edge > 0 then 1 else 0) in
+              let ph = pn * lh in
+              let uy1 = if isfirst then (if ph > 0 then yy - st.bt else yy) else uy0 in
+              let acc3 = list_append acc2 (_shift pbs2 0 yy) in
+              let y1 = yy + ph in
+              let lastb1 = if ph > 0 then y1 else lastb in
+              match blk with
+              | Nil ->
+                // The union ends at the last fragment's border, or at the last block's border when the
+                // element ended with no fragment at all — a margin below a block is space around it and
+                // not part of the element.
+                (acc3, y1, (if ph > 0 then y1 + st.bb else lastb1), uy1)
+              | Cons (bn, _r3) ->
+                match bn with
+                | Element (btag, battrs, bkids) ->
+                  let bst = style_of ua author (_elem_of btag battrs) (Cons (e, ancestors))
+                              (_attr battrs "style") in
+                  let (bbs2, bh2, bmt2, bmb2, _be2) =
+                    _block f ua author ancestors btag battrs bkids cbw cbh bst in
+                  let bt3 = if bmt2 > 0 then bmt2 else 0 in
+                  let bb3 = if bmb2 > 0 then bmb2 else 0 in
+                  let uy2 = if isfirst && ph == 0 then yy + bt3 else uy1 in
+                  pieces aft (y1 + bt3 + bh2 + bb3) false
+                         (list_append acc3 (_shift bbs2 0 (y1 + bt3))) uy2 (y1 + bt3 + bh2)
+                | _ -> (acc3, y1, lastb1, uy1) in
+            let (allbs, yend, ubot, uy) = pieces kids top true Nil top top in
+            let sdx = if st.position == "relative" && st.left >= 0 then st.left else 0 in
+            let sdy = if st.position == "relative" && st.top >= 0 then st.top else 0 in
+            let me = box { tag = to_lower tag, x = sdx, y = uy + sdy, w = cbw, h = ubot - uy } in
+            _stack f ua author ancestors rest cbw cbh yend 0 swallow_first
+                   (if not seen then 0 else first_mt) true yend fs
+                   (list_append (list_rev (_shift allbs sdx sdy)) (Cons (me, acc)))
           else if saw then
             // The split this replaces, measured rather than guessed. `getClientRects` shows the
             // FRAGMENTS where `getBoundingClientRect` only shows their union, and for
