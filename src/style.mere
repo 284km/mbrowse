@@ -21,6 +21,9 @@ type sty = {
   // Where an atomic inline-level box sits on its line. Only a layout question for the boxes that
   // are ON a line at all, which is why it lives beside `display` and not beside the box model.
   valign: str,
+  // Whether `width` and `height` state the CONTENT box or the BORDER box. One property that changes
+  // what two others mean, which is why it is a field and not a special case at the one call site.
+  bsz: str,
   left: int, top: int,                 // -1 when the property said nothing
   w: int, h: int,                      // -1 for auto
   w_pct: int, h_pct: int,              // -1 when not a percentage
@@ -549,6 +552,7 @@ module Style {
       // same thing and is NOT read here — presentational attributes are not mapped to style at all
       // yet, which is a separate gap the corpus also names.
       valign = let v = to_lower (get "vertical-align") in if v == "" then "baseline" else v,
+      bsz = let v = to_lower (get "box-sizing") in if v == "" then "content-box" else v,
       // `auto` and absent are the same answer here — both mean "the box goes where it would have gone",
       // which is the static position, and only a length says otherwise.
       left = let v = get "left" in if v == "" || to_lower v == "auto" then 0 - 1 else px_of v,

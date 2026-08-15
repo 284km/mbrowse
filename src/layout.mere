@@ -71,6 +71,9 @@ module Layout {
   let _with_width = fn (st: sty) -> fn (w: int) ->
     sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
           overflow = st.overflow, valign = st.valign, left = st.left, top = st.top,
+          // A shrink-to-fit width is a CONTENT width by construction — it was measured from the
+          // contents — so the box it is put into has to be told to read it as one.
+          bsz = "content-box",
           w = w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
           mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = st.pr, pb = st.pb, pl = st.pl,
@@ -79,7 +82,7 @@ module Layout {
   let _no_h_edges = fn (st: sty) ->
     sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
           overflow = st.overflow, valign = st.valign, left = st.left, top = st.top,
-          w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
+          bsz = st.bsz, w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
           mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = 0, pb = st.pb, pl = 0,
           bt = st.bt, br = 0, bb = st.bb, bl = 0 };
@@ -1165,10 +1168,18 @@ module Layout {
     // width, so the border box is wider by its own borders and padding — that difference is what
     // `getBoundingClientRect` reports and the place a box model is usually wrong.
     let pct = if st.w_pct >= 0 then (cbw * st.w_pct) / 100 else 0 - 1 in
+    // `box-sizing: border-box` makes `width` state the BORDER box, so the borders and padding come out
+    // of the stated number rather than being added to it. It is one property that changes what two
+    // others mean, and a `width: 3em` box with 2em borders on both sides is 64px wide under one reading
+    // and 112 under the other — which is the whole of the difference the corpus reports.
+    let h_edges = st.bl + st.br + st.pl + st.pr in
+    let stated_w = if pct >= 0 then pct else if st.w >= 0 then st.w else 0 - 1 in
     let content_w =
-      if pct >= 0 then pct
-      else if st.w >= 0 then st.w
-      else cbw - st.ml - st.mr - st.bl - st.br - st.pl - st.pr in
+      if stated_w >= 0 then
+        (if st.bsz == "border-box" then
+           (let c = stated_w - h_edges in if c < 0 then 0 else c)
+         else stated_w)
+      else cbw - st.ml - st.mr - h_edges in
     let cw0 = if content_w < 0 then 0 else content_w in
     let e = _elem_of tag attrs in
     let inner_ancestors = Cons (e, ancestors) in
@@ -1261,8 +1272,12 @@ module Layout {
     // from this box's bottom edge. `used` is the cursor and is one margin too far.
     let in_flow_h = if sep_bot then bottom + (if open_mb > 0 then open_mb else 0) else bottom in
     let pct_h = if st.h_pct >= 0 && cbh >= 0 then (cbh * st.h_pct) / 100 else 0 - 1 in
-    let content_h = if pct_h >= 0 then pct_h
-                    else if st.h >= 0 then st.h
+    let v_edges = st.bt + st.bb + st.pt + st.pb in
+    let stated_h = if pct_h >= 0 then pct_h else if st.h >= 0 then st.h else 0 - 1 in
+    let content_h = if stated_h >= 0 then
+                      (if st.bsz == "border-box" then
+                         (let c = stated_h - v_edges in if c < 0 then 0 else c)
+                       else stated_h)
                     else if (makes_bfc || is_root) && fbot > in_flow_h then fbot
                     else in_flow_h in
     let h = st.bt + st.pt + content_h + st.pb + st.bb in
