@@ -87,6 +87,43 @@ module Layout {
           pt = st.pt, pr = 0, pb = st.pb, pl = 0,
           bt = st.bt, br = 0, bb = st.bb, bl = 0 };
 
+  // The `font` shorthand's size and line-height, as `size/line-height`. Both of the properties this
+  // file resolves by name can be written only here — `font: 2em/2 sans-serif` names neither of them —
+  // so the shorthand is picked apart at the two places that ask rather than expanded in the cascade.
+  // Expanding it properly means a shorthand table, which is the right shape and is not what one
+  // declaration is worth.
+  let _font_parts = fn (v: str) ->
+    let rec go = fn (ps: str list) ->
+      match ps with
+      | Nil -> ("", "")
+      | Cons (t, rest) ->
+        let i = str_index_of t "/" in
+        if i >= 0 then (substring t 0 i, substring t (i + 1) (str_len t))
+        // A size with no line-height beside it is still a size, and it is the token before the family.
+        else if str_len t > 0 && ((char_at t 0 >= "0" && char_at t 0 <= "9") || char_at t 0 == ".")
+        then (t, "")
+        else go rest in
+    go (str_split v " ");
+
+  // The font size in pixels, inherited. It was a CONSTANT — one number for the whole document — which
+  // is right for every document that does not set it and silently wrong for every one that does: the
+  // text is measured at the wrong size, so every width, every line break and every line height that
+  // follows from it is wrong together, and they are wrong consistently enough to look deliberate.
+  //
+  // `em` inside the value is still resolved against the ROOT size rather than the parent's, so one
+  // level of nesting is right and two are not. The corpus has one level.
+  let _font_size = fn (ua: prepared list) -> fn (author: prepared list) -> fn (anc: elem list) ->
+    match anc with
+    | Nil -> font_size
+    | Cons (e0, up) ->
+      let v0 = Style.inherited ua author "font-size" "" e0 up in
+      let v = if v0 != "" then v0
+              else let (sz, _lh) = _font_parts (Style.inherited ua author "font" "" e0 up) in sz in
+      if v == "" then font_size
+      else if str_index_of v "%" >= 0 then
+        (let q = Style.pct_of v in if q < 0 then font_size else (font_size * q) / 100)
+      else let q = Style.px_of v in if q <= 0 then font_size else q;
+
   // `line-height`, which is inherited and is not always a length.
   //
   // A BARE NUMBER is a multiplier of the element's own font size, and it inherits as the number rather
@@ -102,7 +139,10 @@ module Layout {
     match anc with
     | Nil -> natural
     | Cons (e0, up) ->
-      let v = Style.inherited ua author "line-height" "normal" e0 up in
+      let v1 = Style.inherited ua author "line-height" "" e0 up in
+      let v = if v1 != "" then v1
+              else let (_sz, l) = _font_parts (Style.inherited ua author "font" "" e0 up) in
+                   if l == "" then "normal" else l in
       if v == "normal" || v == "" then natural
       else if str_index_of v "%" >= 0 then
         (let q = Style.pct_of v in if q < 0 then natural else (q * size) / 100)
@@ -332,7 +372,7 @@ module Layout {
     let rec go = fn (xs: node list) -> fn (best: int) -> fn (run: str) ->
       match xs with
       | Nil ->
-        let w = Font.text_width f (_collapse_ws run) font_size in
+        let w = Font.text_width f (_collapse_ws run) (_font_size ua author anc) in
         if w > best then w else best
       | Cons (n, rest) ->
         match n with
@@ -345,7 +385,7 @@ module Layout {
             let inner = if st.w >= 0 then st.w
                         else _max_content f ua author (Cons (e, anc)) kids in
             let outer = inner + st.ml + st.mr + st.pl + st.pr + st.bl + st.br in
-            let w0 = Font.text_width f (_collapse_ws run) font_size in
+            let w0 = Font.text_width f (_collapse_ws run) (_font_size ua author anc) in
             go rest (if outer > best then (if outer > w0 then outer else w0)
                      else (if w0 > best then w0 else best)) ""
           else go rest best (run ++ _inline_text kids "")
@@ -397,7 +437,8 @@ module Layout {
           let ctx_rtl = match ancestors with
                         | Nil -> false
                         | Cons (c, up) -> Style.inherited ua author "direction" "ltr" c up == "rtl" in
-          let (ibs, ilines, ih, saw) = _inline f ua author ancestors run cbw font_size ctx_rtl in
+          let (ibs, ilines, ih, saw) =
+            _inline f ua author ancestors run cbw (_font_size ua author ancestors) ctx_rtl in
           // An inline element with a block inside it is SPLIT by the standard. This does not split it;
           // it lays that element out as a block instead, which puts the boxes in the right order at the
           // right width and is the closer of the two wrong answers.
@@ -423,9 +464,9 @@ module Layout {
           // already reports whether it met a block, which is the same question in the same words.
           let piece_rtl = Style.inherited ua author "direction" "ltr" e ancestors == "rtl" in
           let (pbs, plines, _pih, ps_blk) = _inline f ua author (Cons (e, ancestors)) spl_before cbw
-                                                    font_size piece_rtl in
+                                                    (_font_size ua author (Cons (e, ancestors))) piece_rtl in
           let (abs_, alines, _aih, as_blk) = _inline f ua author (Cons (e, ancestors)) spl_after cbw
-                                                     font_size piece_rtl in
+                                                     (_font_size ua author (Cons (e, ancestors))) piece_rtl in
           // The general split. An inline element with block-level boxes in it becomes a sequence of
           // pieces and blocks: fragment, block, fragment, block, ..., fragment. Each fragment is a line
           // box carrying the element's edge on the side it is on — the FIRST fragment has the start edge
@@ -441,7 +482,8 @@ module Layout {
           if has_any_block then
             let start_edge = if piece_rtl then st.br + st.pr else st.bl + st.pl in
             let end_edge = if piece_rtl then st.bl + st.pl else st.br + st.pr in
-            let lh = _line_h f ua author (Cons (e, ancestors)) font_size in
+            let lh = _line_h f ua author (Cons (e, ancestors))
+                       (_font_size ua author (Cons (e, ancestors))) in
             let top = y + _collapse open_mb 0 in
             let rec pieces = fn (ns2: node list) -> fn (yy: int) -> fn (isfirst: bool) ->
                              fn (acc2: box list) -> fn (uy0: int) -> fn (lastb: int) ->
@@ -451,7 +493,8 @@ module Layout {
               // the stack, which already knows how to split what is inside it. The inline pass reports
               // that as it goes, so the question costs nothing to ask.
               let (pbs2a, plines2a, _pih2, pblk) =
-                _inline f ua author (Cons (e, ancestors)) bef cbw font_size piece_rtl in
+                _inline f ua author (Cons (e, ancestors)) bef cbw
+                        (_font_size ua author (Cons (e, ancestors))) piece_rtl in
               let (pbs2, plines2) =
                 if not pblk then (pbs2a, plines2a)
                 else
@@ -579,7 +622,8 @@ module Layout {
           // wide, which is its border and no more.
           let fst = if st.w >= 0 || st.w_pct >= 0 then st
                     else _with_width st
-                           (Font.text_width f (_collapse_ws (_inline_text kids "")) font_size) in
+                           (Font.text_width f (_collapse_ws (_inline_text kids ""))
+                              (_font_size ua author (Cons (e, ancestors)))) in
           let (fbs, fh, fmt2, fmb2, _fesc) =
             _block f ua author ancestors tag attrs kids cbw cbh fst in
           let (_fr0, fbot) = fs in
@@ -657,7 +701,8 @@ module Layout {
           // puts the block below it, so the anonymous block has to contain the text AND the leading
           // fragment of the inline beside it. That is the recursive split, and nothing short of it gets
           // those two words onto the same line.
-          let (ibs, _ilines, ih2, _saw2) = _inline f ua author ancestors run cbw font_size ctx_rtl in
+          let (ibs, _ilines, ih2, _saw2) =
+            _inline f ua author ancestors run cbw (_font_size ua author ancestors) ctx_rtl in
           let top = y + _collapse open_mb 0 in
           let h = ih2 in
           _stack f ua author ancestors after cbw cbh (top + h) 0 swallow_first first_mt true (top + h)
@@ -1022,7 +1067,8 @@ module Layout {
   and _table = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
                fn (anc: elem list) -> fn (kids: node list) -> fn (st: sty) -> fn (avail: int) ->
     let sp = st.spacing in
-    let lh = Font.line_height f font_size in
+    let tfs = _font_size ua author anc in
+    let lh = Font.line_height f tfs in
     let groups = _kids_of f ua author anc kids in
     let rows_of = fn (g: (str * attr list * node list * sty)) ->
       let (_gt, _ga, gk, _gs) = g in _kids_of f ua author anc gk in
@@ -1070,7 +1116,7 @@ module Layout {
           match _kids_of f ua author anc rk with
           | Nil -> 0
           | Cons (c, _m2) -> extra c in
-    let px_cols = list_map cols (fn (u: int) -> Font.scale f u font_size + pad0) in
+    let px_cols = list_map cols (fn (u: int) -> Font.scale f u tfs + pad0) in
     let sum_cols = let rec go = fn (xs: int list) -> fn (a: int) ->
                      match xs with Nil -> a | Cons (x, r) -> go r (a + x) in
                    go px_cols 0 in
@@ -1122,7 +1168,7 @@ module Layout {
                 let (ct, ca, ck, cst) = c in
                 let cw2 = match ws with Nil -> 0 | Cons (w, _r) -> w in
                 let cu = match us with Nil -> 0 | Cons (u, _r) -> u in
-                let up = (cu * font_size + f.upem - 1) / f.upem + pad0 in
+                let up = (cu * tfs + f.upem - 1) / f.upem + pad0 in
                 let (cbs, ch, _m1, _m2, _fe) =
                   _block f ua author anc ct ca ck (if up > cw2 then up else cw2) (0 - 1) cst in
                 lay_cells more2 (match ws with Nil -> Nil | Cons (_w, rr) -> rr)
@@ -1275,7 +1321,7 @@ module Layout {
                       && _collapse_ws (_inline_text kids "") != "" in
     let (ibs, _ilines, ih3, _sawb) =
       if inline_only then
-        _inline f ua author inner_ancestors kids cw font_size
+        _inline f ua author inner_ancestors kids cw (_font_size ua author inner_ancestors)
           (Style.inherited ua author "direction" "ltr" e ancestors == "rtl")
       else (Nil, 0, 0, false) in
     let (bs, used, open_mb, first_mt, bottom, fbot) =
