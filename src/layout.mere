@@ -337,6 +337,23 @@ module Layout {
         | Doctype (_x, _y, _z) -> go rest acc in
     go ns Nil;
 
+  // The children of an element split at its first block-level box: what came before, that box, and what
+  // came after. The block is returned as a one-element list because this language's option needs an
+  // annotation the surrounding inference will not supply here, and a list of one says the same thing.
+  let _split_at_block = fn (ua: prepared list) -> fn (author: prepared list) ->
+                        fn (anc: elem list) -> fn (ns: node list) ->
+    let rec go = fn (xs: node list) -> fn (before: node list) ->
+      match xs with
+      | Nil -> (list_rev before, Nil, Nil)
+      | Cons (n, rest) ->
+        match n with
+        | Element (tag, attrs, _k) ->
+          let st = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") in
+          if _is_block_level st.display then (list_rev before, Cons (n, Nil), rest)
+          else go rest (Cons (n, before))
+        | _ -> go rest (Cons (n, before)) in
+    go ns Nil;
+
   // A list of siblings, stacked. `cbw` is the containing block's content width; `open_mb` is the
   // bottom margin left hanging by whatever came before. `swallow_first` says that the first
   // child's top margin belongs to the PARENT and must not become a gap here — the parent asks
@@ -383,7 +400,57 @@ module Layout {
           // anything out means walking every descendant of every element and resolving its style each
           // time — note 166's square, and here worse than one: it did not finish in ten minutes. The
           // walk that was happening anyway reports what it met, and only the head is redone.
-          if saw then
+          // The split itself, for the shape the corpus has: the pieces on either side of the block are
+          // white space, so neither generates a box of its own and only their EDGES survive. The union
+          // is then `before + block + a line + the bottom border` — the after piece's top border
+          // overlaps the block, which is why it is not a plain sum. Anything with real content on
+          // either side falls through to laying the element out as a block, below.
+          let (spl_before, spl_blk, spl_after) = _split_at_block ua author ancestors kids in
+          let simple_split =
+            saw && _collapse_ws (_inline_text spl_before "") == ""
+            && _collapse_ws (_inline_text spl_after "") == ""
+            && (match spl_blk with Cons (_b, _r) -> true | Nil -> false) in
+          if simple_split then
+            match spl_blk with
+            | Nil -> _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom
+                            fs acc
+            | Cons (bn, _r) ->
+              match bn with
+              | Element (btag, battrs, bkids) ->
+                let bst = style_of ua author (_elem_of btag battrs) (Cons (e, ancestors))
+                            (_attr battrs "style") in
+                // The block is a sibling of the inline's pieces, so it is laid out at the containing
+                // block's full width with its OWN style — not the inline's.
+                let (bbs, bh, bmt, bmb) =
+                  _block f ua author (Cons (e, ancestors)) btag battrs bkids cbw bst in
+                let top = y + _collapse open_mb 0 in
+                let lh = Font.line_height f font_size in
+                // Two heights, and they are not the same one. The element's BOX is the union of its
+                // fragments and includes the bottom border of the piece after the block. The FLOW
+                // advances only past the content — an inline's border hangs out below its line box and
+                // does not make its parent taller, which is the same thing a float does and the reason
+                // the two numbers had to be separated here as well.
+                // The block piece keeps its own margins. They are not the inline's to collapse with —
+                // the pieces on either side are inline boxes and a margin does not collapse through
+                // one — so they simply take room, above and below.
+                let bt2 = if bmt > 0 then bmt else 0 in
+                let bb2 = if bmb > 0 then bmb else 0 in
+                // The piece after the block is a fragment only if the element has edges of its own. With
+                // none, whitespace after a block collapses to nothing and there is no box; with some,
+                // the fragment is a line tall plus both borders and its TOP border overlaps the block,
+                // which is why the union gains only `a line + the bottom border`.
+                let has_edges = st.bt + st.bb + st.bl + st.br + st.pl + st.pr > 0 in
+                // And the union starts at the block's BORDER box, not its margin box: a margin is
+                // space around the fragment and not part of it.
+                let uh = bh + (if has_edges then lh + st.bb else 0) in
+                let adv = bt2 + bh + bb2 + (if has_edges then lh else 0) in
+                let me = box { tag = to_lower tag, x = 0, y = top + bt2, w = cbw, h = uh } in
+                _stack f ua author ancestors rest cbw (top + adv) 0 swallow_first
+                       (if not seen then 0 else first_mt) true (top + adv) fs
+                       (list_append (list_rev (_shift bbs 0 (top + bt2))) (Cons (me, acc)))
+              | _ -> _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom
+                            fs acc
+          else if saw then
             // The split this replaces, measured rather than guessed. `getClientRects` shows the
             // FRAGMENTS where `getBoundingClientRect` only shows their union, and for
             // `<span border 5px, padding-right 10px><span display:block>x</span></span>` the browser
