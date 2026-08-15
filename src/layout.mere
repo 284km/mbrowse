@@ -450,7 +450,7 @@ module Layout {
                 // is not a containing block for a block-level box, so the direction that places this one
                 // is the enclosing BLOCK's — `<div ltr><span rtl><div block>` puts the block left to
                 // right, and reading the span's direction puts it ten pixels the other way.
-                let (bbs, bh, bmt, bmb) =
+                let (bbs, bh, bmt, bmb, _besc) =
                   _block f ua author ancestors btag battrs bkids cbw cbh bst in
                 let top = y + _collapse open_mb 0 in
                 let lh = Font.line_height f font_size in
@@ -525,7 +525,7 @@ module Layout {
             // so the inline's horizontal padding and borders do not narrow it. Laying the whole element
             // out as a block keeps those edges and takes ten pixels off the block inside it, which is
             // the one part of the substitution that can be corrected without doing the split.
-            let (fbs, fh, fmt2, fmb2) =
+            let (fbs, fh, fmt2, fmb2, _fesc) =
               _block f ua author ancestors tag attrs kids cbw cbh (_no_h_edges st) in
             let top = y + _collapse open_mb fmt2 in
             _stack f ua author ancestors rest cbw cbh (top + fh) fmb2 swallow_first
@@ -543,7 +543,7 @@ module Layout {
         // not grow. `<div style="position:absolute">` inside a page made the page as tall as if it were
         // in flow, and 94 of the 116 layout failures were that one thing.
         else if st.position == "absolute" || st.position == "fixed" then
-          let (fbs, _fh, _fmt, _fmb) = _block f ua author ancestors tag attrs kids cbw cbh st in
+          let (fbs, _fh, _fmt, _fmb, _fesc2) = _block f ua author ancestors tag attrs kids cbw cbh st in
           // `left` and `top` are measured from the containing block, which for an absolutely positioned
           // box is the nearest POSITIONED ancestor. Here that is taken to be the parent, whose content
           // origin is where these coordinates already start from — true whenever the parent is the
@@ -561,7 +561,7 @@ module Layout {
         // written for has one float in it. What that case wanted was the rule below — a formatting
         // context is placed beside a float rather than under it — and the guess cost a commit.
         else if st.float_ == "left" || st.float_ == "right" then
-          let (fbs, fh, fmt2, fmb2) = _block f ua author ancestors tag attrs kids cbw cbh st in
+          let (fbs, fh, fmt2, fmb2, _fesc) = _block f ua author ancestors tag attrs kids cbw cbh st in
           let (_fr0, fbot) = fs in
           let top = if fbot > y then fbot else y + _collapse 0 fmt2 in
           let fw = match fbs with Nil -> 0 | Cons (b0, _r) -> b0.w + st.ml + st.mr in
@@ -580,7 +580,7 @@ module Layout {
                     || st.display == "table-cell" || st.display == "table"
                     || st.overflow != "visible" in
           let dodge = if bfc && fright > 0 && y < fbot then fright else 0 in
-          let (fbs, fh, fmt, fmb) =
+          let (fbs, fh, fmt, fmb, fesc) =
             _block f ua author ancestors tag attrs kids (cbw - dodge) cbh st in
           let is_first = not seen in
           // The gap above this box is the two margins collapsed into one, not their sum. When the
@@ -593,11 +593,15 @@ module Layout {
           // adds nothing to the parent's height. The box is still placed, and after the gap — which is
           // why an empty `<div>` after a paragraph sits below its parent's own bottom edge.
           let through = fh == 0 in
+          // A float that escaped this child is still in this box's flow, so its reach is remembered here
+          // and keeps escaping until a box contains it.
+          let (fr0, fb0) = fs in
+          let fs2 = if fesc > 0 && top + fesc > fb0 then (fr0, top + fesc) else fs in
           _stack f ua author ancestors rest cbw cbh
                  (if through then y else top + fh)
                  (if through then _collapse open_mb (_collapse fmt fmb) else fmb)
                  swallow_first (if is_first then fmt else first_mt) true
-                 (if through then bottom else top + fh) fs
+                 (if through then bottom else top + fh) fs2
                  (list_append (list_rev bs) acc)
       | Text t ->
         // Whitespace between two block-level children is discarded; anything else starts an anonymous
@@ -858,7 +862,7 @@ module Layout {
     let pct_h = if st.h_pct >= 0 && cbh >= 0 then (cbh * st.h_pct) / 100 else 0 - 1 in
     let content_h = if pct_h >= 0 then pct_h
                     else if st.h >= 0 then st.h
-                    else if makes_bfc && fbot > in_flow_h then fbot
+                    else if (makes_bfc || is_root) && fbot > in_flow_h then fbot
                     else in_flow_h in
     let h = st.bt + st.pt + content_h + st.pb + st.bb in
     // In a right-to-left containing block a box is placed from the RIGHT edge, so its offset is what is
@@ -866,9 +870,13 @@ module Layout {
     // missing, a block with `margin: 10px` in a 100px RTL container sat at 10 where the browser puts it
     // at 0.
     let me = box { tag = to_lower tag, x = bx0, y = 0, w = bw_total, h = h } in
+    // A fifth answer: how far a float inside this box reached, when this box does NOT contain floats.
+    // The float escapes upward until something does contain it — and the initial containing block always
+    // does, which is why a page is as tall as a float that overflowed every box on the way out.
     (Cons (me, inner), h,
      (if sep_top then st.mt else _collapse st.mt first_mt),
-     (if sep_bot then st.mb else _collapse st.mb open_mb));
+     (if sep_bot then st.mb else _collapse st.mb open_mb),
+     (if makes_bfc then 0 else fbot + st.bt + st.pt));
 
   // The font is a parameter and not a constant, because it is the one input to layout that is a file.
   // Loaded once per document: reading it per box would read half a megabyte for every element.
