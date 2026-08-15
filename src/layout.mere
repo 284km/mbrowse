@@ -44,7 +44,7 @@ module Layout {
   // an anonymous table is generated around them wherever one is missing, and an anonymous table is a
   // block.
   let _is_block_level = fn (d: str) ->
-    d == "block" || d == "table" || d == "table-cell" || d == "table-row"
+    d == "block" || d == "inline-block" || d == "table" || d == "table-cell" || d == "table-row"
     || d == "table-row-group" || d == "table-caption";
 
   // The same style with its HORIZONTAL edges removed, and only those. The vertical ones do not belong
@@ -428,6 +428,35 @@ module Layout {
         | _ -> go rest (Cons (n, before)) in
     go ns Nil;
 
+  // The widest a box's contents want to be. A shrink-to-fit box — an inline-block, a float, a table — is
+  // as wide as this and no wider, where an ordinary block is as wide as it is given. Text contributes its
+  // whole length on one line, because "max content" means the width at which nothing wraps.
+  let rec _max_content = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
+                         fn (anc: elem list) -> fn (ns: node list) ->
+    let rec go = fn (xs: node list) -> fn (best: int) -> fn (run: str) ->
+      match xs with
+      | Nil ->
+        let w = Font.text_width f (_collapse_ws run) font_size in
+        if w > best then w else best
+      | Cons (n, rest) ->
+        match n with
+        | Element (tag, attrs, kids) ->
+          let e = _elem_of tag attrs in
+          let st = style_of ua author e anc (_attr attrs "style") in
+          if st.display == "none" then go rest best run
+          else if _is_block_level st.display then
+            // A block child ends the run of inline content beside it and contributes its own outer width.
+            let inner = if st.w >= 0 then st.w
+                        else _max_content f ua author (Cons (e, anc)) kids in
+            let outer = inner + st.ml + st.mr + st.pl + st.pr + st.bl + st.br in
+            let w0 = Font.text_width f (_collapse_ws run) font_size in
+            go rest (if outer > best then (if outer > w0 then outer else w0)
+                     else (if w0 > best then w0 else best)) ""
+          else go rest best (run ++ _inline_text kids "")
+        | Text t -> go rest best (run ++ t)
+        | _ -> go rest best run in
+    go ns 0 "";
+
   // A list of siblings, stacked. `cbw` is the containing block's content width; `open_mb` is the
   // bottom margin left hanging by whatever came before. `swallow_first` says that the first
   // child's top margin belongs to the PARENT and must not become a gap here — the parent asks
@@ -674,8 +703,18 @@ module Layout {
                     || st.display == "table-cell" || st.display == "table"
                     || st.overflow != "visible" in
           let dodge = if bfc && fright > 0 && y < fbot then fright else 0 in
+          // An inline-block is sized by its contents like a float and a table, not by its container.
+          //
+          // What is NOT right about it here: an inline-block is inline-LEVEL, so it sits on a line beside
+          // whatever else is there and the line grows to hold it. This treats it as block-level, which
+          // gives it a line of its own. The one document in the corpus that uses it is blocked on the
+          // initial containing block as well, so the gate cannot tell the two apart yet — the width is
+          // right and matches the browser, the placement is a box on its own line where it should share
+          // one.
+          let ist = if st.display != "inline-block" || st.w >= 0 || st.w_pct >= 0 then st
+                    else _with_width st (_max_content f ua author (Cons (e, ancestors)) kids) in
           let (fbs, fh, fmt, fmb, fesc) =
-            _block f ua author ancestors tag attrs kids (cbw - dodge) cbh st in
+            _block f ua author ancestors tag attrs kids (cbw - dodge) cbh ist in
           let is_first = not seen in
           // The gap above this box is the two margins collapsed into one, not their sum. When the
           // parent has claimed the first child's margin there is no gap at all here.
