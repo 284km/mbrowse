@@ -755,8 +755,17 @@ module Layout {
     // of the box: the standard says the root's margins simply do not collapse with anything. With
     // it missing, the body's margin escaped out of `<html>` and pushed the document itself down.
     let is_root = match ancestors with Nil -> true | Cons (_x, _y) -> false in
-    let sep_top = is_root || st.bt > 0 || st.pt > 0 in
-    let sep_bot = is_root || st.bb > 0 || st.pb > 0 || st.h >= 0 in
+    // A box that establishes a block formatting context has to contain its floats. Being positioned,
+    // floated, a table cell or anything but `overflow: visible` does it — and an ordinary block does
+    // not, which is why a float can hang out of the bottom of its parent.
+    let makes_bfc = st.position == "absolute" || st.position == "fixed" || st.float_ != "none"
+                    || st.display == "table-cell" || st.display == "table"
+                    || st.overflow != "visible" in
+    // A formatting context is the fourth reason a margin does not collapse, and the one that reads as a
+    // painting property: `html, body { overflow: scroll }` stops a paragraph's top margin collapsing
+    // with the body's, which moves every box in the document down by the difference.
+    let sep_top = is_root || makes_bfc || st.bt > 0 || st.pt > 0 in
+    let sep_bot = is_root || makes_bfc || st.bb > 0 || st.pb > 0 || st.h >= 0 in
     // Inline content, if there is any, instead of a stack of blocks. A box whose children are text
     // establishes an inline formatting context, and its height is a count of LINES rather than a sum of
     // children. Mixing inline and block children in one parent needs the anonymous block boxes the
@@ -796,11 +805,6 @@ module Layout {
       else if inline_only && not _sawb then
         let h = ilines * Font.line_height f font_size in (ibs, h, 0, 0, h, 0)
       else _stack f ua author inner_ancestors kids cw 0 0 (not sep_top) 0 false 0 (0, 0) Nil in
-    // A box that establishes a block formatting context has to contain its floats. Being positioned,
-    // floated, a table cell or anything but `overflow: visible` does it — and an ordinary block does
-    // not, which is why a float can hang out of the bottom of its parent.
-    let makes_bfc = st.position == "absolute" || st.position == "fixed" || st.float_ != "none"
-                    || st.display == "table-cell" || st.display == "table" in
     // The fragment's origin is (the containing block's content left, this border box's top): x is
     // measured from outside the margin because a horizontal margin is an offset, y from the border
     // box because a vertical one collapsed into the gap above. So a child clears this box's own
