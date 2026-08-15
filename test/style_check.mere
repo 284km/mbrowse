@@ -99,4 +99,13 @@ let _ = check "a longhand beats the shorthand it belongs to" (e1.mt == 9 && e1.m
 let _ = check "a border's width is the length among the words" ((by_id "f").bt == 2);
 let _ = check "border none is zero" ((by_id "g").bt == 0);
 let _ = check "a border with a style and no width is medium" ((by_id "h").bt == 3);
+// A width with no style draws nothing: the initial `border-style` is `none`, and a shorthand that does
+// not say otherwise leaves it there. One of the corpus's own documents misspells `solid` as `sold`.
+let sh2 = Style.prepare "#i \{ border: 6px sold green }\n#j \{ border: 6px }\n";
+let _ = check "a misspelt style draws nothing"
+  ((Style.resolve (Style.hits_for sh2 1
+      (elem { tag = "div", id = "i", cls = "", sty_attr = "" }) Nil 0) "div").bt == 0);
+let _ = check "and a width alone draws nothing either"
+  ((Style.resolve (Style.hits_for sh2 1
+      (elem { tag = "div", id = "j", cls = "", sty_attr = "" }) Nil 0) "div").bt == 0);
 0

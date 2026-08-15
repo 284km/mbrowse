@@ -405,18 +405,25 @@ module Style {
   // there, which is why the style word is read rather than skipped over.
   let _border_width = fn (v: str) ->
     let parts = list_filter (str_split (to_lower v) " ") (fn (x: str) -> x != "") in
-    let rec go = fn (xs: str list) -> fn (w: int) -> fn (none: bool) ->
+    let is_style = fn (x: str) ->
+      x == "none" || x == "hidden" || x == "dotted" || x == "dashed" || x == "solid"
+      || x == "double" || x == "groove" || x == "ridge" || x == "inset" || x == "outset" in
+    let rec go = fn (xs: str list) -> fn (w: int) -> fn (drawn: bool) ->
       match xs with
-      | Nil -> if none then 0 else w
+      | Nil -> if drawn then w else 0
       | Cons (x, rest) ->
-        if x == "none" || x == "hidden" then go rest w true
-        else if x == "thin" then go rest 1 none
-        else if x == "medium" then go rest 3 none
-        else if x == "thick" then go rest 5 none
+        if is_style x then go rest w (x != "none" && x != "hidden")
+        else if x == "thin" then go rest 1 drawn
+        else if x == "medium" then go rest 3 drawn
+        else if x == "thick" then go rest 5 drawn
         else if x != "" && (_is_digit (char_at x 0) || char_at x 0 == ".") then
-          go rest (px_of x) none
-        else go rest w none in
-    // A border with a style and no width is `medium`, which is 3px.
+          go rest (px_of x) drawn
+        else go rest w drawn in
+    // A border with no STYLE draws nothing, whatever width it names — the initial `border-style` is
+    // `none`, and a shorthand that does not say otherwise leaves it there. `border: 6px sold green` is a
+    // misspelling of `solid` in one of the corpus's own documents, and the browser gives that element no
+    // border at all: reading the 6px and ignoring the word that failed made the box twelve pixels taller
+    // than it should be. A width without a style is a width nobody asked to see.
     go parts 3 false;
 
   // ---- what layout asks ----------------------------------------------------------
