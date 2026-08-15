@@ -384,6 +384,21 @@ module Layout {
           // time — note 166's square, and here worse than one: it did not finish in ten minutes. The
           // walk that was happening anyway reports what it met, and only the head is redone.
           if saw then
+            // The split this replaces, measured rather than guessed. `getClientRects` shows the
+            // FRAGMENTS where `getBoundingClientRect` only shows their union, and for
+            // `<span border 5px, padding-right 10px><span display:block>x</span></span>` the browser
+            // answers three of them:
+            //
+            //   8,8   0x0      the piece before — whitespace only, so it collapses to nothing
+            //   8,8   784x22   THE BLOCK ITSELF, reported as a fragment of the inline
+            //   8,25  10x32    the piece after — the padding-right wide, a line plus both borders tall
+            //
+            // The union is 8..57, which is the 784x49 the expectation records. So the shape to build is:
+            // split the children into runs, lay each inline run as a line box carrying the element's
+            // edges and each block at the containing block's full width, stack them, and report the
+            // union as the element's box. The third fragment is exactly the box the inline path already
+            // produces for an empty element with edges — that part is written and in the right place.
+            //
             // The block piece of a split is a SIBLING of the inline pieces, not a child of the inline —
             // so the inline's horizontal padding and borders do not narrow it. Laying the whole element
             // out as a block keeps those edges and takes ten pixels off the block inside it, which is
