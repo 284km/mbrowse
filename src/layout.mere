@@ -267,7 +267,12 @@ module Layout {
           // without placing anything, so `x > 0` is not the question: white space at the start of a line
           // is removed even where an ancestor's border has already advanced the cursor, and asking about
           // the cursor put every nested inline one space in from where it belongs.
-          let sx = if gap && placed then x + space else x in
+          // ...and only when the element that follows the space actually puts a glyph down. A space
+          // before an element that places nothing is a space at the end of the line, and a line's
+          // trailing white space is removed — so an empty `<span>` with a border sits against the text
+          // before it and not four pixels off it.
+          let empty_el = _collapse_ws (_inline_text ks "") == "" in
+          let sx = if gap && placed && not empty_el then x + space else x in
           let sl = line in
           // The children are walked into a FRESH accumulator so the element's own box can be placed
           // in front of them afterwards. Consing it onto the same accumulator put a nested inline
@@ -322,18 +327,20 @@ module Layout {
           // exactly as it does a block: the cursor, the line and everything after are unmoved.
           let rdx = if est.position == "relative" && est.left >= 0 then est.left else 0 in
           let rdy = if est.position == "relative" && est.top >= 0 then est.top else 0 in
+          // NOT the union with its descendants. `block-in-inline-nested-002-ref` wants a `<span>` with
+          // no border of its own to be ten pixels taller than its line because the child inside it has a
+          // 5px border — and making every element's box cover its descendants cost two other documents,
+          // so that is not the rule. What the browser reports is the union of the element's own
+          // FRAGMENTS; whatever makes the fragment taller in that one case is not the child's border box
+          // as such, and has not been measured yet.
           walk rest x2 l2 g2 (saw2 || _is_block_level est.display) (placed || x2 > sx)
                (online || lead + trail > 0 || x2 > sx) fcur2 (if mx2 > maxx then mx2 else maxx)
                (list_append (_shift inner rdx rdy)
                   (Cons (box { tag = to_lower tag, x = bx + rdx, y = sl * lh - est.bt + rdy,
                                w = if bw < 0 then 0 else bw,
-                               // An inline element that advanced nothing has no box worth a height:
-                               // an empty `<span>` is 0 by 0, not 0 by a line. It occupies no line
-                               // because it put nothing on one.
-                               // ...and only when there is no LINE for it to sit on. An empty element
-                               // inside others that have already taken room is on their line and is a
-                               // line tall; one that starts a line nothing else reaches is nothing at
-                               // all. `sx` says which: zero means the line is still empty.
+                               // An element that advanced nothing and has no edges has no height — but
+                               // only when there is no LINE for it to sit on. Inside others that have
+                               // taken room it is on their line and is a line tall.
                                h = if l2 == sl && x2 == sx && est.bt + est.bb == 0
                                       && not online && lead + trail == 0 then 0
                                    else (l2 - sl + 1) * lh + est.bt + est.bb, pinned = false }, acc)))
