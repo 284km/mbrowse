@@ -107,7 +107,11 @@ module Style {
   // A CSS length in whole pixels, rounded the way the oracle rounds: to nearest. `em` uses the
   // one font size there is. A percentage is NOT resolved here — it needs the containing block,
   // which style resolution does not have, so it comes back as `-2` and layout asks again.
-  let px_of = fn (s0: str) ->
+  // The `em` size is a THUNK and not a number. Resolving it means walking the element's ancestor chain
+  // and matching selectors at every level, and almost no value in a stylesheet is written in `em` — so
+  // the walk happens only where the unit actually appears, which is the difference between paying for
+  // it once per document and paying for it on every property of every element.
+  let px_at = fn (emf: (int -> int)) -> fn (s0: str) ->
     let s = to_lower s0 in
     let n = str_len s in
     if s == "auto" then 0 - 1
@@ -126,7 +130,8 @@ module Style {
         let mag = float_of_str (substring s 0 e) in
         let unit = substring s e n in
         let scale =
-          if unit == "em" then float_of_int root_em
+          if unit == "em" then float_of_int (emf 0)
+          else if unit == "rem" then float_of_int root_em
           else if unit == "px" || unit == "" then 1.0
           // The absolute units, in the ratios the standard fixes them at.
           else if unit == "pt" then 4.0 / 3.0
@@ -137,6 +142,9 @@ module Style {
           else 1.0 in
         let v = mag * scale in
         int_of_float (if v < 0.0 then v - 0.5 else v + 0.5);
+
+  // The root size, for the callers that have no element to ask about.
+  let px_of = fn (s: str) -> px_at (fn (_z: int) -> root_em) s;
 
   // The percentage in a value, or -1. Layout resolves these against the containing block.
   let pct_of = fn (s: str) ->
@@ -451,6 +459,17 @@ module Style {
   // The computed value of an INHERITED property. Walked up the ancestor chain rather than threaded down
   // as a computed value, because every call site already has the chain and none has the parent's style —
   // the chain is by far the smaller change, and its cost is the depth of the tree rather than its size.
+  // What an element itself says about a property, without looking up. Split out of `inherited` because
+  // resolving a font size needs exactly this: `font-size: 2em` on a child is two of the PARENT's size,
+  // and asking the inherited value back would answer with the child's own declaration and multiply it
+  // by itself.
+  let own = fn (ua: prepared list) -> fn (author: prepared list) -> fn (prop: str) ->
+            fn (e: elem) -> fn (anc: elem list) ->
+    let hs = list_append (hits_for ua 0 e anc 0)
+               (list_append (hits_for author 1 e anc 0) (inline_hits e.sty_attr)) in
+    let v = winner hs prop in
+    if v == "" then "" else to_lower v;
+
   let rec inherited = fn (ua: prepared list) -> fn (author: prepared list) -> fn (prop: str) ->
                       fn (dflt: str) -> fn (e: elem) -> fn (anc: elem list) ->
     let hs = list_append (hits_for ua 0 e anc 0)
@@ -485,7 +504,8 @@ module Style {
   // wants a block at x = 9 where this puts it at 19, and both numbers follow from the same 10px margin
   // read from opposite ends. So the two remaining groups in the layout gate are one feature with two
   // halves, and the halves are in different files.
-  let resolve = fn (hs: hit list) -> fn (tag: str) ->
+  let resolve = fn (hs: hit list) -> fn (tag: str) -> fn (emf: (int -> int)) ->
+    let px_of = px_at emf in
     let get = fn (p: str) -> winner hs p in
     // A longhand beats the shorthand it belongs to when both are present, which is only right
     // because `winner` already picked the winning shorthand and the winning longhand separately.

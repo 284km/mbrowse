@@ -105,24 +105,52 @@ module Layout {
         else go rest in
     go (str_split v " ");
 
-  // The font size in pixels, inherited. It was a CONSTANT — one number for the whole document — which
-  // is right for every document that does not set it and silently wrong for every one that does: the
-  // text is measured at the wrong size, so every width, every line break and every line height that
-  // follows from it is wrong together, and they are wrong consistently enough to look deliberate.
+  // The font size in pixels. Resolved up the chain rather than inherited by name, because the value is
+  // relative to the thing it is being resolved from: `font-size: 2em` is two of the PARENT's size, and
+  // asking for the inherited value would hand back the element's own declaration and multiply it by
+  // itself. So this asks each element only what it says about ITSELF, and applies it to what the chain
+  // above it worked out.
   //
-  // `em` inside the value is still resolved against the ROOT size rather than the parent's, so one
-  // level of nesting is right and two are not. The corpus has one level.
-  let _font_size = fn (ua: prepared list) -> fn (author: prepared list) -> fn (anc: elem list) ->
+  // The absolute-size keywords are a table in the standard and there is no deriving them; `xx-large` is
+  // 32px because that is what it is. They are not lengths, so a length parser answers 0 for them, and
+  // `font-size: xx-large` silently meant 16.
+  let rec _font_size = fn (ua: prepared list) -> fn (author: prepared list) -> fn (anc: elem list) ->
     match anc with
     | Nil -> font_size
     | Cons (e0, up) ->
-      let v0 = Style.inherited ua author "font-size" "" e0 up in
+      let parent = _font_size ua author up in
+      let v0 = Style.own ua author "font-size" e0 up in
       let v = if v0 != "" then v0
-              else let (sz, _lh) = _font_parts (Style.inherited ua author "font" "" e0 up) in sz in
-      if v == "" then font_size
+              else let (sz, _l) = _font_parts (Style.own ua author "font" e0 up) in sz in
+      if v == "" then parent
+      else if v == "xx-small" then 9
+      else if v == "x-small" then 10
+      else if v == "small" then 13
+      else if v == "medium" then font_size
+      else if v == "large" then 18
+      else if v == "x-large" then 24
+      else if v == "xx-large" then 32
+      // The two RELATIVE keywords, which are the parent's size scaled and not a number of their own.
+      else if v == "smaller" then (parent * 5) / 6
+      else if v == "larger" then (parent * 6) / 5
       else if str_index_of v "%" >= 0 then
-        (let q = Style.pct_of v in if q < 0 then font_size else (font_size * q) / 100)
-      else let q = Style.px_of v in if q <= 0 then font_size else q;
+        (let q = Style.pct_of v in if q < 0 then parent else (parent * q) / 100)
+      // `em` and `ex` are the parent's size here and not this element's: a font size cannot be
+      // measured in itself.
+      else
+        let n = str_len v in
+        let rec num_end = fn (i: int) ->
+          if i < n && ((char_at v i >= "0" && char_at v i <= "9") || char_at v i == "."
+                       || char_at v i == "-" || char_at v i == "+")
+          then num_end (i + 1) else i in
+        let ne = num_end 0 in
+        if ne == 0 then parent
+        else
+          let mag = float_of_str (substring v 0 ne) in
+          let unit = substring v ne n in
+          if unit == "em" then int_of_float (mag * float_of_int parent + 0.5)
+          else if unit == "ex" then int_of_float (mag * float_of_int parent * 0.5 + 0.5)
+          else let q = Style.px_of v in if q <= 0 then parent else q;
 
   // `line-height`, which is inherited and is not always a length.
   //
@@ -219,7 +247,11 @@ module Layout {
                     hit { prop = to_lower name, value = Style.value_text value,
                           spec = 2 * 100000, order = 0 }
                   | _ -> hit { prop = "", value = "", spec = 0, order = 0 }) in
-    Style.resolve (list_append h1 (list_append h2 h3)) e.tag;
+    // The `em` this element's own values are measured in is its own font size, which is the one thing
+    // in a stylesheet that has to be resolved before anything else can be. Passed as a thunk so that
+    // the chain walk happens only for a value that is actually written in `em`.
+    Style.resolve (list_append h1 (list_append h2 h3)) e.tag
+      (fn (_z: int) -> _font_size ua author (Cons (e, ancestors)));
 
   let _elem_of = fn (tag: str) -> fn (attrs: attr list) ->
     elem { tag = to_lower tag, id = _attr attrs "id", cls = to_lower (_attr attrs "class"),

@@ -279,11 +279,19 @@ module Font {
   // The height of a line at this size, rounded to whole pixels the way the browser rounds it. The
   // sum is ascender minus descender plus the gap, and the descender is negative — so this is a sum
   // of three signed numbers and not a subtraction of two.
+  // The three parts are scaled and rounded SEPARATELY and then added, which is not the same number as
+  // scaling their sum. At 16px this font gives 17.104 + 4.688 and both ways answer 22; at 32px it gives
+  // 34.208 + 9.376, which is 43 rounded apart and 44 rounded together — and the browser says 43.
+  //
+  // This is "round where the answer is read" reaching the same file from the other side. The ASCENT is
+  // a number a browser reads on its own: it is where the baseline goes. So it is rounded on its own,
+  // and the line height is what the rounded parts come to. The whole layout gate turned on this being
+  // right at one size, and it was, which is why it took a document at another size to say.
   let line_height = fn (f: font) -> fn (size: int) ->
     if f.upem == 0 then 0
     else
-      let units = f.ascender - f.descender + f.line_gap in
-      (units * size + f.upem / 2) / f.upem;
+      let part = fn (u: int) -> (u * size + f.upem / 2) / f.upem in
+      part f.ascender + part (0 - f.descender) + part f.line_gap;
 
   // A UTF-8 character to its code point. Written here because the language hands out characters as
   // strings of one to four bytes and `ord` answers about one byte: a multi-byte character would come
