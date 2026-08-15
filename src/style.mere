@@ -431,6 +431,13 @@ module Style {
   // per element from the hit list. That is a change of shape, which is why it is written down here
   // instead of being bolted on: `resolve` takes a list of declarations and knows nothing about where
   // the element is.
+  //
+  // And inheritance is only half of what those documents need. `direction: rtl` also has to reach
+  // LAYOUT: a block in a right-to-left containing block is placed from the right edge, so its x is
+  // `containing width - margin-right - border width` and not `margin-left`. `block-in-inline-margins-002a`
+  // wants a block at x = 9 where this puts it at 19, and both numbers follow from the same 10px margin
+  // read from opposite ends. So the two remaining groups in the layout gate are one feature with two
+  // halves, and the halves are in different files.
   let resolve = fn (hs: hit list) -> fn (tag: str) ->
     let get = fn (p: str) -> winner hs p in
     // A longhand beats the shorthand it belongs to when both are present, which is only right
