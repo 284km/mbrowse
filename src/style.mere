@@ -18,6 +18,7 @@ import "css_rules.mere";
 // means for width and height: auto.
 type sty = {
   display: str, position: str, float_: str, spacing: int, overflow: str,
+  left: int, top: int,                 // -1 when the property said nothing
   w: int, h: int,                      // -1 for auto
   w_pct: int, h_pct: int,              // -1 when not a percentage
   mt: int, mr: int, mb: int, ml: int,
@@ -507,6 +508,10 @@ module Style {
       // Anything but `visible` makes a box establish a formatting context, which is why it is here:
       // this is a layout question wearing a painting property's name.
       overflow = let v = to_lower (get "overflow") in if v == "" then "visible" else v,
+      // `auto` and absent are the same answer here — both mean "the box goes where it would have gone",
+      // which is the static position, and only a length says otherwise.
+      left = let v = get "left" in if v == "" || to_lower v == "auto" then 0 - 1 else px_of v,
+      top = let v = get "top" in if v == "" || to_lower v == "auto" then 0 - 1 else px_of v,
       w = if wv == "" || to_lower wv == "auto" then 0 - 1
           else let q = px_of wv in if q == 0 - 2 then 0 - 1 else q,
       h = if hv == "" || to_lower hv == "auto" then 0 - 1

@@ -58,7 +58,7 @@ module Layout {
   // general path instead of at the one call site that needs it.
   let _no_h_edges = fn (st: sty) ->
     sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
-          overflow = st.overflow,
+          overflow = st.overflow, left = st.left, top = st.top,
           w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
           mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = 0, pb = st.pb, pl = 0,
@@ -528,7 +528,13 @@ module Layout {
         // in flow, and 94 of the 116 layout failures were that one thing.
         else if st.position == "absolute" || st.position == "fixed" then
           let (fbs, _fh, _fmt, _fmb) = _block f ua author ancestors tag attrs kids cbw st in
-          let bs = _shift fbs 0 (y + _collapse open_mb 0) in
+          // `left` and `top` are measured from the containing block, which for an absolutely positioned
+          // box is the nearest POSITIONED ancestor. Here that is taken to be the parent, whose content
+          // origin is where these coordinates already start from — true whenever the parent is the
+          // positioned one, which is what `position: relative` on a wrapper is written for. Where they
+          // say nothing the box keeps its static position, which is what `auto` means.
+          let bs = _shift fbs (if st.left >= 0 then st.left else 0)
+                     (if st.top >= 0 then st.top else y + _collapse open_mb 0) in
           _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom fs
                  (list_append (list_rev bs) acc)
         // A float is out of flow too, but not in the same way: it is placed at the containing block's
