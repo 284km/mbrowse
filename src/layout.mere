@@ -175,23 +175,26 @@ module Layout {
     let cap = if cw <= 0 then 0 else (cw * f.upem) / size in
     let space = Font.text_units f " " in
     let lh = Font.line_height f size in
+    // `gap` is a space owed from BEFORE this list — the boundary between two text nodes. Inside one
+    // list the separator is implied by the split itself, so every word after the first gets a space
+    // whatever the flag says, and the flag applies only to the first. Carrying it forward instead put
+    // a space between `<span>One</span>` and `<span>Two</span>`, where the source has none.
     let rec words = fn (ws: str list) -> fn (x: int) -> fn (line: int) -> fn (gap: bool) ->
+                    fn (first: bool) ->
       match ws with
       | Nil -> (x, line, gap)
       | Cons (w, rest) ->
-        if w == "" then words rest x line true
+        // An empty piece is where a space was, and a trailing one is how a list says it ended in one.
+        if w == "" then words rest x line true first
         else
           let wu = Font.text_units f w in
-          // A space is owed after every word, because splitting on spaces is what made these words:
-          // the separator is not in either piece and has to be put back. Leaving the flag false here
-          // dropped the space between two words of the same text node — four pixels, and only visible
-          // as a box slightly too narrow.
-          if x == 0 then words rest wu line true
-          else if x + (if gap then space else 0) + wu <= cap then
-            words rest (x + (if gap then space else 0) + wu) line true
+          let need = if first then gap else true in
+          if x == 0 then words rest wu line false false
+          else if x + (if need then space else 0) + wu <= cap then
+            words rest (x + (if need then space else 0) + wu) line false false
           // A word that does not fit starts the next line, and one wider than the whole line gets a
           // line of its own and overflows — which is what a browser does rather than cutting it.
-          else words rest wu (line + 1) true in
+          else words rest wu (line + 1) false false in
     let rec walk = fn (ns: node list) -> fn (x: int) -> fn (line: int) -> fn (gap: bool) ->
                    fn (acc: box list) ->
       match ns with
@@ -200,7 +203,7 @@ module Layout {
         match n with
         | Text t ->
           // Split on the collapsed text so an empty piece marks where a space was.
-          let (x2, l2, g2) = words (str_split (_collapse_runs t) " ") x line gap in
+          let (x2, l2, g2) = words (str_split (_collapse_runs t) " ") x line gap true in
           walk rest x2 l2 g2 acc
         | Element (tag, _a, ks) ->
           // An element's box starts at its first GLYPH, not at the cursor. A space owed from before it
