@@ -587,7 +587,13 @@ module Layout {
           // parent has claimed the first child's margin there is no gap at all here.
           let gap = if is_first && swallow_first then 0 else _collapse open_mb fmt in
           let top = y + gap in
-          let bs = _shift fbs dodge top in
+          // `position: relative` moves the box and everything in it AFTER it has been placed, and
+          // changes nothing about the flow: the cursor, the height and the next sibling are all as if
+          // the offset were not there. That is the whole of what relative positioning is, and it is why
+          // it can be applied here rather than anywhere in the sizing.
+          let rel = st.position == "relative" in
+          let bs = _shift fbs (dodge + (if rel && st.left >= 0 then st.left else 0))
+                     (top + (if rel && st.top >= 0 then st.top else 0)) in
           // A box with nothing in it and no border or padding lets margins COLLAPSE THROUGH: its own
           // two margins join the run rather than ending it, so the cursor does not move past it and it
           // adds nothing to the parent's height. The box is still placed, and after the gap — which is
