@@ -197,15 +197,15 @@ module Layout {
           // line of its own and overflows — which is what a browser does rather than cutting it.
           else words rest wu (line + 1) false false in
     let rec walk = fn (ns: node list) -> fn (x: int) -> fn (line: int) -> fn (gap: bool) ->
-                   fn (acc: box list) ->
+                   fn (saw: bool) -> fn (acc: box list) ->
       match ns with
-      | Nil -> (acc, x, line, gap)
+      | Nil -> (acc, x, line, gap, saw)
       | Cons (n, rest) ->
         match n with
         | Text t ->
           // Split on the collapsed text so an empty piece marks where a space was.
           let (x2, l2, g2) = words (str_split (_collapse_runs t) " ") x line gap true in
-          walk rest x2 l2 g2 acc
+          walk rest x2 l2 g2 saw acc
         | Element (tag, attrs, ks) ->
           // An element's box starts at its first GLYPH, not at the cursor. A space owed from before it
           // belongs to the text outside, so counting the cursor made every inline element four pixels
@@ -222,7 +222,7 @@ module Layout {
           let est = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") in
           let lead = Font.text_units_of_px f (est.bl + est.pl) size in
           let trail = Font.text_units_of_px f (est.pr + est.br) size in
-          let (inner, x2u, l2, g2) = walk ks (x + lead) line gap Nil in
+          let (inner, x2u, l2, g2, saw2) = walk ks (x + lead) line gap saw Nil in
           let x2 = x2u + trail in
           // The union of the element's fragments, which for one line is where it started to where it
           // ended. A box spanning two lines is reported by the browser as the whole span from the
@@ -232,7 +232,7 @@ module Layout {
           // end and subtracting rounds twice and lands a pixel out — the same "scale once" the glyph
           // advances and the table columns already needed, met a third time.
           let bw = if l2 == sl then Font.scale f (x2 - sx) size else cw - bx in
-          walk rest x2 l2 g2
+          walk rest x2 l2 g2 (saw2 || _is_block_level est.display)
                (list_append inner
                   (Cons (box { tag = to_lower tag, x = bx, y = sl * lh - est.bt,
                                w = if bw < 0 then 0 else bw,
@@ -241,11 +241,15 @@ module Layout {
                                // because it put nothing on one.
                                h = if l2 == sl && x2 == sx && est.bt + est.bb == 0 then 0
                                    else (l2 - sl + 1) * lh + est.bt + est.bb }, acc)))
-        | Comment _c -> walk rest x line gap acc
-        | Doctype (_p, _q, _r) -> walk rest x line gap acc in
-    let (bs, x, line, _g) = walk kids 0 0 false Nil in
+        | Comment _c -> walk rest x line gap saw acc
+        | Doctype (_p, _q, _r) -> walk rest x line gap saw acc in
+    let (bs, x, line, _g, saw) = walk kids 0 0 false false Nil in
     let n = if x == 0 && line == 0 then 0 else line + 1 in
-    (list_rev bs, n);
+    // The third answer: whether anything block-level turned up inside. Asking that as a QUERY before
+    // laying out means walking every descendant of every element and resolving its style each time —
+    // which is note 166's square, and here it was worse than a square and did not finish. Reporting it
+    // from the walk that was happening anyway costs nothing, and the caller retries.
+    (list_rev bs, n, saw);
 
 
   // How many lines this text takes at this width. Greedy, breaking at spaces, which is what the
@@ -353,12 +357,26 @@ module Layout {
           // `<div><span style="display:table-cell">…</span><span>…</span></div>` land on two lines,
           // which is what the browser does.
           let (run, after) = _inline_run f ua author ancestors ns in
-          let (ibs, ilines) = _inline f ua author ancestors run cbw font_size in
-          let gap = _collapse open_mb 0 in
-          let top = y + gap in
-          let h = ilines * Font.line_height f font_size in
-          _stack f ua author ancestors after cbw (top + h) 0 swallow_first first_mt true (top + h)
-                 fs (list_append (list_rev (_shift ibs 0 top)) acc)
+          let (ibs, ilines, saw) = _inline f ua author ancestors run cbw font_size in
+          // An inline element with a block inside it is SPLIT by the standard. This does not split it;
+          // it lays that element out as a block instead, which puts the boxes in the right order at the
+          // right width and is the closer of the two wrong answers.
+          //
+          // The RETRY is what makes it affordable. Asking "does this contain a block" before laying
+          // anything out means walking every descendant of every element and resolving its style each
+          // time — note 166's square, and here worse than one: it did not finish in ten minutes. The
+          // walk that was happening anyway reports what it met, and only the head is redone.
+          if saw then
+            let (fbs, fh, fmt2, fmb2) = _block f ua author ancestors tag attrs kids cbw st in
+            let top = y + _collapse open_mb fmt2 in
+            _stack f ua author ancestors rest cbw (top + fh) fmb2 swallow_first
+                   (if not seen then fmt2 else first_mt) true (top + fh) fs
+                   (list_append (list_rev (_shift fbs 0 top)) acc)
+          else
+            let top = y + _collapse open_mb 0 in
+            let h = ilines * Font.line_height f font_size in
+            _stack f ua author ancestors after cbw (top + h) 0 swallow_first first_mt true (top + h)
+                   fs (list_append (list_rev (_shift ibs 0 top)) acc)
         else if st.display == "none" then
           _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom fs acc
         // Out of flow: the box is laid out where it would have been — its static position, which is
@@ -423,7 +441,7 @@ module Layout {
           _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom fs acc
         else
           let (run, after) = _inline_run f ua author ancestors ns in
-          let (ibs, ilines) = _inline f ua author ancestors run cbw font_size in
+          let (ibs, ilines, _saw2) = _inline f ua author ancestors run cbw font_size in
           let top = y + _collapse open_mb 0 in
           let h = ilines * Font.line_height f font_size in
           _stack f ua author ancestors after cbw (top + h) 0 swallow_first first_mt true (top + h)
@@ -624,8 +642,9 @@ module Layout {
     // anonymous block boxes come to for whitespace-only inline content.
     let inline_only = not is_table && not (has_block kids)
                       && _collapse_ws (_inline_text kids "") != "" in
-    let (ibs, ilines) = if inline_only then _inline f ua author inner_ancestors kids cw font_size
-                        else (Nil, 0) in
+    let (ibs, ilines, _sawb) =
+      if inline_only then _inline f ua author inner_ancestors kids cw font_size
+      else (Nil, 0, false) in
     let (bs, used, open_mb, first_mt, bottom, fbot) =
       if is_table then (tbs, th, 0, 0, th, 0)
       else if inline_only then
