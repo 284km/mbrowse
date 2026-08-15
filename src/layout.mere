@@ -622,6 +622,14 @@ module Layout {
         // in flow, and 94 of the 116 layout failures were that one thing.
         else if st.position == "absolute" || st.position == "fixed" then
           let (fbs, _fh, _fmt, _fmb, _fesc2) = _block f ua author ancestors tag attrs kids cbw cbh st in
+          // NOT here: an absolutely positioned box whose ancestors are all static is placed against the
+          // INITIAL containing block, so `top: 82px` means 82 from the page and not 82 from this
+          // fragment. Doing that needs the fragment's absolute origin, and the origin cannot be known
+          // before the box is placed — the gap above a box depends on that box's own margin, which is the
+          // same circularity the margins have. Threading it was tried: it compiles, it is exact for every
+          // box except the ones that matter, and it moves nothing. What it needs is the second pass this
+          // file does not have, where positions are assigned top-down after the sizes are known.
+          //
           // `left` and `top` are measured from the containing block, which for an absolutely positioned
           // box is the nearest POSITIONED ancestor. Here that is taken to be the parent, whose content
           // origin is where these coordinates already start from — true whenever the parent is the
