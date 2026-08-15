@@ -647,7 +647,10 @@ module Layout {
       else (Nil, 0, false) in
     let (bs, used, open_mb, first_mt, bottom, fbot) =
       if is_table then (tbs, th, 0, 0, th, 0)
-      else if inline_only then
+      // A block met inside what looked like inline content means it was not inline content. The flag
+      // comes back from the walk rather than being asked for beforehand, and here it is the difference
+      // between laying a document out as one paragraph and laying it out at all.
+      else if inline_only && not _sawb then
         let h = ilines * Font.line_height f font_size in (ibs, h, 0, 0, h, 0)
       else _stack f ua author inner_ancestors kids cw 0 0 (not sep_top) 0 false 0 (0, 0) Nil in
     // A box that establishes a block formatting context has to contain its floats. Being positioned,
