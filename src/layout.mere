@@ -87,6 +87,35 @@ module Layout {
           pt = st.pt, pr = 0, pb = st.pb, pl = 0,
           bt = st.bt, br = 0, bb = st.bb, bl = 0 };
 
+  // `line-height`, which is inherited and is not always a length.
+  //
+  // A BARE NUMBER is a multiplier of the element's own font size, and it inherits as the number rather
+  // than as the length it works out to — which is the whole reason it can be written that way. `normal`
+  // is whatever the font says, and that is the only value everything here used to have.
+  //
+  // It reaches an element through `Style.inherited`, the one-property-at-a-time inheritance that
+  // `direction` already uses. That is still a hole where a real cascade should be, but the hole is the
+  // same size as it was and this does not make it bigger.
+  let _line_h = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
+                fn (anc: elem list) -> fn (size: int) ->
+    let natural = Font.line_height f size in
+    match anc with
+    | Nil -> natural
+    | Cons (e0, up) ->
+      let v = Style.inherited ua author "line-height" "normal" e0 up in
+      if v == "normal" || v == "" then natural
+      else if str_index_of v "%" >= 0 then
+        (let q = Style.pct_of v in if q < 0 then natural else (q * size) / 100)
+      else
+        let n = str_len v in
+        let rec bare = fn (i: int) ->
+          if i >= n then n > 0
+          else
+            let c = char_at v i in
+            if (c >= "0" && c <= "9") || c == "." then bare (i + 1) else false in
+        if bare 0 then int_of_float (float_of_str v * float_of_int size + 0.5)
+        else let q = Style.px_of v in if q < 0 then natural else q;
+
   let _shift = fn (bs: box list) -> fn (dx: int) -> fn (dy: int) ->
     list_map bs (fn (b: box) ->
       box { tag = b.tag, x = b.x + dx, y = if b.pinned then b.y else b.y + dy,
@@ -412,7 +441,7 @@ module Layout {
           if has_any_block then
             let start_edge = if piece_rtl then st.br + st.pr else st.bl + st.pl in
             let end_edge = if piece_rtl then st.bl + st.pl else st.br + st.pr in
-            let lh = Font.line_height f font_size in
+            let lh = _line_h f ua author (Cons (e, ancestors)) font_size in
             let top = y + _collapse open_mb 0 in
             let rec pieces = fn (ns2: node list) -> fn (yy: int) -> fn (isfirst: bool) ->
                              fn (acc2: box list) -> fn (uy0: int) -> fn (lastb: int) ->
@@ -432,7 +461,7 @@ module Layout {
                   // Its height is already in pixels, so it is turned back into a count of lines for the
                   // arithmetic below to divide out again. Not elegant; the alternative is threading a
                   // height where every other piece has a line count.
-                  (sbs, (sbot + Font.line_height f font_size - 1) / Font.line_height f font_size) in
+                  (sbs, (sbot + lh - 1) / lh) in
               let has_blk = match blk with Cons (_b2, _r2) -> true | Nil -> false in
               // A middle fragment carries no edge: the element's two edges are at its two ends.
               let edge = if isfirst then start_edge else (if has_blk then 0 else end_edge) in
@@ -675,7 +704,7 @@ module Layout {
                 fn (rtl: bool) ->
     let cap = if cw <= 0 then 0 else (cw * f.upem) / size in
     let space = Font.text_units f " " in
-    let lh = Font.line_height f size in
+    let lh = _line_h f ua author anc size in
     // A line is not a fixed height. It is as tall as the tallest thing above the baseline plus the
     // deepest below it, and the STRUT — the invisible box the containing element's own font puts on
     // every line whether anything is written there or not — sets the floor for both. Text alone gives
@@ -684,8 +713,16 @@ module Layout {
     // The descender is negative in the font, so it is negated to become a depth. `asc` is taken as the
     // remainder rather than scaled on its own: `asc + desc` has to be `lh` exactly, and two roundings
     // that each land right can still sum to one pixel wrong.
-    let desc = Font.scale f (0 - f.descender) size in
-    let asc = lh - desc in
+    // With `line-height` the two are not the font's own any more. The difference between the stated
+    // height and the font's is the LEADING, and it is split half above the text and half below — so a
+    // line-height smaller than the font's puts the baseline higher than the font alone would, and the
+    // text hangs out of its own line box. Taking `asc` as the remainder keeps `asc + desc == lh`, which
+    // two roundings that each land right can still break.
+    let natural = Font.line_height f size in
+    let dnat = Font.scale f (0 - f.descender) size in
+    let half = (lh - natural) / 2 in
+    let asc = natural - dnat + half in
+    let desc = lh - asc in
     // What is on each line, as a sparse list of `(line, above, below)`. Sparse because a line with
     // nothing but text contributes nothing this does not already know, and most documents have no
     // entries at all.
@@ -842,7 +879,7 @@ module Layout {
               walk rest x line gap saw placed online (fcur + fw) maxx hc
                 (list_append acc
                    (Cons (box { tag = to_lower tag, x = Font.scale f fcur size, y = 0,
-                                w = Font.scale f fw size, h = Font.line_height f size, pinned = false }, Nil)))
+                                w = Font.scale f fw size, h = lh, pinned = false }, Nil)))
             else
             if est.display == "inline-block" || est.display == "inline-table" then
               // An ATOMIC inline-level box. It sits on the line like a word: it does not break, nothing
