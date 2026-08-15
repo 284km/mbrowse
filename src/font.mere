@@ -317,6 +317,11 @@ module Font {
         go rest g (acc + k + advance f g) in
     go (utf8_chars s) (0 - 1) 0;
 
+  // Pixels back to font units, for a length that arrived already in pixels — padding and borders are
+  // whole pixels and everything else on a line is in font units, and one of them has to convert.
+  let text_units_of_px = fn (f: font) -> fn (px: int) -> fn (size: int) ->
+    if size == 0 then 0 else (px * f.upem) / size;
+
   let scale = fn (f: font) -> fn (units: int) -> fn (size: int) ->
     if f.upem == 0 then 0 else (units * size + f.upem / 2) / f.upem;
 

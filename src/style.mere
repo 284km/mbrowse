@@ -158,7 +158,12 @@ module Style {
             let i = str_index_of val (chr 1) in
             let id = if i < 0 then val else substring val 0 i in
             go rest (elem { tag = cur.tag, id = id, cls = cur.cls }) child acc
-          else go rest cur child acc
+          // A selector with a kind this does not understand does not match ANYTHING. Skipping the
+          // token instead reads `body &gt; span` — which is what a `<style>` element contains, because
+          // its text is raw and character references are not decoded in it — as `body span`, and
+          // applies a rule the browser drops. Ignoring what you cannot parse turns an invalid selector
+          // into a matching one.
+          else Nil
         | Bare s ->
           if s == "." then
             match rest with
@@ -183,9 +188,9 @@ module Style {
               (match rest with
                | Cons (Bare ">", _r) -> go rest _empty_simple child acc2
                | _ -> go rest _empty_simple false acc2)
-          else go rest cur child acc
-        | Block (_b, _k) -> go rest cur child acc
-        | Func (_f, _k) -> go rest cur child acc in
+          else Nil
+        | Block (_b, _k) -> Nil
+        | Func (_f, _k) -> Nil in
     go vs _empty_simple false Nil;
 
   // Specificity, as the one number the cascade compares. Ids count 100, classes 10, tags 1 —

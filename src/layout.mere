@@ -171,7 +171,8 @@ module Layout {
   // Everything is carried in font units until the end. `x` is how far along the current line the
   // cursor is, `line` counts from zero, and `gap` says a space is owed before the next word — a space
   // between two text nodes belongs to neither of them, so it cannot be part of either string.
-  let _inline = fn (f: font) -> fn (kids: node list) -> fn (cw: int) -> fn (size: int) ->
+  let _inline = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
+                fn (anc: elem list) -> fn (kids: node list) -> fn (cw: int) -> fn (size: int) ->
     let cap = if cw <= 0 then 0 else (cw * f.upem) / size in
     let space = Font.text_units f " " in
     let lh = Font.line_height f size in
@@ -205,7 +206,7 @@ module Layout {
           // Split on the collapsed text so an empty piece marks where a space was.
           let (x2, l2, g2) = words (str_split (_collapse_runs t) " ") x line gap true in
           walk rest x2 l2 g2 acc
-        | Element (tag, _a, ks) ->
+        | Element (tag, attrs, ks) ->
           // An element's box starts at its first GLYPH, not at the cursor. A space owed from before it
           // belongs to the text outside, so counting the cursor made every inline element four pixels
           // too early and five too wide — which reads as a rounding error and is a space.
@@ -217,7 +218,12 @@ module Layout {
           // The children are walked into a FRESH accumulator so the element's own box can be placed
           // in front of them afterwards. Consing it onto the same accumulator put a nested inline
           // element after its own children in document order, which the box-sequence number sees.
-          let (inner, x2, l2, g2) = walk ks x line gap Nil in
+          // An inline element's own padding and borders take room ON the line.
+          let est = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") in
+          let lead = Font.text_units_of_px f (est.bl + est.pl) size in
+          let trail = Font.text_units_of_px f (est.pr + est.br) size in
+          let (inner, x2u, l2, g2) = walk ks (x + lead) line gap Nil in
+          let x2 = x2u + trail in
           // The union of the element's fragments, which for one line is where it started to where it
           // ended. A box spanning two lines is reported by the browser as the whole span from the
           // first line's start to the last line's end, and that is what this gives.
@@ -228,13 +234,13 @@ module Layout {
           let bw = if l2 == sl then Font.scale f (x2 - sx) size else cw - bx in
           walk rest x2 l2 g2
                (list_append inner
-                  (Cons (box { tag = to_lower tag, x = bx, y = sl * lh,
+                  (Cons (box { tag = to_lower tag, x = bx, y = sl * lh - est.bt,
                                w = if bw < 0 then 0 else bw,
                                // An inline element that advanced nothing has no box worth a height:
                                // an empty `<span>` is 0 by 0, not 0 by a line. It occupies no line
                                // because it put nothing on one.
-                               h = if l2 == sl && x2 == sx then 0
-                                   else (l2 - sl + 1) * lh }, acc)))
+                               h = if l2 == sl && x2 == sx && est.bt + est.bb == 0 then 0
+                                   else (l2 - sl + 1) * lh + est.bt + est.bb }, acc)))
         | Comment _c -> walk rest x line gap acc
         | Doctype (_p, _q, _r) -> walk rest x line gap acc in
     let (bs, x, line, _g) = walk kids 0 0 false Nil in
@@ -347,7 +353,7 @@ module Layout {
           // `<div><span style="display:table-cell">…</span><span>…</span></div>` land on two lines,
           // which is what the browser does.
           let (run, after) = _inline_run f ua author ancestors ns in
-          let (ibs, ilines) = _inline f run cbw font_size in
+          let (ibs, ilines) = _inline f ua author ancestors run cbw font_size in
           let gap = _collapse open_mb 0 in
           let top = y + gap in
           let h = ilines * Font.line_height f font_size in
@@ -417,7 +423,7 @@ module Layout {
           _stack f ua author ancestors rest cbw y open_mb swallow_first first_mt seen bottom fs acc
         else
           let (run, after) = _inline_run f ua author ancestors ns in
-          let (ibs, ilines) = _inline f run cbw font_size in
+          let (ibs, ilines) = _inline f ua author ancestors run cbw font_size in
           let top = y + _collapse open_mb 0 in
           let h = ilines * Font.line_height f font_size in
           _stack f ua author ancestors after cbw (top + h) 0 swallow_first first_mt true (top + h)
@@ -618,7 +624,8 @@ module Layout {
     // anonymous block boxes come to for whitespace-only inline content.
     let inline_only = not is_table && not (has_block kids)
                       && _collapse_ws (_inline_text kids "") != "" in
-    let (ibs, ilines) = if inline_only then _inline f kids cw font_size else (Nil, 0) in
+    let (ibs, ilines) = if inline_only then _inline f ua author inner_ancestors kids cw font_size
+                        else (Nil, 0) in
     let (bs, used, open_mb, first_mt, bottom, fbot) =
       if is_table then (tbs, th, 0, 0, th, 0)
       else if inline_only then

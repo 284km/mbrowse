@@ -133,12 +133,18 @@ module Rules {
   // The prelude runs to the first top-level `;` or curly block. Which of the two it
   // stopped at is the difference between an at-rule with a body and one without, so it is
   // returned rather than recomputed.
-  let _prelude = fn (vs: cval list) ->
+  // `stops_at_semi` is the difference between an at-rule and a qualified one, and it is not cosmetic.
+  // An at-rule ends at a `;`; a qualified rule does NOT — a semicolon in a selector is just another
+  // component value, and the rule runs on to its block. Ending both at `;` split
+  // `body &gt; span { border: 3px }` — which is what a `<style>` element contains, because its text is
+  // raw and `&gt;` is never decoded there — into a discarded fragment and a perfectly good
+  // `span { border: 3px }`, and applied a border the browser does not.
+  let _prelude = fn (stops_at_semi: bool) -> fn (vs: cval list) ->
     let rec go = fn (vs: cval list) -> fn (acc: cval list) ->
       match vs with
       | Nil -> (list_rev acc, None, Nil)
       | Cons (v, rest) ->
-        if _is_bare v ";" then (list_rev acc, None, rest)
+        if stops_at_semi && _is_bare v ";" then (list_rev acc, None, rest)
         else
           match _curly v with
           | Some kids -> (list_rev acc, Some kids, rest)
@@ -153,13 +159,13 @@ module Rules {
     | Cons (head, rest) ->
       match _at_name head with
       | Some name ->
-        let (pre, body, left) = _prelude rest in
+        let (pre, body, left) = _prelude true rest in
         (AtRule (name, pre, body), left)
       | None ->
         // A qualified rule has no name and its prelude is a selector, so it needs its
         // block: reaching the end of the input without one loses the whole rule. That is
         // `foo` and `foo 4` in the suite, and both are invalid rather than empty.
-        let (pre, body, left) = _prelude vs in
+        let (pre, body, left) = _prelude false vs in
         match body with
         | None -> (RuleErr "invalid", left)
         | Some kids -> (QualRule (pre, kids), left);
