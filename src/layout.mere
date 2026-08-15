@@ -554,12 +554,16 @@ module Layout {
                 // that second case and put four documents ten pixels high.
                 let uy = if pre_h > 0 then top - st.bt else top + bt2 in
                 let by = top + pre_h + bt2 in
-                let me = box { tag = to_lower tag, x = 0, y = uy, w = cbw, h = uh } in
+                // Relative positioning moves the whole split — the union box, the fragments and the
+                // block piece — and leaves the flow where it was, which is what it does everywhere else.
+                let sdx = if st.position == "relative" && st.left >= 0 then st.left else 0 in
+                let sdy = if st.position == "relative" && st.top >= 0 then st.top else 0 in
+                let me = box { tag = to_lower tag, x = sdx, y = uy + sdy, w = cbw, h = uh } in
                 _stack f ua author ancestors rest cbw cbh (top + adv) 0 swallow_first
                        (if not seen then 0 else first_mt) true (top + adv) fs
-                       (list_append (list_rev (list_append (_shift pbs 0 top)
-                                       (list_append (_shift bbs 0 by)
-                                          (_shift abs_ 0 (by + bh + bb2)))))
+                       (list_append (list_rev (list_append (_shift pbs sdx (top + sdy))
+                                       (list_append (_shift bbs sdx (by + sdy))
+                                          (_shift abs_ sdx (by + bh + bb2 + sdy)))))
                           (Cons (me, acc)))
               | _ -> _stack f ua author ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom
                             fs acc
@@ -586,9 +590,14 @@ module Layout {
             let (fbs, fh, fmt2, fmb2, _fesc) =
               _block f ua author ancestors tag attrs kids cbw cbh (_no_h_edges st) in
             let top = y + _collapse open_mb fmt2 in
+            // Relative positioning applies here as it does everywhere else. This branch is the one an
+            // inline with SEVERAL blocks in it takes, and it had been missed while the split beside it
+            // was given the offset — the same property, two branches, one of them updated.
+            let sdx2 = if st.position == "relative" && st.left >= 0 then st.left else 0 in
+            let sdy2 = if st.position == "relative" && st.top >= 0 then st.top else 0 in
             _stack f ua author ancestors rest cbw cbh (top + fh) fmb2 swallow_first
                    (if not seen then fmt2 else first_mt) true (top + fh) fs
-                   (list_append (list_rev (_shift fbs 0 top)) acc)
+                   (list_append (list_rev (_shift fbs sdx2 (top + sdy2))) acc)
           else
             let top = y + _collapse open_mb 0 in
             let h = ilines * Font.line_height f font_size in
