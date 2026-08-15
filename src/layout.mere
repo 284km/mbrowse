@@ -216,7 +216,10 @@ module Layout {
           // ended. A box spanning two lines is reported by the browser as the whole span from the
           // first line's start to the last line's end, and that is what this gives.
           let bx = Font.scale f sx size in
-          let bw = if l2 == sl then Font.scale f x2 size - bx else cw - bx in
+          // The WIDTH is the scaled difference, not the difference of two scaled numbers. Rounding each
+          // end and subtracting rounds twice and lands a pixel out — the same "scale once" the glyph
+          // advances and the table columns already needed, met a third time.
+          let bw = if l2 == sl then Font.scale f (x2 - sx) size else cw - bx in
           walk rest x2 l2 g2
                (list_append inner
                   (Cons (box { tag = to_lower tag, x = bx, y = sl * lh,
