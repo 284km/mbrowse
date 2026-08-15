@@ -22,7 +22,7 @@
 # The pass count is pinned exactly rather than as a floor: a floor lets a regression hide behind
 # a new pass.
 #
-# A hundred and fourteen of the 126 pass, and what is left is measured rather than guessed. The failures are grouped by
+# A hundred and fifteen of the 126 pass, and what is left is measured rather than guessed. The failures are grouped by
 # the first box whose geometry differs:
 #
 # The 8-pixel error that was in 83 of them is gone, and it was not the body's own margin: the cursor and
@@ -39,7 +39,7 @@
 #   the taxonomy below is stale the moment something is fixed, so re-derive it rather than read it:
 #     for f in test/data/layout/*.html; do ... done   (see the repository history for the one-liner)
 #
-#   Last derived at 114 of 126: anonymous boxes, out-of-flow floats and dodging them are in. What
+#   Last derived at 115 of 126: anonymous boxes, out-of-flow floats and dodging them are in. What
 #   remains is where a float SHORTENS a line beside it, and:
 #    3  an `<svg>` reported 288 wide where the browser says 0 — a replaced element with no intrinsic
 #       size, which is not a box-model question.
@@ -65,7 +65,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "layout_check: no mere — set MERE=..." >&2; exit 1; }
 DATA="$ROOT/test/data/layout"
-EXPECT_PASS=${EXPECT_PASS:-114}
+EXPECT_PASS=${EXPECT_PASS:-115}
 
 T="${TMPDIR:-/tmp}/mbrowse_layout.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 

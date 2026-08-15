@@ -56,6 +56,17 @@ module Layout {
   // The same style with its horizontal edges removed. Written out because a record here is replaced
   // whole, and the alternative — a flag threaded into `_block` — would put the special case in the
   // general path instead of at the one call site that needs it.
+  // The same style with an explicit width. A float and an inline-block are sized by their contents, not
+  // by their container, and the sizing code takes its answer from the style — so the shrink-to-fit width
+  // is put there rather than threaded in as a special case.
+  let _with_width = fn (st: sty) -> fn (w: int) ->
+    sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
+          overflow = st.overflow, left = st.left, top = st.top,
+          w = w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
+          mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
+          pt = st.pt, pr = st.pr, pb = st.pb, pl = st.pl,
+          bt = st.bt, br = st.br, bb = st.bb, bl = st.bl };
+
   let _no_h_edges = fn (st: sty) ->
     sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
           overflow = st.overflow, left = st.left, top = st.top,
@@ -628,7 +639,15 @@ module Layout {
         // written for has one float in it. What that case wanted was the rule below — a formatting
         // context is placed beside a float rather than under it — and the guess cost a commit.
         else if st.float_ == "left" || st.float_ == "right" then
-          let (fbs, fh, fmt2, fmb2, _fesc) = _block f ua author ancestors tag attrs kids cbw cbh st in
+          // A float SHRINKS TO FIT: its width is what its contents want, never what its container
+          // offers. Given the block width it filled the line, and a float that fills the line is not a
+          // float at all — `<div style="float:left;border-left:5px">` with nothing in it is five pixels
+          // wide, which is its border and no more.
+          let fst = if st.w >= 0 || st.w_pct >= 0 then st
+                    else _with_width st
+                           (Font.text_width f (_collapse_ws (_inline_text kids "")) font_size) in
+          let (fbs, fh, fmt2, fmb2, _fesc) =
+            _block f ua author ancestors tag attrs kids cbw cbh fst in
           let (_fr0, fbot) = fs in
           let top = if fbot > y then fbot else y + _collapse 0 fmt2 in
           let fw = match fbs with Nil -> 0 | Cons (b0, _r) -> b0.w + st.ml + st.mr in
