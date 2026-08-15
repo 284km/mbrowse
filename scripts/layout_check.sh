@@ -1,7 +1,7 @@
 #!/bin/sh
 # scripts/layout_check.sh — layout against box geometry from a real browser.
 #
-# 126 documents from web-platform-tests' CSS 2 normal-flow suite, with expected geometry
+# 228 documents from web-platform-tests' CSS 2 normal-flow suite, with expected geometry
 # committed next to each one. Both halves come from somewhere other than here: the documents
 # were chosen by the people who wrote the specification, and the numbers were produced by an
 # independent implementation.
@@ -16,33 +16,40 @@
 #
 # **The expected values are committed, not generated here.** `gen_layout_expected.py` needs a
 # browser; a gate that launches one fails for reasons that have nothing to do with the code. It
-# was run twice over all 126 documents and the two runs agreed on every byte, with a fixed
-# viewport, no scrollbars and no device scaling — all three change the numbers.
+# has been run three times now over the whole corpus — twice at 126 documents and once at 228 —
+# and every run agreed with the last on every byte of the documents they had in common, with a
+# fixed viewport, no scrollbars and no device scaling. All three of those change the numbers.
 #
 # The pass count is pinned exactly rather than as a floor: a floor lets a regression hide behind
 # a new pass.
 #
-# A hundred and twenty-one of the 126 pass, and what is left is measured rather than guessed. The failures are grouped by
-# the first box whose geometry differs:
+# **What widening the corpus was for.** It went from 126 to 228 by adding the `inline-`,
+# `inlines-` and `blocks-` families, and the reason to do it before finishing the last five
+# failures is in the numbers it produced. At 126 documents exactly one used `display:
+# inline-block`, so laying an inline-block out as if it were block-level cost one document and
+# the comment in `src/layout.mere` saying it was wrong looked like a note for later. At 228 it
+# is 32 of the 53 failures — the single largest thing missing — and it was the same defect the
+# whole time. A corpus does not only tell you whether you are right. It tells you what to do
+# next, and it is the only thing here that can.
 #
-# The 8-pixel error that was in 83 of them is gone, and it was not the body's own margin: the cursor and
-# the content height were one number. `y` includes the margin still hanging after the last child,
-# because that is where the next child goes; the height is measured to the last child's BORDER box. And
-# a box with nothing in it and no border or padding lets margins collapse THROUGH — an empty `<div>`
-# after a paragraph is placed after the collapsed margin, which puts it below its own parent's bottom
-# edge, and adds nothing to that parent's height.
+# The taxonomy, re-derived from the failures at 175 of 228. **It is re-derived every time and
+# never carried forward**, because it has been wrong four times: it once named `font-size`,
+# which not one document sets; then floats, which were a tenth of it; then anonymous boxes; then
+# floats beside each other, which was really a formatting context dodging one.
 #
-# What is left, grouped by the first box whose geometry differs. **This list is re-derived from the
-# failures every time and not carried forward**, because it has been wrong twice: it once named
-# `font-size`, which not one of the 126 documents sets, and then floats, which are 12 of the 113.
-#
-#   the taxonomy below is stale the moment something is fixed, so re-derive it rather than read it:
-#     for f in test/data/layout/*.html; do ... done   (see the repository history for the one-liner)
-#
-#   Last derived at 121 of 126: anonymous boxes, out-of-flow floats and dodging them are in. What
-#   remains is where a float SHORTENS a line beside it, and:
-#    3  an `<svg>` reported 288 wide where the browser says 0 — a replaced element with no intrinsic
-#       size, which is not a box-model question.
+#   32  `display: inline-block` and `display: inline-table` are laid out as block-level, so they
+#       get a line of their own instead of sharing one. This is every shape of the same defect:
+#       the box below them starts 16px too low because it was pushed to the next line, the
+#       paragraph around them is a line too tall or too short, and where the content is a table
+#       cell the children do not come out at all — which is the 8 documents whose box SEQUENCE is
+#       wrong, the more fundamental of the two numbers.
+#    4  the block-in-inline split, where an inline element that contains a block reports the
+#       fragments around it. The remaining four want a fragment to be taller than its line.
+#    9  a `<div>` whose height or width is wrong on its own — shrink-to-fit and percentage
+#       heights, mostly in the `blocks-` family that came in with this widening.
+#    3  a line box's vertical extent: `inlines-002`, `inlines-020` and one more want a line taller
+#       than the strut, which is `vertical-align` and the leading above and below it.
+#    5  the rest, one document each.
 #
 # **Both sides measure with the same font, and they have to.** The expectations were first taken with
 # whatever font the browser defaulted to — on that machine a system font that cannot be
@@ -65,7 +72,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "layout_check: no mere — set MERE=..." >&2; exit 1; }
 DATA="$ROOT/test/data/layout"
-EXPECT_PASS=${EXPECT_PASS:-121}
+EXPECT_PASS=${EXPECT_PASS:-175}
 
 T="${TMPDIR:-/tmp}/mbrowse_layout.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 

@@ -6,13 +6,18 @@ from urllib.request import urlopen
 
 listing, base, tmp, out = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 
-# The selection is a prefix and it is deliberate: `block-*` is the block layout the first
-# engine does, and taking all 905 would vendor documents about features nothing here
-# implements. Widen the prefix when the engine widens.
-PREFIX = "block-"
+# The selection is a set of prefixes and it is deliberate: taking all 905 would vendor
+# documents about features nothing here implements, and a corpus full of documents that
+# cannot be right is not a measurement, it is a backlog. Widen the set when the engine
+# widens — which is what `inline-`/`inlines-` are: the block families came first because
+# blocks came first, and inline layout is where every remaining failure lives, so it is
+# where more documents buy the most.
+#
+# The `-` matters. `block-` does not match `blocks-`, which is why both are named.
+PREFIXES = ("block-", "blocks-", "inline-", "inlines-")
 
 names = [f["name"] for f in json.load(open(listing))
-         if f["name"].startswith(PREFIX) and f["name"].endswith(".xht")]
+         if f["name"].startswith(PREFIXES) and f["name"].endswith(".xht")]
 print("vendor_layout_tests: %d candidates" % len(names))
 
 
