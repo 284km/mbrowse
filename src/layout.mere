@@ -1589,8 +1589,17 @@ module Layout {
     // display:table-cell>`, with no row between them, so admitting them to the table algorithm hands
     // that algorithm a table with no rows and takes away the block layout that was accidentally closer.
     //
-    // The anonymous boxes are the fix; this line is the symptom. Written here so the obvious
-    // one-word change is not made again without them.
+    // The anonymous boxes are the fix; this line is the symptom. And they are not the WHOLE fix, which
+    // is the part worth having written down: with anonymous row and row-group boxes added — a group or
+    // row whose tag is empty, laid out like any other and not reported, which is why the box sequence
+    // never asked for them and the geometry always did — the two `inline-table-valign` documents put
+    // their table and their cell exactly where the browser does, and are still five pixels out on
+    // everything after them, and the package is still a net loss of one.
+    //
+    // The five pixels are the third piece: **an inline-table's baseline is the baseline of its FIRST
+    // ROW**, not its bottom margin edge. Sitting it on its bottom edge puts the strut's descent below a
+    // baseline it never had. Three pieces, and any two of them are worth less than none — which is the
+    // reason this is a comment and not a commit.
     let is_table = st.display == "table" in
     let (tbs, tw, th) =
       if is_table then
