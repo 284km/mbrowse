@@ -17,7 +17,9 @@ import "css_rules.mere";
 // where a length cannot be resolved without knowing the containing block, which is what `-1`
 // means for width and height: auto.
 type sty = {
-  display: str, position: str, float_: str, spacing: int, overflow: str,
+  // `border-spacing` takes one length or TWO — horizontal then vertical — and reading only the first
+  // made `border-spacing: 0 5px` mean no spacing at all in both directions.
+  display: str, position: str, float_: str, spacing: int, spacing_v: int, overflow: str,
   // Where an atomic inline-level box sits on its line. Only a layout question for the boxes that
   // are ON a line at all, which is why it lives beside `display` and not beside the box model.
   valign: str,
@@ -544,7 +546,7 @@ module Style {
   // The other fields are never read of it — it is not an element and does not generate a box — and are
   // filled with the values that make it harmless if one ever is.
   let root_style =
-    sty { display = "block", position = "static", float_ = "none", spacing = 0,
+    sty { display = "block", position = "static", float_ = "none", spacing = 0, spacing_v = 0,
           overflow = "visible", valign = "baseline", bsz = "content-box",
           fs = root_em, lh_px = 0 - 1, lh_num = 0.0 - 1.0, dir = "ltr", ws = "normal",
           ti_px = 0, ti_pct = 0 - 1,
@@ -712,7 +714,16 @@ module Style {
       // its parent's cursor and does not add to its height, whatever its own numbers say.
       position = let v = to_lower (get "position") in if v == "" then "static" else v,
       float_ = let v = to_lower (get "float") in if v == "" then "none" else v,
-      spacing = let v = get "border-spacing" in if v == "" then 0 else px_of v,
+      spacing = let v = get "border-spacing" in
+                if v == "" then 0
+                else (let (t, _r, _b, _l) = _sides v in if t == "" then 0 else px_of t),
+      spacing_v = let v = get "border-spacing" in
+                  if v == "" then 0
+                  // One value means both directions; two mean horizontal then vertical, which `_sides`
+                  // reads as top/right — so the SECOND is the one wanted here.
+                  else (let (t, r, _b, _l) = _sides v in
+                        let pick = if r == "" then t else r in
+                        if pick == "" then 0 else px_of pick),
       // Anything but `visible` makes a box establish a formatting context, which is why it is here:
       // this is a layout question wearing a painting property's name.
       overflow = let v = to_lower (get "overflow") in if v == "" then "visible" else v,

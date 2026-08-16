@@ -72,7 +72,7 @@ module Layout {
   // by their container, and the sizing code takes its answer from the style — so the shrink-to-fit width
   // is put there rather than threaded in as a special case.
   let _with_width = fn (st: sty) -> fn (w: int) ->
-    sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
+    sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing, spacing_v = st.spacing_v,
           overflow = st.overflow, valign = st.valign, left = st.left, top = st.top,
           // A shrink-to-fit width is a CONTENT width by construction — it was measured from the
           // contents — so the box it is put into has to be told to read it as one.
@@ -88,7 +88,7 @@ module Layout {
   // about DESCENDANTS that an attribute on one element cannot make on its own — so it is made here,
   // where the table is laying its cells out and knows both.
   let _with_border = fn (st: sty) -> fn (w: int) ->
-    sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
+    sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing, spacing_v = st.spacing_v,
           overflow = st.overflow, valign = st.valign, left = st.left, top = st.top,
           bsz = st.bsz, fs = st.fs, lh_px = st.lh_px, lh_num = st.lh_num, dir = st.dir,
           ws = st.ws, ti_px = st.ti_px, ti_pct = st.ti_pct,
@@ -98,7 +98,7 @@ module Layout {
           bt = w, br = w, bb = w, bl = w };
 
   let _no_h_edges = fn (st: sty) ->
-    sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
+    sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing, spacing_v = st.spacing_v,
           overflow = st.overflow, valign = st.valign, left = st.left, top = st.top,
           bsz = st.bsz, fs = st.fs, lh_px = st.lh_px, lh_num = st.lh_num, dir = st.dir,
           ws = st.ws, ti_px = st.ti_px, ti_pct = st.ti_pct,
@@ -415,6 +415,21 @@ module Layout {
         else if to_lower tag == "br" then
           let fl = flush run trail in
           _mc_acc f ua author pst anc rest (if fl > best then fl else best) 0 0
+        // An ATOMIC inline-level box does not break the run and its contents are not part of it: it
+        // contributes its own shrink-to-fit width, the way a word contributes its own. Recursing into
+        // it as if its text were the run's put a `display: inline-table` on the wrong side of the
+        // arithmetic — the cell around it asked for 58 pixels where the browser asks for 45, which is
+        // `a` plus the table plus `e`.
+        else if st.display == "inline-block" || st.display == "inline-table" then
+          let (b5, r5, t5) = _mc_acc f ua author st (Cons (e, anc)) kids 0 0 0 in
+          let w5 = flush r5 t5 in
+          let iw = if st.w >= 0 then st.w else (if w5 > b5 then w5 else b5) in
+          // Its own contents were one unbroken run and no width was stated, so its accumulator can be
+          // added straight to the outer one and the whole line still rounds once. Only when a BLOCK
+          // inside it, or a stated width, has already forced a pixel figure does that figure have to be
+          // used — and then the rounding is the box's own and not this arithmetic's.
+          let add = if b5 > 0 || st.w >= 0 then iw * f.upem else r5 - t5 in
+          _mc_acc f ua author pst anc rest best (run + add + edges * f.upem) 0
         else if _is_block_level st.display then
           // A block child ends the run of inline content beside it and contributes its own outer width.
           let inner = if st.w >= 0 then st.w
@@ -1258,6 +1273,9 @@ module Layout {
                // One pixel on every cell when the table itself carries `border`, and zero otherwise.
                fn (cellb: int) ->
     let sp = st.spacing in
+    // The vertical gap is its own number: `border-spacing: 0 5px` puts nothing between the columns and
+    // five pixels between the rows, and one field could only be one of those.
+    let spv = st.spacing_v in
     let tfs = st.fs in
     let lh = Font.line_height f tfs in
     let groups = _kids_of f ua author st anc kids in
@@ -1273,11 +1291,20 @@ module Layout {
     // Text is still measured in font units directly rather than through the pixel figure, because that
     // is the precision the whole column algorithm is built on; the block width arrives already rounded
     // to whole pixels and converting it back is exact.
+    // Measured in the same `pixels x units-per-em` accumulator the rest of the engine now uses, and
+    // taken from the structure rather than from the cell's text run together. The text fallback that
+    // used to sit beside this ignored structure entirely — it concatenated every descendant's words,
+    // so a cell holding `a<span display:inline-table>bcd</span>e` and a hidden block asked for all of
+    // them side by side and came out thirteen pixels too wide.
+    //
+    // The accumulator and not the pixel figure, because a column is compared against the very text it
+    // was measured from and half a pixel decides whether that text fits.
     let cell_units = fn (c: (str * attr list * node list * sty)) ->
       let (_ct, _ca, ck, _cs) = c in
-      let t = Font.text_units f (_collapse_ws (_inline_text ck "")) in
-      let m = Font.text_units_of_px f (_max_content f ua author st anc ck) tfs in
-      if m > t then m else t in
+      let (b, r, t) = _mc_acc f ua author st anc ck 0 0 0 in
+      let acc = r - t in
+      let bacc = b * f.upem in
+      if bacc > acc then bacc else acc in
     let extra = fn (c: (str * attr list * node list * sty)) ->
       let (_ct, _ca, _ck, cs) = c in
       cs.pl + cs.pr + (if cs.bl + cs.br == 0 then 2 * cellb else cs.bl + cs.br) in
@@ -1317,7 +1344,7 @@ module Layout {
           match _kids_of f ua author st anc rk with
           | Nil -> 0
           | Cons (c, _m2) -> extra c in
-    let px_cols0 = list_map cols (fn (u: int) -> Font.scale f u tfs + pad0) in
+    let px_cols0 = list_map cols (fn (u: int) -> (u + f.upem / 2) / f.upem + pad0) in
     let _sum = fn (xs: int list) ->
       let rec go = fn (ys: int list) -> fn (a: int) ->
         match ys with Nil -> a | Cons (x, r) -> go r (a + x) in
@@ -1332,13 +1359,14 @@ module Layout {
     let inner = if ncols == 0 then _max_content f ua author st anc kids
                 else sum0 + sp * (ncols + 1) in
     let table_w = if st.w >= 0 then st.w else if inner > avail then avail else inner in
-    // When the table did not get the width its contents wanted, the COLUMNS are what gives. They were
-    // left at their natural size, so a table clamped to 400 reported a row and a cell 1181 wide inside
-    // itself — a box wider than the box it is in, which is not a thing a table does. Shared out in
-    // proportion, with the last column taking the remainder so the parts add up to the whole exactly.
+    // The COLUMNS are what absorbs the difference between the width the table wanted and the width it
+    // got, in EITHER direction. Left at their natural size, a table clamped to 400 reported a row and a
+    // cell 1181 wide inside itself — a box wider than the box it is in — and a table TOLD to be 400
+    // reported them 236 wide inside a 400 box, which is the same mistake with the sign flipped. Shared
+    // out in proportion, last column taking the remainder so the parts add up to the whole exactly.
     let room = table_w - sp * (ncols + 1) in
     let px_cols =
-      if ncols == 0 || sum0 <= room || sum0 <= 0 then px_cols0
+      if ncols == 0 || sum0 == room || sum0 <= 0 || room < 0 then px_cols0
       else
         let rec squeeze = fn (xs: int list) -> fn (rem: int) -> fn (out: int list) ->
           match xs with
@@ -1456,15 +1484,15 @@ module Layout {
                       (list_append a2 cell_bs) in
             let row_box = box { tag = to_lower rt, x = sp, y = ry, w = row_w, h = rh,
                                 pinned = false, pinx = false } in
-            lay_rows rest (ry + rh + sp) 0
+            lay_rows rest (ry + rh + spv) 0
                      (place laid px_cols sp (list_append a (Cons (row_box, Nil)))) in
-        let gy = y + sp in
+        let gy = y + spv in
         let (a2, gy2, rem3) = lay_rows (rows_of g) gy rem acc in
         // The group's own box is placed before its rows, so it is spliced in rather than appended: its
         // height is not known until the rows are laid out, and document order does not wait for that.
-        let gbox = box { tag = to_lower gt, x = sp, y = gy, w = row_w, h = gy2 - sp - gy,
+        let gbox = box { tag = to_lower gt, x = sp, y = gy, w = row_w, h = gy2 - spv - gy,
                          pinned = false, pinx = false } in
-        lay rowex more (gy2 - sp) rem3
+        lay rowex more (gy2 - spv) rem3
             (list_append acc (Cons (gbox, _drop acc a2))) in
     // A `<tfoot>` is laid out after the bodies whatever order it was written in, and a `<thead>` before
     // them — but both are still REPORTED where the document put them. Two different orders over the same
@@ -1494,7 +1522,7 @@ module Layout {
         let (_h0, n1, _r1) = lay 0 heads 0 0 Nil in
         let (_b0, n2, _r2) = lay 0 bodies n1 0 Nil in
         let (_f0, n3, _r3) = lay 0 foots n2 0 Nil in
-        n3 + sp in
+        n3 + spv in
     // A table's stated height is its BORDER box, not its content box — which is what the browser
     // reports for one and is why `height="200"` on a bordered table comes back as 200 and not 202.
     let want_h = if st.h < 0 then 0 - 1 else st.h - st.bt - st.bb in
@@ -1521,7 +1549,7 @@ module Layout {
     let endy = y3 in
     // The last row already left a spacing behind it, so one more closes the table and two would count
     // the gap after the final row twice.
-    (if ncols == 0 then nobs else bs, table_w, if ncols == 0 then nobh else endy + sp)
+    (if ncols == 0 then nobs else bs, table_w, if ncols == 0 then nobh else endy + spv)
 
   // One block box and everything under it, at coordinates relative to its own border box.
   and _block = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
