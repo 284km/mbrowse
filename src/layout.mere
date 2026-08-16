@@ -1315,6 +1315,11 @@ module Layout {
     // The corpus has one document that asks and it asks only for the width.
     let inner = if ncols == 0 then _max_content f ua author anc kids
                 else sum_cols + sp * (ncols + 1) in
+    // A row reaches from the first cell's left edge to the last one's right, and the gaps BETWEEN the
+    // columns are inside that. `sum_cols` is the columns alone; a two-column row was reported four
+    // pixels wide when its two cells sit at 10 and 14 and are two wide each. The spacing outside the
+    // first and last columns is not part of a row — that belongs to the table.
+    let row_w = sum_cols + (if ncols > 1 then (ncols - 1) * sp else 0) in
     let table_w = if st.w >= 0 then st.w else if inner > avail then avail else inner in
     // ...and it lays those contents out as a block container would, which is the anonymous cell the
     // standard generates standing in for itself. Only when there are no rows: with rows the cells are
@@ -1414,14 +1419,16 @@ module Layout {
                                       _shift inside x (ry + vgap)) in
                 place more2 (match ws with Nil -> Nil | Cons (_w, rr) -> rr) (x + cw2 + sp)
                       (list_append a2 cell_bs) in
-            let row_box = box { tag = to_lower rt, x = sp, y = ry, w = sum_cols, h = rh, pinned = false } in
+            let row_box = box { tag = to_lower rt, x = sp, y = ry, w = row_w, h = rh,
+                                pinned = false } in
             lay_rows rest (ry + rh + sp) 0
                      (place laid px_cols sp (list_append a (Cons (row_box, Nil)))) in
         let gy = y + sp in
         let (a2, gy2, rem3) = lay_rows (rows_of g) gy rem acc in
         // The group's own box is placed before its rows, so it is spliced in rather than appended: its
         // height is not known until the rows are laid out, and document order does not wait for that.
-        let gbox = box { tag = to_lower gt, x = sp, y = gy, w = sum_cols, h = gy2 - sp - gy, pinned = false } in
+        let gbox = box { tag = to_lower gt, x = sp, y = gy, w = row_w, h = gy2 - sp - gy,
+                         pinned = false } in
         lay rowex more (gy2 - sp) rem3
             (list_append acc (Cons (gbox, _drop acc a2))) in
     // A `<tfoot>` is laid out after the bodies whatever order it was written in, and a `<thead>` before
