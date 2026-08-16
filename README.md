@@ -28,24 +28,44 @@ them together.
 
 ## Status
 
-Early. The document tree, its serializer, and the insertion modes on the path every
-ordinary document takes — enough to turn `<p>hi<p>there` into a document with the
-html, head and body elements nobody wrote and the two paragraphs as siblings.
+Bytes to boxes, checked at every step against something other than itself. Encoding sniffing, an
+HTML tokenizer, tree construction, CSS parsing, the cascade with inheritance, layout, and glyph
+outlines down to which pixels they cover — with a gate on each, and every gate's oracle written by
+somebody else.
+
+```
+sh scripts/check.sh
+```
+
+| what                   | against                        |            |
+|------------------------|--------------------------------|------------|
+| encoding sniffing      | html5lib-tests                 | 81 of 81   |
+| tree construction      | html5lib-tests (pinned by SHA) | 185 of 189 |
+| CSS, six levels        | its own corpus, level by level | 126 of 126 |
+| layout geometry        | a browser's own rects          | 218 of 228 |
+| layout box sequence    | the same                       | 228 of 228 |
+| font metrics           | a browser's `measureText`      | 29 of 29   |
+| glyph outlines, 5 ways | fontTools                      | exact      |
+
+The HTML **tokenizer** is not in this table and not in this repository: it is a Mere package, gated
+against html5lib-tests where it lives. The line has to be drawn somewhere and it is drawn at what
+this repo can break.
+
+What is NOT here: painting. Layout produces boxes and the font machinery produces ink, and nothing
+yet puts the second inside the first — so there is no window, no picture, and no reftest.
 
 Dependencies are vendored into `.mere_modules/` (Mere resolves
 `import "<package>/<module>.mere"` by walking up to the nearest one) and committed,
 so a checkout builds without fetching anything. `scripts/vendor.sh` is what put them
 there.
 
-**What the checks are not yet**, and the reason is worth stating: html5lib-tests
-**has no tree-construction suite**. Its directories are `encoding`, `lint_lib`,
-`serializer` and `tokenizer` — the tree-construction data that every parser used to be
-measured against is not in that repository, and assuming it was is what this looked
-for first. So `test/tree_check.mere` is hand-written, which is the weaker kind of
-evidence: those are the cases we thought of.
+**Where the tree-construction suite went**, because looking for it at its old path returns a 404
+that reads like a wrong path: html5lib-tests **moved** it to web-platform-tests on 2026-06-26. Its
+own directories are now `encoding`, `lint_lib`, `serializer` and `tokenizer`. It is vendored here
+from the last commit before that move, by SHA.
 
-For encoding sniffing there **is** one, and it is wired up: `scripts/encoding_check.sh`
-runs html5lib-tests' encoding suite, **67 of 81**. It was 46 until the label table
+For encoding sniffing the suite is where it always was, and it is wired up:
+`scripts/encoding_check.sh` runs html5lib-tests' encoding suite, **81 of 81**. It was 46 until the label table
 upstream became the Standard's full 228 — a page declaring `iso-8859-2` had been
 reading as a page declaring nothing, because the table only listed encodings there was
 a decoder for — and 54 until the prescan stopped reading `charset=` out of any
@@ -67,11 +87,14 @@ web-platform-tests on 2026-06-26, which is why looking for it at its old path re
 a 404 that reads like a wrong path. `scripts/vendor_tests.sh` takes it from the last
 commit before that move, **by SHA** — 199 cases in `test/data/tree_tests*.dat`. An
 oracle is a versioned dependency; pinning is the correct form rather than a
-workaround. `scripts/tree_check.sh` runs it: **109 of 189**, pinned exactly.
+workaround. `scripts/tree_check.sh` runs it: **185 of 189**, pinned exactly.
 
-Most of what fails needs things that are not here yet — a tokenizer state chosen by
-the builder (many cases start in one), the table insertion modes, foreign content,
-the adoption agency algorithm. None of it is excused: every case is a pass or a
+The four that remain are one disagreement in four costumes, and it is an ORDERING: everything
+about the tree is right except that an emptied `<i>` and a `<p>` come out in the other order
+among a `<div>`'s children. The suite's own `#errors` lines name `adoption-agency-1.3`,
+html5lib's numbering for an OLDER version of the algorithm, so this may be the corpus's age
+rather than a bug here — measured, written down, and not guessed at either way. None of it is
+excused: every case is a pass or a
 failure, because an exemption bucket hides real failures the moment the feature it
 excuses arrives. What is there is
 an `encoding` suite, which is the gate for the character-encoding sniffing that reads
@@ -80,7 +103,7 @@ an `encoding` suite, which is the gate for the character-encoding sniffing that 
 ## Font metrics
 
 ```
-sh scripts/font_check.sh          # widths: 25 of 29 strings
+sh scripts/font_check.sh          # widths: 29 of 29 strings
 ```
 
 `src/font.mere` reads four tables and no outlines: `head` for the scale, `hhea` for how tall a line
@@ -101,55 +124,95 @@ wrong direction for a gate to move.
 ## Layout, and its gate before it
 
 ```
-sh scripts/layout_check.sh        # geometry: 117 of 126, box sequence: 126 of 126
+sh scripts/layout_check.sh        # geometry: 218 of 228, box sequence: 228 of 228
 ```
 
-The gate exists and the engine does not, which is the same order the CSS corpus arrived in. Both
-halves of it come from somewhere other than here: the 126 documents are web-platform-tests' CSS 2
-normal-flow reftests, self-contained with their CSS inline, chosen by the people who wrote the
-specification; the expected geometry is `getBoundingClientRect` from a real browser, taken once
-at vendoring time and committed.
+The gate came before the engine, which is the same order the CSS corpus arrived in. Both halves of it
+come from somewhere other than here: the 228 documents are web-platform-tests' CSS 2 normal-flow
+suite — the `block-`, `blocks-`, `inline-` and `inlines-` families, self-contained with their CSS
+inline, chosen by the people who wrote the specification — and the expected geometry is
+`getBoundingClientRect` from a real browser, taken once at vendoring time and committed.
 
 **Reftests are the wrong gate to start with.** The plan for this layer said WPT reftests, and a
 reftest compares two of *your own* renderings — so an engine that draws nothing passes every one.
 That is the trap the window capability hit, where a readback handed back the pixels just written
 and every comparison passed; it took poisoning the buffer to see it. Geometry from another engine
-cannot be passed by drawing nothing, because the numbers are specific. Reftests are still worth
-running later, for what geometry does not check: colour, stacking, and where the ink lands.
+cannot be passed by drawing nothing, because the numbers are specific. Reftests are worth running
+now, for what geometry does not check — colour, stacking, where the ink lands — and they are worth
+running now precisely because the geometry is independently checked first.
 
-`src/style.mere` is the UA stylesheet, the selectors and the cascade; `src/layout.mere` is normal flow
-with the box model, collapsing margins, inline formatting, tables, floats and out-of-flow boxes.
-**117 of the 126 pass.** Normal flow with the box model and collapsing margins; inline formatting with
-line breaking measured in font units; tables with shrink-to-fit columns, `border-spacing` and a `<tfoot>`
-laid out last but reported where it was written; floats, which shrink to fit, escape upward until a box
-contains them, and sit beside a line rather than on it; out-of-flow boxes, which blockify and take `left`
-and `top` when they say something; relative positioning; percentage heights; `direction`, inherited by
-walking the ancestor chain; and the **block-in-inline split** — an inline with blocks in it becomes a
-sequence of fragments and blocks, each fragment carrying the element's edge on the side it is on.
+**Two numbers, because they fail for different reasons.** The **box sequence** — which elements
+generate boxes, in what order — is the parser and the box tree. The **geometry** is layout. Reporting
+one number would hide a broken parse behind a missing property, or call a blank page a success; the
+table-cell commit moved geometry by zero and the sequence from 220 to 228, and one number would have
+recorded it as nothing happening.
 
-The split was transcribed rather than derived. An expectation records the UNION of an element's fragments,
-and a union does not say what it is a union of; `getClientRects` does, and the surprising fragment is the
-middle one — the block is itself a fragment of the inline, which is why the height could not be reached by
-putting the block beside or inside anything.
+`src/style.mere` is the UA stylesheet, the selectors, the cascade and inheritance; `src/layout.mere`
+is normal flow with the box model, collapsing margins, inline formatting, tables, floats and
+out-of-flow boxes. **218 of the 228 pass, and the box sequence is right for all 228.**
 
-The 9 that remain are blocked on two structural pieces rather than nine features. Four need the split to
-recurse into a piece that itself contains a block, two levels of inline down. Three need a second pass
-that assigns positions top-down after the sizes are known: an absolutely positioned box with no positioned
-ancestor is placed against the initial containing block, and that origin cannot be known before the box is
-placed — the gap above a box depends on that box's own margin, which is the same circularity the
-collapsing margins have.
+**What widening the corpus was for.** It went from 126 documents to 228, and the reason to widen
+before finishing the last few failures is in what the wider corpus said. At 126, exactly one document
+used `display: inline-block`; laying it out as block-level cost that one, and the comment admitting it
+was wrong read like a note for later. At 228 it was 32 of the 53 failures — the largest single thing
+missing, the same defect the whole time, and nothing in the engine had changed to make it so. A corpus
+does not only tell you whether you are right. It tells you what to do next, and it is the only thing
+here that can.
 
-Two numbers are reported, because they fail for different reasons. The **box sequence** — which
-elements generate boxes, in what order — is the parser and the box tree, and it is already right
-for all 126. The **geometry** is layout, and it is right for none of them: there is no style
-resolution, so the 8px margin on `body` and the 1em on a `<p>` that are in every expectation are
-missing, and no text measurement, so a box holding only text has no height. Reporting one number
-would hide a broken parse behind a missing property, or call a blank page a success.
+The 10 that remain are three groups, and none of them is a feature nobody has written:
 
-## Where the tree builder is
+  - **four** are the block-in-inline split, where a fragment wants to be taller than its line. The
+    obvious repair — union an inline's box with its descendants' — has been tried and measured twice,
+    cost documents both times, and is recorded in the source as a net loss so it is not tried a third.
+  - **two** need `display: inline-table` in the table algorithm, which needs three pieces at once:
+    admitting it, generating the anonymous row boxes the standard wraps a stray cell in, and taking an
+    inline-table's baseline from its first row. Any two of the three are worth less than none, and
+    that is measured too.
+  - **four** are sub-pixel. An inline-block's advance goes through a rounded pixel width, so a line of
+    them accumulates a difference the browser does not have. That is a limit of the integer model
+    rather than a missing rule.
+
+## Glyphs
 
 ```
-sh scripts/tree_check.sh          # html5lib tree construction: 176 of 189
+sh scripts/glyf_check.sh                  # the raw stored points:      13 of 13
+MODE=segments sh scripts/glyf_check.sh    # the segments they become:   13 of 13
+MODE=raster   sh scripts/glyf_check.sh    # which pixel centres inside: 13 of 13
+MODE=coverage sh scripts/glyf_check.sh    # subsample coverage:          6 of 6
+MODE=text     sh scripts/glyf_check.sh    # a string, placed:            6 of 6
+```
+
+Metrics first and outlines after, and the order was the point: every box in the layout gate was placed
+before a single curve was read, so a bug in one can never be mistaken for a bug in the other.
+
+The oracle is fontTools — an independent reader of the same bytes — and every comparison is **exact**,
+with no tolerance on either side. Five gates over three steps, one join and one measure:
+
+  - **the stored points**, compared raw, before any curve is flattened. An outline is hundreds of
+    numbers and a reader with the flag bits slightly wrong produces a shape that is *almost* right,
+    which reads as a font hint rather than as a bug.
+  - **the segments**, once the two rules the file leaves implicit are applied: two off-curve points in
+    a row have an on-curve point between them that is not stored, and a contour may start on one.
+  - **which pixel centres are inside**, by the nonzero winding rule. Rasterising has no exact oracle —
+    two rasterisers antialias differently — so the way out is to ask a weaker question of a stronger
+    one: *is this centre inside* has a single answer and fontTools solves the curves to give it.
+  - **subsample coverage**, and the name is the substance. Coverage's exact answer is an area no two
+    rasterisers approximate alike, so what is implemented is N x N subsample coverage — a real
+    antialiasing method with one answer — and it is called that rather than "area", which would have
+    made the gate an excuse for the thing it checks.
+  - **a whole string**, which is the only one that uses the metrics and the outlines together. Each was
+    already checked alone and neither check could see the join: a reader with the right widths and the
+    right shapes still draws nonsense if it advances by the wrong one.
+
+Every one of them was poisoned on purpose and watched go red. One poison did **not** go red — ignoring
+that a contour can start on an off-curve point — because no glyph in this font does that, not one of
+its 3,748. That branch is written and is verified by nothing here, and the gate's header says so: a
+branch nothing can exercise is not a branch anything has checked.
+
+## Where the tree builder is## Where the tree builder is
+
+```
+sh scripts/tree_check.sh          # html5lib tree construction: 185 of 189
 ```
 
 Pinned exactly, and the 13 that fail are grouped in that script's header by **what each one
