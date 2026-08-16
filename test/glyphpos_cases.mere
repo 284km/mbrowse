@@ -1,0 +1,12 @@
+// Where each CHARACTER was put: one line per glyph, in document order.
+//
+// The same list the box gate reads, asked the other question. Layout computed these positions on
+// every line it laid out and had no way to say them; a painter cannot start without them.
+import "../src/layout.mere";
+import "../src/tree.mere";
+
+let path = match args () with Cons (p, _) -> p | Nil -> "";
+let src = str_join "\n" (read_lines path);
+let _ = print (Layout.render_glyphs
+                 (Layout.boxes "test/data/font/NotoSans-Regular.ttf" (Tree.build (Html.tokenize src))));
+0

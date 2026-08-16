@@ -28,7 +28,11 @@ import "font.mere";
 // so a single flag either dragged the static X to the page origin or let an absolute `left` be shifted
 // by every container above it. A `left: 7.5em` box in a body indented by 2em came out at 152 where the
 // page says 120.
-type box = { tag: str, x: int, y: int, w: int, h: int, pinned: bool, pinx: bool };
+// `cp` is a CODE POINT when this box is one character's own area, and 0 when it is an element's.
+// Text is not a special kind of thing to lay out — a glyph occupies a rectangle exactly as an element
+// does — so it is the same record, and the two are told apart by asking rather than by keeping two
+// lists that could disagree about where a line was.
+type box = { tag: str, x: int, y: int, w: int, h: int, pinned: bool, pinx: bool, cp: int };
 
 // A subtree becomes four things: its boxes relative to its own border-box top-left, the border
 // box's height, and the two margins that ESCAPE it — a margin that collapsed through this box
@@ -110,6 +114,11 @@ module Layout {
   // The line height a box's own style asks for, in pixels: a bare number times its own font size, a
   // length as it computed, and the font's own when it said `normal`. The number and the length are
   // kept apart all the way from the cascade to here because only the number is re-multiplied.
+  let nth_str = fn (l: str list) -> fn (i: int) ->
+    let rec go = fn (r: str list) -> fn (k: int) ->
+      match r with Nil -> "" | Cons (v, rest) -> if k == 0 then v else go rest (k - 1) in
+    go l i;
+
   let _lh_of = fn (f: font) -> fn (st: sty) ->
     if st.lh_px >= 0 then st.lh_px
     else if st.lh_num >= 0.0 then int_of_float (st.lh_num * float_of_int st.fs + 0.5)
@@ -119,7 +128,7 @@ module Layout {
     list_map bs (fn (b: box) ->
       box { tag = b.tag, x = if b.pinx then b.x else b.x + dx,
             y = if b.pinned then b.y else b.y + dy,
-            w = b.w, h = b.h, pinned = b.pinned, pinx = b.pinx });
+            w = b.w, h = b.h, pinned = b.pinned, pinx = b.pinx, cp = b.cp });
 
   // Two adjoining margins collapse to one. Positive against positive is the larger; a negative
   // is added to the largest positive rather than compared with it, which is the standard's rule
@@ -607,7 +616,7 @@ module Layout {
             let (allbs, yend, ubot, uy) = pieces kids top true Nil top top in
             let sdx = if st.position == "relative" && st.left >= 0 then st.left else 0 in
             let sdy = if st.position == "relative" && st.top >= 0 then st.top else 0 in
-            let me = box { tag = to_lower tag, x = sdx, y = uy + sdy, w = cbw, h = ubot - uy, pinned = false, pinx = false } in
+            let me = box { tag = to_lower tag, x = sdx, y = uy + sdy, w = cbw, h = ubot - uy, pinned = false, pinx = false, cp = 0 } in
             _stack f ua author pst ancestors rest cbw cbh yend 0 swallow_first
                    (if not seen then 0 else first_mt) true yend fs
                    (list_append (list_rev (_shift allbs sdx sdy)) (Cons (me, acc)))
@@ -688,7 +697,7 @@ module Layout {
           let bs = if not pin && not pinx then bs0
                    else list_map bs0 (fn (b: box) ->
                           box { tag = b.tag, x = b.x, y = b.y, w = b.w, h = b.h,
-                                pinned = pin || b.pinned, pinx = pinx || b.pinx }) in
+                                pinned = pin || b.pinned, pinx = pinx || b.pinx, cp = b.cp }) in
           _stack f ua author pst ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom fs
                  (list_append (list_rev bs) acc)
         // A float is out of flow too, but not in the same way: it is placed at the containing block's
@@ -938,30 +947,80 @@ module Layout {
     // `mx` is the rightmost the cursor has been, and it has to be reported from HERE: a line that wrapped
     // ended somewhere, and only this loop knows where. The caller sees the cursor before the run and the
     // cursor after it, and on a run that wrapped neither of those is the end of any line.
+    // One box per CHARACTER of a word, at the position the word starts from. The x of the i-th
+    // character is the width of the first i characters of the word and not the sum of their widths
+    // measured apart: kerning lives BETWEEN two glyphs, so adding them one at a time puts every
+    // character after a kerned pair a fraction too far right. Measuring each prefix is quadratic in
+    // the length of a word, which is a price worth paying for a word.
+    let chars_of = fn (w: str) -> fn (x0: int) -> fn (ln: int) -> fn (fsz: int) ->
+                   fn (hs: (int * int * int * int) list) ->
+      let nat = Font.line_height f fsz in
+      let dn = Font.scale f (0 - f.descender) fsz in
+      let top = ltop hs ln + hbase hs ln - (nat - dn) in
+      let cs = utf8_chars w in
+      let total = Font.text_units f w * fsz in
+      // Where the PEN is before each character, which is not the width of the characters before it.
+      // A kern belongs BETWEEN two glyphs and moves the second one, so the pen before character `i`
+      // has taken the kern into account and the width of the first `i` characters has not — the
+      // difference is one kern, and it shows as every character after a kerned pair sitting a pixel
+      // to the right of where the browser puts it.
+      //
+      // `units(first i+1) - advance(i)` is that pen position: the whole run up to and including this
+      // character, less the character itself.
+      let pen = fn (i: int) ->
+        let c = nth_str cs i in
+        Font.text_units f (str_join "" (list_take cs (i + 1))) * fsz
+        - Font.advance f (Font.glyph f (Font.codepoint c)) * fsz in
+      let px = fn (u: int) -> (x0 + u + f.upem / 2) / f.upem in
+      let n = list_len cs in
+      let rec go = fn (i: int) -> fn (acc: box list) ->
+        if i >= n then acc
+        else
+          // A character's box reaches to where the next one begins, so the kern between them is
+          // inside the first one's width — which is what the browser reports and what a painter
+          // needs, because the gap is part of the pair and not of either glyph.
+          let u1 = pen i in
+          let u2 = if i + 1 >= n then total else pen (i + 1) in
+          // The WIDTH is the scaled difference and not the difference of two scaled numbers. Rounding
+          // each end and subtracting rounds twice: a character whose true width is 7.6 between pen
+          // positions of 25.3 and 32.9 comes out 7 that way and 8 this way, and the browser says 8.
+          // Round where the answer is read — the sixth time in this file, and the first where the two
+          // answers being confused are a position and a size.
+          go (i + 1)
+             (Cons (box { tag = "", x = px u1, y = top,
+                          w = (u2 - u1 + f.upem / 2) / f.upem,
+                          h = nat, pinned = false, pinx = false,
+                          cp = Font.codepoint (nth_str cs i) }, acc)) in
+      go 0 Nil in
     let rec words = fn (ws: str list) -> fn (x: int) -> fn (line: int) -> fn (gap: bool) ->
                     fn (first: bool) -> fn (placed: bool) -> fn (nw: bool) -> fn (mx: int) ->
                     // The size these words are set in, which is the element's and not the box's.
-                    fn (fsz: int) ->
+                    fn (fsz: int) -> fn (hs: (int * int * int * int) list) ->
+                    fn (gacc: box list) ->
       match ws with
-      | Nil -> (x, line, gap, placed, if x > mx then x else mx)
+      | Nil -> (x, line, gap, placed, (if x > mx then x else mx), gacc)
       | Cons (w, rest) ->
         // An empty piece is where a space was, and a trailing one is how a list says it ended in one.
-        if w == "" then words rest x line true first placed nw mx fsz
+        if w == "" then words rest x line true first placed nw mx fsz hs gacc
         else
           let wu = Font.text_units f w * fsz in
           let space = space_u * fsz in
           let need = if first then gap else true in
-          if not placed then words rest (x + wu) line false false true nw mx fsz
+          let put = fn (at: int) -> fn (ln: int) ->
+            list_append (chars_of w at ln fsz hs) gacc in
+          if not placed then words rest (x + wu) line false false true nw mx fsz hs (put x line)
           else if nw || x + (if need then space else 0) + wu <= cap then
             // `nowrap` means the line does not end where it runs out of room. It ends where the source
             // says — at a `<br>`, or nowhere — and the text overflows its container, which is the
             // point of asking for it.
-            words rest (x + (if need then space else 0) + wu) line false false true nw mx fsz
+            let sx2 = x + (if need then space else 0) in
+            words rest (sx2 + wu) line false false true nw mx fsz hs (put sx2 line)
           // A word that does not fit starts the next line, and one wider than the whole line gets a
           // line of its own and overflows — which is what a browser does rather than cutting it. The
           // cursor at this moment is where the line it is leaving ENDED, which is the only place that
           // number exists.
-          else words rest wu (line + 1) false false true nw (if x > mx then x else mx) fsz in
+          else words rest wu (line + 1) false false true nw (if x > mx then x else mx) fsz hs
+                     (put 0 (line + 1)) in
     // Floats come out of the inline content before anything is placed. A float is not on the line — it
     // is beside it — so it takes room at the line's left edge, everything else starts after it, and a run
     // holding nothing but a float makes no line at all. Hoisting them first is what lets the element that
@@ -1026,9 +1085,9 @@ module Layout {
           match n with
           | Text t ->
             // Split on the collapsed text so an empty piece marks where a space was.
-            let (x2, l2, g2, p2, wmx) =
-              words (str_split (_collapse_runs t) " ") x line gap true placed nw maxx wst.fs in
-            walk rest x2 l2 g2 saw p2 (online || p2) fcur wmx nw wst hc acc
+            let (x2, l2, g2, p2, wmx, gbs) =
+              words (str_split (_collapse_runs t) " ") x line gap true placed nw maxx wst.fs hs Nil in
+            walk rest x2 l2 g2 saw p2 (online || p2) fcur wmx nw wst hc (list_append gbs acc)
           | Element (tag, attrs, ks) ->
             // An element's box starts at its first GLYPH, not at the cursor. A space owed from before it
             // belongs to the text outside, so counting the cursor made every inline element four pixels
@@ -1068,7 +1127,7 @@ module Layout {
                                  - (Font.line_height f est.fs
                                     - Font.scale f (0 - f.descender) est.fs),
                              w = 0, h = Font.line_height f est.fs,
-                             pinned = false, pinx = false }, acc))
+                             pinned = false, pinx = false, cp = 0 }, acc))
             else
             if est.float_ == "left" || est.float_ == "right" then
               // Beside the line, not on it: it does not move the cursor, does not make the line exist, and
@@ -1079,7 +1138,7 @@ module Layout {
                 (list_append acc
                    (Cons (box { tag = to_lower tag, x = (fcur + f.upem / 2) / f.upem, y = 0,
                                 w = (fw + f.upem / 2) / f.upem, h = lh,
-                                pinned = false, pinx = false }, Nil)))
+                                pinned = false, pinx = false, cp = 0 }, Nil)))
             else
             if est.display == "inline-block" || est.display == "inline-table" then
               // An ATOMIC inline-level box. It sits on the line like a word: it does not break, nothing
@@ -1241,7 +1300,7 @@ module Layout {
                                  h = if l2 == sl && x2 == sx && est.bt + est.bb == 0
                                         && not online && lead + trail == 0 then 0
                                      else fbot2 + est.pb + est.bb - fy,
-                                 pinned = false, pinx = false }, acc)))
+                                 pinned = false, pinx = false, cp = 0 }, acc)))
           | Comment _c ->
             walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) nw wst hc acc
           | Doctype (_p, _q, _r) ->
@@ -1478,12 +1537,12 @@ module Layout {
                               | Nil -> Nil
                               | Cons (me, inside) ->
                                 Cons (box { tag = me.tag, x = x, y = ry, w = cw2, h = rh,
-                                            pinned = false, pinx = false },
+                                            pinned = false, pinx = false, cp = 0 },
                                       _shift inside x (ry + vgap)) in
                 place more2 (match ws with Nil -> Nil | Cons (_w, rr) -> rr) (x + cw2 + sp)
                       (list_append a2 cell_bs) in
             let row_box = box { tag = to_lower rt, x = sp, y = ry, w = row_w, h = rh,
-                                pinned = false, pinx = false } in
+                                pinned = false, pinx = false, cp = 0 } in
             lay_rows rest (ry + rh + spv) 0
                      (place laid px_cols sp (list_append a (Cons (row_box, Nil)))) in
         let gy = y + spv in
@@ -1491,7 +1550,7 @@ module Layout {
         // The group's own box is placed before its rows, so it is spliced in rather than appended: its
         // height is not known until the rows are laid out, and document order does not wait for that.
         let gbox = box { tag = to_lower gt, x = sp, y = gy, w = row_w, h = gy2 - spv - gy,
-                         pinned = false, pinx = false } in
+                         pinned = false, pinx = false, cp = 0 } in
         lay rowex more (gy2 - spv) rem3
             (list_append acc (Cons (gbox, _drop acc a2))) in
     // A `<tfoot>` is laid out after the bodies whatever order it was written in, and a `<thead>` before
@@ -1702,7 +1761,7 @@ module Layout {
     // left after its own width and its right margin — the same margin read from the other end. With this
     // missing, a block with `margin: 10px` in a 100px RTL container sat at 10 where the browser puts it
     // at 0.
-    let me = box { tag = to_lower tag, x = bx0, y = 0, w = bw_total, h = h, pinned = false, pinx = false } in
+    let me = box { tag = to_lower tag, x = bx0, y = 0, w = bw_total, h = h, pinned = false, pinx = false, cp = 0 } in
     // A fifth answer: how far a float inside this box reached, when this box does NOT contain floats.
     // The float escapes upward until something does contain it — and the initial containing block always
     // does, which is why a page is as tall as a float that overflowed every box on the way out.
@@ -1728,9 +1787,19 @@ module Layout {
     bs;
 
   // The canonical form the gate compares, one line per box in document order.
+  // ELEMENT boxes only. A glyph's box is in the same list and is not part of the box sequence the
+  // gate compares — that number is about which elements generate boxes, and a character is not one.
   let render = fn (bs: box list) ->
     let one = fn (b: box) ->
       b.tag ++ "\t" ++ str_of_int b.x ++ "\t" ++ str_of_int b.y
       ++ "\t" ++ str_of_int b.w ++ "\t" ++ str_of_int b.h in
-    str_join "\n" (list_map bs one);
+    str_join "\n" (list_map (list_filter bs (fn (b: box) -> b.cp == 0)) one);
+
+  // The other half of the same list: where each CHARACTER was put. This is what a painter needs and
+  // what nothing above layout could ask for — the engine computed it on every line and threw it away.
+  let render_glyphs = fn (bs: box list) ->
+    let one = fn (b: box) ->
+      str_of_int b.cp ++ "\t" ++ str_of_int b.x ++ "\t" ++ str_of_int b.y
+      ++ "\t" ++ str_of_int b.w ++ "\t" ++ str_of_int b.h in
+    str_join "\n" (list_map (list_filter bs (fn (b: box) -> b.cp != 0)) one);
 }
