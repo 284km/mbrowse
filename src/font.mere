@@ -402,6 +402,122 @@ module Font {
         else let v2 = v + i16 d i in go rest (i + 2) v2 (Cons (v2, acc)) in
     go flags at 0 Nil;
 
+  // The raw points of one glyph, as three parallel lists, with the composite already placed. This is
+  // what everything below the reader wants and the string form above is only a way to check it.
+  let rec _points = fn (f: font) -> fn (gid: int) -> fn (ox: int) -> fn (oy: int) ->
+                    fn (depth: int) ->
+    let d = f.data in
+    let (a, b) = _glyph_span f gid in
+    if a < 0 || b <= a || depth > 5 then (Nil, Nil, Nil, Nil)
+    else
+      let nc = i16 d a in
+      if nc < 0 then
+        // A composite is its components, each placed and then concatenated. The contour ends have to
+        // be shifted by however many points came before, or the second component's contours close
+        // back into the first one's.
+        let rec comps = fn (i: int) -> fn (es: int list) -> fn (xs: int list) ->
+                        fn (ys: int list) -> fn (os: int list) ->
+          let fl = u16 d i in
+          let gi = u16 d (i + 2) in
+          let words = fl - (fl / 2) * 2 == 1 in
+          let (dx, dy, after) =
+            if words then (i16 d (i + 4), i16 d (i + 6), i + 8)
+            else (_i8 d (i + 4), _i8 d (i + 5), i + 6) in
+          let skip = if (fl / 8) - (fl / 16) * 2 == 1 then 2
+                     else if (fl / 64) - (fl / 128) * 2 == 1 then 4
+                     else if (fl / 128) - (fl / 256) * 2 == 1 then 8
+                     else 0 in
+          let (ce, cx, cy, co) = _points f gi (ox + dx) (oy + dy) (depth + 1) in
+          let base = list_len xs in
+          let es2 = list_append es (list_map ce (fn (e: int) -> e + base)) in
+          let r = (es2, list_append xs cx, list_append ys cy, list_append os co) in
+          if (fl / 32) - (fl / 64) * 2 == 1 then
+            let (e3, x3, y3, o3) = r in comps (after + skip) e3 x3 y3 o3
+          else r in
+        comps (a + 10) Nil Nil Nil Nil
+      else if nc == 0 then (Nil, Nil, Nil, Nil)
+      else
+        let rec ends = fn (k: int) -> fn (acc: int list) ->
+          if k >= nc then list_rev acc else ends (k + 1) (Cons (u16 d (a + 10 + k * 2), acc)) in
+        let es = ends 0 Nil in
+        let npts = let rec last = fn (xs: int list) -> fn (v: int) ->
+                     match xs with Nil -> v | Cons (x, r) -> last r x in
+                   last es (0 - 1) + 1 in
+        let instr = u16 d (a + 10 + nc * 2) in
+        let (flags, xat) = _read_flags d (a + 12 + nc * 2 + instr) npts in
+        let (xs, yat) = _read_coords d xat flags 2 16 in
+        let (ys, _e) = _read_coords d yat flags 4 32 in
+        (es, list_map xs (fn (v: int) -> v + ox), list_map ys (fn (v: int) -> v + oy),
+         list_map flags (fn (fl: int) -> fl - (fl / 2) * 2));
+
+  // Half away from zero. A midpoint between two integers is a half exactly as often as not, so the
+  // tie is most of the cases and not a corner of them — and it is the one rounding an integer
+  // expression can state in a line. Rounding to even, which is what a float library does by default,
+  // needs to know whether the answer is even before it can produce it.
+  let _mid = fn (a: int) -> fn (b: int) ->
+    let s = a + b in if s >= 0 then (s + 1) / 2 else (s - 1) / 2;
+
+  // A glyph as SEGMENTS: the drawable form. Two rules the file does not spell out are applied here,
+  // and both of them are places to be nearly right —
+  //
+  //   two off-curve points in a row have an on-curve point BETWEEN them that is not stored: their
+  //   midpoint. Leave it out and the curve goes through the wrong place.
+  //
+  //   a contour may START on an off-curve point, and then its starting point is not written down
+  //   either: it is the last point if that one is on-curve, and otherwise the midpoint of the last
+  //   and the first.
+  let segments_str = fn (f: font) -> fn (gid: int) ->
+    let (es, xs, ys, os) = _points f gid 0 0 0 in
+    let nth = fn (l: int list) -> fn (i: int) ->
+      let rec go = fn (r: int list) -> fn (k: int) ->
+        match r with Nil -> 0 | Cons (v, rest) -> if k == 0 then v else go rest (k - 1) in
+      go l i in
+    let on = fn (i: int) -> nth os i == 1 in
+    let rec contours = fn (ends: int list) -> fn (from: int) -> fn (acc: str list) ->
+      match ends with
+      | Nil -> list_rev acc
+      | Cons (e, rest) ->
+        let n = e - from + 1 in
+        if n <= 0 then contours rest (e + 1) acc
+        else
+          // Where the contour starts, and which point the walk begins at.
+          let (sx, sy, first) =
+            if on from then (nth xs from, nth ys from, from + 1)
+            else if on e then (nth xs e, nth ys e, from)
+            else (_mid (nth xs e) (nth xs from), _mid (nth ys e) (nth ys from), from) in
+          let last = if on from then e else (if on e then e - 1 else e) in
+          let rec walk = fn (i: int) -> fn (px: int) -> fn (py: int) -> fn (have: bool) ->
+                         fn (out: str list) ->
+            if i > last then
+              // A control point still in hand closes the contour with a curve back to the start; a
+              // straight run needs nothing, because `Z` is the closing line.
+              (if have then Cons ("Q " ++ str_of_int px ++ " " ++ str_of_int py ++ " "
+                                  ++ str_of_int sx ++ " " ++ str_of_int sy, out)
+               else out)
+            else
+              let cx = nth xs i in
+              let cy = nth ys i in
+              if on i then
+                if have then
+                  walk (i + 1) 0 0 false
+                       (Cons ("Q " ++ str_of_int px ++ " " ++ str_of_int py ++ " "
+                              ++ str_of_int cx ++ " " ++ str_of_int cy, out))
+                else walk (i + 1) 0 0 false
+                          (Cons ("L " ++ str_of_int cx ++ " " ++ str_of_int cy, out))
+              else
+                if have then
+                  let mx = _mid px cx in
+                  let my = _mid py cy in
+                  walk (i + 1) cx cy true
+                       (Cons ("Q " ++ str_of_int px ++ " " ++ str_of_int py ++ " "
+                              ++ str_of_int mx ++ " " ++ str_of_int my, out))
+                else walk (i + 1) cx cy true out in
+          let body = walk first 0 0 false Nil in
+          contours rest (e + 1)
+                   (Cons (str_join " " (list_rev (Cons ("Z", body)))
+                          , Cons ("M " ++ str_of_int sx ++ " " ++ str_of_int sy, acc))) in
+    str_join " " (contours es 0 Nil);
+
   // A glyph's outline in the canonical form the gate compares, which is the RAW points: the
   // coordinates as they are stored, before any curve is flattened or any component placed. Comparing
   // those against fontTools is exact. Comparing a flattened shape would compare two flattenings.

@@ -28,7 +28,28 @@
 # **The expected values are committed.** `gen_glyf_expected.py` needs fontTools; a gate that needs a
 # Python package fails for reasons that have nothing to do with the code.
 #
-# Usage:  MERE=/path/to/mere.exe sh scripts/glyf_check.sh
+# **Two modes over the same 13 glyphs**, because there are two answers and they fail for different
+# reasons. `MODE=points` compares the RAW stored points; `MODE=segments` compares what they become
+# once the two unwritten rules are applied and composites are placed. A reader can get the points
+# right and the segments wrong, and the second number is the one a rasteriser depends on.
+#
+# **What poisoning it showed.** Each of these was broken on purpose and the gate was re-run:
+#
+#   truncate the midpoint instead of rounding half away from zero   11 of 13 red
+#   drop a component's offset                                        2 of 13 red
+#   forget to shift a component's contour ends                       2 of 13 red
+#   ignore that a contour can START on an off-curve point            NOTHING red
+#
+# The last one is the finding. **No glyph in this font starts a contour on an off-curve point** — not
+# one of its 3,748, checked directly — so this corpus cannot see that rule at all, and the branch that
+# implements it is written but NOT verified by anything here. It is kept because the format allows it
+# and another font will use it; it is named here because a branch nothing can exercise is not a branch
+# anything has checked, and the count above would otherwise be read as covering it.
+#
+# What would verify it: a second font that uses the construction, or a synthesised one. Neither is
+# here.
+#
+# Usage:  MERE=/path/to/mere.exe [MODE=points|segments] sh scripts/glyf_check.sh
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
@@ -39,11 +60,14 @@ DATA="$ROOT/test/data/font"
 
 T="${TMPDIR:-/tmp}/mbrowse_glyf.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 cd "$ROOT"
-"$MERE" "$ROOT/test/glyf_cases.mere" "$DATA/outlines.cases" > "$T/raw.txt"
+MODE="${MODE:-points}"
+EXP="$DATA/outlines.expected"
+[ "$MODE" = "segments" ] && EXP="$DATA/segments.expected"
+"$MERE" "$ROOT/test/glyf_cases.mere" "$DATA/outlines.cases" "$MODE" > "$T/raw.txt"
 # The program's own exit value is the last line and is not an outline.
 sed '$d' "$T/raw.txt" > "$T/got.txt"
 
-want=$(grep -c '' "$DATA/outlines.expected")
+want=$(grep -c '' "$EXP")
 got=$(grep -c '' "$T/got.txt")
 if [ "$want" != "$got" ]; then
   echo "glyf: $got outlines for $want glyphs — the runner and the corpus disagree on how many"
@@ -52,7 +76,7 @@ fi
 
 pass=0; fail=0; shown=0; i=1
 while [ "$i" -le "$want" ]; do
-  w=$(sed -n "${i}p" "$DATA/outlines.expected")
+  w=$(sed -n "${i}p" "$EXP")
   g=$(sed -n "${i}p" "$T/got.txt")
   if [ "$w" = "$g" ]; then
     pass=$((pass + 1))
@@ -69,10 +93,10 @@ while [ "$i" -le "$want" ]; do
   i=$((i + 1))
 done
 
-echo "glyf_outlines: $pass passed, $fail failed, of $want glyphs"
+echo "glyf_$MODE: $pass passed, $fail failed, of $want glyphs"
 EXPECT_PASS=${EXPECT_PASS:-13}
 if [ "$pass" -ne "$EXPECT_PASS" ]; then
-  echo "glyf_outlines: expected exactly $EXPECT_PASS passing, got $pass — raise EXPECT_PASS if this is the reader growing"
+  echo "glyf_$MODE: expected exactly $EXPECT_PASS passing, got $pass — raise EXPECT_PASS if this is the reader growing"
   exit 1
 fi
-echo "glyf_outlines: ok"
+echo "glyf_$MODE: ok"

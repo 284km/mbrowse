@@ -1,12 +1,17 @@
-// One outline per line, in the canonical form `scripts/gen_glyf_expected.py` writes.
+// One line per glyph, in the canonical form the two generators write.
 //
 // The input is a list of CODE POINTS and not glyph ids: the id is what `cmap` answers, so asking by
 // character checks the two readers agree about which glyph they are talking about before they compare
 // what is in it. A pair of readers that disagree about the id would otherwise both be "right" about
 // two different glyphs.
+//
+// The second argument chooses which of the two forms to print — the raw stored points, or the
+// segments they become. One runner, because the corpus of glyphs is the same and only the question
+// asked of each differs.
 import "../src/font.mere";
 
 let path = match args () with Cons (p, _) -> p | Nil -> "";
+let mode = match args () with Cons (_p, Cons (m, _)) -> m | _ -> "points";
 let f = Font.load "test/data/font/NotoSans-Regular.ttf";
 
 let rec go = fn (ls: str list) ->
@@ -15,7 +20,9 @@ let rec go = fn (ls: str list) ->
   | Cons (l, rest) ->
     if l == "" then go rest
     else
-      let _ = print (Font.outline_str f (Font.glyph f (int_of_str l))) in
+      let g = Font.glyph f (int_of_str l) in
+      let _ = print (if mode == "segments" then Font.segments_str f g
+                     else Font.outline_str f g) in
       go rest;
 
 go (read_lines path)
