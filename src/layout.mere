@@ -849,7 +849,17 @@ module Layout {
   and _inline = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
                 fn (anc: elem list) -> fn (kids: node list) -> fn (cw: int) -> fn (size: int) ->
                 fn (rtl: bool) ->
-    let cap = if cw <= 0 then 0 else (cw * f.upem) / size in
+    // Half a pixel wider than the box, and that is not a fudge. `cw` is a width that was ROUNDED to a
+    // whole pixel, so the box it names is somewhere within half a pixel of it — and the commonest way
+    // for a width to be produced is by measuring the very text that has to fit in it. A table column is
+    // exactly that: as wide as its widest cell's content, reported as 45 when it is 45.4, and asking
+    // whether 45.4 of text fits in 45 answers no about a column that was built from that text.
+    //
+    // This replaces rounding the column width UP for layout, which fixed the same two documents and
+    // leaked: a `<p>` filling that cell came out 46 wide where the browser says 45, because the ceiling
+    // was in the number the children were SIZED against and not only in the question about breaking.
+    // Round where the answer is read — and the answer read here is "does it fit", not "how wide is it".
+    let cap = if cw <= 0 then 0 else ((cw * 2 + 1) * f.upem) / (2 * size) in
     let space = Font.text_units f " " in
     let lh = _line_h f ua author anc size in
     // A line is not a fixed height. It is as tall as the tallest thing above the baseline plus the
@@ -1350,8 +1360,7 @@ module Layout {
             // the smallest integer that keeps the property the column was built on. They differ by at
             // most a pixel and only where the rounding went down.
             let rec lay_cells = fn (cs: (str * attr list * node list * sty) list) ->
-                                fn (ws: int list) -> fn (us: int list) ->
-                                fn (out: (box list * int * str) list) ->
+                                fn (ws: int list) -> fn (out: (box list * int * str) list) ->
               match cs with
               | Nil -> list_rev out
               | Cons (c, more2) ->
@@ -1359,14 +1368,10 @@ module Layout {
                 let cst = if cellb > 0 && cst0.bt + cst0.bb + cst0.bl + cst0.br == 0
                           then _with_border cst0 cellb else cst0 in
                 let cw2 = match ws with Nil -> 0 | Cons (w, _r) -> w in
-                let cu = match us with Nil -> 0 | Cons (u, _r) -> u in
-                let up = (cu * tfs + f.upem - 1) / f.upem + pad0 in
-                let (cbs, ch, _m1, _m2, _fe) =
-                  _block f ua author anc ct ca ck (if up > cw2 then up else cw2) (0 - 1) cst in
+                let (cbs, ch, _m1, _m2, _fe) = _block f ua author anc ct ca ck cw2 (0 - 1) cst in
                 lay_cells more2 (match ws with Nil -> Nil | Cons (_w, rr) -> rr)
-                          (match us with Nil -> Nil | Cons (_u, rr2) -> rr2)
                           (Cons ((cbs, ch, cst.valign), out)) in
-            let laid = lay_cells cells px_cols cols Nil in
+            let laid = lay_cells cells px_cols Nil in
             // Every cell in a row is as tall as the tallest, which is what makes a row a row.
             let rh0 = let rec go = fn (ls: (box list * int * str) list) -> fn (best: int) ->
                         match ls with
