@@ -1,0 +1,16 @@
+// One line per glyph: subsample coverage in the canonical form `gen_coverage_expected.py` writes.
+import "../src/font.mere";
+
+let path = match args () with Cons (p, _) -> p | Nil -> "";
+let f = Font.load "test/data/font/NotoSans-Regular.ttf";
+
+let rec go = fn (ls: str list) ->
+  match ls with
+  | Nil -> 0
+  | Cons (l, rest) ->
+    if l == "" then go rest
+    else
+      let _ = print (Font.coverage_str f (Font.glyph f (int_of_str l)) 16 20 22 5 4) in
+      go rest;
+
+go (read_lines path)

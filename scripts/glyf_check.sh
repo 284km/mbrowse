@@ -64,6 +64,13 @@
 # have no kerned pairs in them, because kerning has its own gate and a gate asked to check two things
 # cannot say which of them broke.
 #
+# `MODE=coverage` is the fifth and the only one that is not a yes-or-no. Coverage has an exact answer
+# — the area of the intersection between a pixel square and the outline — and no two rasterisers
+# approximate it the same way, so an oracle reporting its own approximation would be reporting an
+# opinion. What is implemented and what is gated is therefore N x N SUBSAMPLE COVERAGE, which is a
+# real antialiasing method with exactly one answer, and it is called by its name: its error against
+# true area shrinks as N grows and is never zero. Naming it "area" would make this gate an excuse.
+#
 # The last one is the finding. **No glyph in this font starts a contour on an off-curve point** — not
 # one of its 3,748, checked directly — so this corpus cannot see that rule at all, and the branch that
 # implements it is written but NOT verified by anything here. It is kept because the format allows it
@@ -93,6 +100,10 @@ CASES="$DATA/outlines.cases"; RUNNER="$ROOT/test/glyf_cases.mere"
 if [ "$MODE" = "text" ]; then
   CASES="$DATA/textraster.cases"; EXP="$DATA/textraster.expected"
   RUNNER="$ROOT/test/textraster_cases.mere"
+fi
+if [ "$MODE" = "coverage" ]; then
+  CASES="$DATA/coverage.cases"; EXP="$DATA/coverage.expected"
+  RUNNER="$ROOT/test/coverage_cases.mere"
 fi
 "$MERE" "$RUNNER" "$CASES" "$MODE" > "$T/raw.txt"
 # The program's own exit value is the last line and is not an outline.
@@ -127,6 +138,7 @@ done
 echo "glyf_$MODE: $pass passed, $fail failed, of $want glyphs"
 EXPECT_PASS=${EXPECT_PASS:-13}
 [ "$MODE" = "text" ] && EXPECT_PASS="${EXPECT_PASS_TEXT:-6}"
+[ "$MODE" = "coverage" ] && EXPECT_PASS="${EXPECT_PASS_COV:-6}"
 if [ "$pass" -ne "$EXPECT_PASS" ]; then
   echo "glyf_$MODE: expected exactly $EXPECT_PASS passing, got $pass — raise EXPECT_PASS if this is the reader growing"
   exit 1

@@ -634,6 +634,41 @@ module Font {
         rows (r + 1) (Cons (cols 0 "", acc)) in
     rows 0 Nil;
 
+  // How much of each pixel the glyph covers, by counting subsamples — the pixel divided into `n` by
+  // `n` equal cells, each cell's CENTRE asked the inside question, and the count reported.
+  //
+  // Not "area, approximated". Area is the exact answer and no two rasterisers approximate it the same
+  // way, so a number reported as area would be an opinion. This is subsample coverage, which is a real
+  // antialiasing method with exactly one answer, and calling it by its own name is the difference
+  // between a gate that checks what was built and a gate that excuses it. Its error against true area
+  // shrinks as `n` grows and is never zero.
+  let coverage_str = fn (f: font) -> fn (gid: int) -> fn (ppem: int) -> fn (w: int) ->
+                     fn (h: int) -> fn (desc: int) -> fn (n: int) ->
+    let qs = _quads f gid in
+    let scale_u = float_of_int f.upem / float_of_int ppem in
+    let fn_ = float_of_int n in
+    let digits = "0123456789abcdefg" in
+    let rec rows = fn (r: int) -> fn (acc: str list) ->
+      if r >= h then str_join "/" (list_rev acc)
+      else
+        let rec cols = fn (cn: int) -> fn (line: str) ->
+          if cn >= w then line
+          else
+            let rec sub = fn (j: int) -> fn (hits: int) ->
+              if j >= n then hits
+              else
+                let y = (float_of_int (h - 1 - r - desc) + (float_of_int j + 0.5) / fn_) * scale_u in
+                let rec subx = fn (i: int) -> fn (k: int) ->
+                  if i >= n then k
+                  else
+                    let x = (float_of_int cn + (float_of_int i + 0.5) / fn_) * scale_u in
+                    subx (i + 1) (if _winding qs x y != 0 then k + 1 else k) in
+                sub (j + 1) (subx 0 hits) in
+            let c = sub 0 0 in
+            cols (cn + 1) (line ++ char_at digits c) in
+        rows (r + 1) (Cons (cols 0 "", acc)) in
+    rows 0 Nil;
+
   // A whole string rastered: the first thing that uses the metrics and the outlines TOGETHER.
   //
   // Each has been checked alone — the advances against a browser, the outlines against fontTools —
