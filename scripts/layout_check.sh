@@ -32,7 +32,7 @@
 # whole time. A corpus does not only tell you whether you are right. It tells you what to do
 # next, and it is the only thing here that can.
 #
-# The taxonomy, re-derived from the failures at 200 of 228 with all 228 box sequences right. **It is re-derived every time and
+# The taxonomy, re-derived from the failures at 201 of 228 with all 228 box sequences right. **It is re-derived every time and
 # never carried forward**, because it has been wrong four times: it once named `font-size`,
 # which not one document sets; then floats, which were a tenth of it; then anonymous boxes; then
 # floats beside each other, which was really a formatting context dodging one.
@@ -40,11 +40,20 @@
 #    6  a `<table>` sized wrong, all six of them documents whose table carries `height="200"` or
 #       `valign="bottom"` — PRESENTATIONAL ATTRIBUTES, which are not mapped to style at all. The
 #       cascade never sees them. That is a whole missing layer and not a layout bug.
-#    6  a `<div>` whose height is wrong on its own, and 4 more whose width is: shrink-to-fit and
-#       percentage heights, mostly in the `blocks-` family.
 #    4  the block-in-inline split, where a fragment wants to be taller than its line.
 #    4  a `<p>` holding inline-blocks that wrap, where `text-indent` also applies.
-#    7  the rest, one or two documents each.
+#    2  `white-space: nowrap`, which is not implemented, so the text wraps and the line count is wrong
+#       before anything about the boxes is.
+#    2  `text-indent`.
+#    9  the rest, one or two documents each.
+#
+# **A note on how long this takes.** The engine is superlinear in the number of sibling INLINE elements:
+# 40 spans in a paragraph take 1.5 seconds and 80 take 17. `inlines-004` has 130 of them and is the
+# slowest document in the corpus by a long way. This was measured, and measured again against an
+# earlier commit — 40 spans cost 1542ms then and 1594ms now — so it is not something the recent work
+# introduced, and it has not been chased. A wall-clock number from this script is not evidence on its
+# own: a run that took 2.5 hours and one that took 9 minutes were the same code on the same corpus,
+# with a load average of 21 and of 1.
 #
 # **Both sides measure with the same font, and they have to.** The expectations were first taken with
 # whatever font the browser defaulted to — on that machine a system font that cannot be
@@ -67,7 +76,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "layout_check: no mere — set MERE=..." >&2; exit 1; }
 DATA="$ROOT/test/data/layout"
-EXPECT_PASS=${EXPECT_PASS:-200}
+EXPECT_PASS=${EXPECT_PASS:-201}
 
 T="${TMPDIR:-/tmp}/mbrowse_layout.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 

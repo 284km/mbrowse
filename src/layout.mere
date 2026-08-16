@@ -401,10 +401,14 @@ module Layout {
   // whole length on one line, because "max content" means the width at which nothing wraps.
   let rec _max_content = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
                          fn (anc: elem list) -> fn (ns: node list) ->
+    // Once, not once per node. Resolving a font size walks the ancestor chain and matches selectors at
+    // every level of it, and `anc` does not change inside this walk — asking it per node made this the
+    // slowest thing in the engine and the answer was the same every time.
+    let mfs = _font_size ua author anc in
     let rec go = fn (xs: node list) -> fn (best: int) -> fn (run: str) ->
       match xs with
       | Nil ->
-        let w = Font.text_width f (_collapse_ws run) (_font_size ua author anc) in
+        let w = Font.text_width f (_collapse_ws run) mfs in
         if w > best then w else best
       | Cons (n, rest) ->
         match n with
@@ -417,7 +421,7 @@ module Layout {
             let inner = if st.w >= 0 then st.w
                         else _max_content f ua author (Cons (e, anc)) kids in
             let outer = inner + st.ml + st.mr + st.pl + st.pr + st.bl + st.br in
-            let w0 = Font.text_width f (_collapse_ws run) (_font_size ua author anc) in
+            let w0 = Font.text_width f (_collapse_ws run) mfs in
             go rest (if outer > best then (if outer > w0 then outer else w0)
                      else (if w0 > best then w0 else best)) ""
           else go rest best (run ++ _inline_text kids "")
@@ -469,8 +473,11 @@ module Layout {
           let ctx_rtl = match ancestors with
                         | Nil -> false
                         | Cons (c, up) -> Style.inherited ua author "direction" "ltr" c up == "rtl" in
-          let (ibs, ilines, ih, saw) =
-            _inline f ua author ancestors run cbw (_font_size ua author ancestors) ctx_rtl in
+          // Resolved once for this branch and used five times below. Each call walks the ancestor
+          // chain matching selectors at every level, and the answer cannot change between the uses.
+          let cfs = _font_size ua author ancestors in
+          let efs = _font_size ua author (Cons (e, ancestors)) in
+          let (ibs, ilines, ih, saw) = _inline f ua author ancestors run cbw cfs ctx_rtl in
           // An inline element with a block inside it is SPLIT by the standard. This does not split it;
           // it lays that element out as a block instead, which puts the boxes in the right order at the
           // right width and is the closer of the two wrong answers.
@@ -496,9 +503,9 @@ module Layout {
           // already reports whether it met a block, which is the same question in the same words.
           let piece_rtl = Style.inherited ua author "direction" "ltr" e ancestors == "rtl" in
           let (pbs, plines, _pih, ps_blk) = _inline f ua author (Cons (e, ancestors)) spl_before cbw
-                                                    (_font_size ua author (Cons (e, ancestors))) piece_rtl in
+                                                    efs piece_rtl in
           let (abs_, alines, _aih, as_blk) = _inline f ua author (Cons (e, ancestors)) spl_after cbw
-                                                     (_font_size ua author (Cons (e, ancestors))) piece_rtl in
+                                                     efs piece_rtl in
           // The general split. An inline element with block-level boxes in it becomes a sequence of
           // pieces and blocks: fragment, block, fragment, block, ..., fragment. Each fragment is a line
           // box carrying the element's edge on the side it is on — the FIRST fragment has the start edge
@@ -515,7 +522,7 @@ module Layout {
             let start_edge = if piece_rtl then st.br + st.pr else st.bl + st.pl in
             let end_edge = if piece_rtl then st.bl + st.pl else st.br + st.pr in
             let lh = _line_h f ua author (Cons (e, ancestors))
-                       (_font_size ua author (Cons (e, ancestors))) in
+                       efs in
             let top = y + _collapse open_mb 0 in
             let rec pieces = fn (ns2: node list) -> fn (yy: int) -> fn (isfirst: bool) ->
                              fn (acc2: box list) -> fn (uy0: int) -> fn (lastb: int) ->
@@ -526,7 +533,7 @@ module Layout {
               // that as it goes, so the question costs nothing to ask.
               let (pbs2a, plines2a, _pih2, pblk) =
                 _inline f ua author (Cons (e, ancestors)) bef cbw
-                        (_font_size ua author (Cons (e, ancestors))) piece_rtl in
+                        efs piece_rtl in
               let (pbs2, plines2) =
                 if not pblk then (pbs2a, plines2a)
                 else
@@ -1052,23 +1059,41 @@ module Layout {
             // exactly as it does a block: the cursor, the line and everything after are unmoved.
             let rdx = if est.position == "relative" && est.left >= 0 then est.left else 0 in
             let rdy = if est.position == "relative" && est.top >= 0 then est.top else 0 in
-            // NOT the union with its descendants. `block-in-inline-nested-002-ref` wants a `<span>` with
-            // no border of its own to be ten pixels taller than its line because the child inside it has a
-            // 5px border — and making every element's box cover its descendants cost two other documents,
-            // so that is not the rule. What the browser reports is the union of the element's own
-            // FRAGMENTS; whatever makes the fragment taller in that one case is not the child's border box
-            // as such, and has not been measured yet.
+            // An inline box's own area is the FONT's, not the LINE's, and it is not the same box once
+            // they can differ. The content area is the font's ascent and descent about the line's
+            // baseline — so with `line-height: 1` it is TALLER than the line it sits on and hangs out of
+            // it — and the padding and border are outside that. Vertical padding on an inline was being
+            // dropped entirely: `padding: 0.5em 0` on a span reported 22 tall where the browser says 38.
+            //
+            // Across lines it runs from the first line's content top to the last line's content bottom,
+            // which is not the sum of the line heights the moment anything on one of them is taller than
+            // text.
+            let fasc = natural - dnat in
+            let fy = ltop hs sl + hbase hs sl - fasc - est.pt - est.bt in
+            let fbot2 = ltop hs l2 + hbase hs l2 + dnat in
+            // NOT the union with its descendants, and this has now been tried TWICE and measured twice.
+            // `block-in-inline-nested-002-ref` wants a `<span>` with no border of its own to be ten pixels
+            // taller than its line because the child inside it has a 5px border, which reads exactly like
+            // a union. It was tried before the content area above was right and cost two documents, and
+            // again after — at which point it costs one, `block-in-inline-append-002-nosplit-ref`, and
+            // still gains none. So one of those two failures was the content area and the other was not
+            // the union either.
+            //
+            // What the browser reports is the union of the element's own FRAGMENTS. Whatever makes that
+            // fragment taller in this one document is something else, and writing down which experiments
+            // have been run is worth more here than another guess: the obvious repair is a net loss and
+            // will look obvious again next time.
             walk rest x2 l2 g2 (saw2 || _is_block_level est.display) (placed || x2 > sx)
                  (online || lead + trail > 0 || x2 > sx) fcur2 (if mx2 > maxx then mx2 else maxx) hc2
                  (list_append (_shift inner rdx rdy)
-                    (Cons (box { tag = to_lower tag, x = bx + rdx, y = ltop hs sl - est.bt + rdy,
+                    (Cons (box { tag = to_lower tag, x = bx + rdx, y = fy + rdy,
                                  w = if bw < 0 then 0 else bw,
                                  // An element that advanced nothing and has no edges has no height — but
                                  // only when there is no LINE for it to sit on. Inside others that have
                                  // taken room it is on their line and is a line tall.
                                  h = if l2 == sl && x2 == sx && est.bt + est.bb == 0
                                         && not online && lead + trail == 0 then 0
-                                     else ltop hs (l2 + 1) - ltop hs sl + est.bt + est.bb,
+                                     else fbot2 + est.pb + est.bb - fy,
                                  pinned = false }, acc)))
           | Comment _c ->
             walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) hc acc
