@@ -54,6 +54,11 @@ this repo can break.
 What is NOT here: painting. Layout produces boxes and the font machinery produces ink, and nothing
 yet puts the second inside the first — so there is no window, no picture, and no reftest.
 
+[`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md) is what this repository knows it does not know, with the
+repairs that have already been tried and measured and rejected. Several of the remaining failures
+have an obvious fix that costs more than it gains; that is worth more written down than a list of
+failures on its own, which invites someone to try the thing that has already been tried.
+
 Dependencies are vendored into `.mere_modules/` (Mere resolves
 `import "<package>/<module>.mere"` by walking up to the nearest one) and committed,
 so a checkout builds without fetching anything. `scripts/vendor.sh` is what put them
