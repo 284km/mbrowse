@@ -810,6 +810,20 @@ module Layout {
               | Cons (e0, up) ->
                 let v = Style.inherited ua author "white-space" "normal" e0 up in
                 v == "nowrap" || v == "pre" in
+    // `text-indent` moves the FIRST line only, which is why it belongs here and not in the box model:
+    // it is not padding, it does not move the box, and every line after the first starts where it always
+    // did. It inherits, so an inline-block inside an indented paragraph is indented too unless it says
+    // otherwise — which is exactly what the two documents that use it are checking.
+    let tiu =
+      match anc with
+      | Nil -> 0
+      | Cons (e0, up) ->
+        let v = Style.inherited ua author "text-indent" "" e0 up in
+        if v == "" then 0
+        else if str_index_of v "%" >= 0 then
+          (let q = Style.pct_of v in if q < 0 then 0 else Font.text_units_of_px f ((cw * q) / 100) size)
+        // Measured in the element's OWN font size, like every other length it owns.
+        else Font.text_units_of_px f (Style.px_at (fn (_z: int) -> size) v) size in
     let natural = Font.line_height f size in
     let dnat = Font.scale f (0 - f.descender) size in
     let half = (lh - natural) / 2 in
@@ -852,25 +866,30 @@ module Layout {
     // list the separator is implied by the split itself, so every word after the first gets a space
     // whatever the flag says, and the flag applies only to the first. Carrying it forward instead put
     // a space between `<span>One</span>` and `<span>Two</span>`, where the source has none.
+    // `mx` is the rightmost the cursor has been, and it has to be reported from HERE: a line that wrapped
+    // ended somewhere, and only this loop knows where. The caller sees the cursor before the run and the
+    // cursor after it, and on a run that wrapped neither of those is the end of any line.
     let rec words = fn (ws: str list) -> fn (x: int) -> fn (line: int) -> fn (gap: bool) ->
-                    fn (first: bool) -> fn (placed: bool) -> fn (nw: bool) ->
+                    fn (first: bool) -> fn (placed: bool) -> fn (nw: bool) -> fn (mx: int) ->
       match ws with
-      | Nil -> (x, line, gap, placed)
+      | Nil -> (x, line, gap, placed, if x > mx then x else mx)
       | Cons (w, rest) ->
         // An empty piece is where a space was, and a trailing one is how a list says it ended in one.
-        if w == "" then words rest x line true first placed nw
+        if w == "" then words rest x line true first placed nw mx
         else
           let wu = Font.text_units f w in
           let need = if first then gap else true in
-          if not placed then words rest (x + wu) line false false true nw
+          if not placed then words rest (x + wu) line false false true nw mx
           else if nw || x + (if need then space else 0) + wu <= cap then
             // `nowrap` means the line does not end where it runs out of room. It ends where the source
             // says — at a `<br>`, or nowhere — and the text overflows its container, which is the
             // point of asking for it.
-            words rest (x + (if need then space else 0) + wu) line false false true nw
+            words rest (x + (if need then space else 0) + wu) line false false true nw mx
           // A word that does not fit starts the next line, and one wider than the whole line gets a
-          // line of its own and overflows — which is what a browser does rather than cutting it.
-          else words rest wu (line + 1) false false true nw in
+          // line of its own and overflows — which is what a browser does rather than cutting it. The
+          // cursor at this moment is where the line it is leaving ENDED, which is the only place that
+          // number exists.
+          else words rest wu (line + 1) false false true nw (if x > mx then x else mx) in
     // Floats come out of the inline content before anything is placed. A float is not on the line — it
     // is beside it — so it takes room at the line's left edge, everything else starts after it, and a run
     // holding nothing but a float makes no line at all. Hoisting them first is what lets the element that
@@ -934,9 +953,9 @@ module Layout {
           match n with
           | Text t ->
             // Split on the collapsed text so an empty piece marks where a space was.
-            let (x2, l2, g2, p2) =
-              words (str_split (_collapse_runs t) " ") x line gap true placed nw in
-            walk rest x2 l2 g2 saw p2 (online || p2) fcur (if x > maxx then x else maxx) nw hc acc
+            let (x2, l2, g2, p2, wmx) =
+              words (str_split (_collapse_runs t) " ") x line gap true placed nw maxx in
+            walk rest x2 l2 g2 saw p2 (online || p2) fcur wmx nw hc acc
           | Element (tag, attrs, ks) ->
             // An element's box starts at its first GLYPH, not at the cursor. A space owed from before it
             // belongs to the text outside, so counting the cursor made every inline element four pixels
@@ -1046,7 +1065,10 @@ module Layout {
             // An element that consumes nothing still has to hand the space back, which is why the gap is
             // restored afterwards rather than passed in. Swallowing it cost eleven documents once.
             let (inner, x2u, l2, g2a, saw2, fcur2, mx2, hc2) =
-              walk ks (sx + lead) line false saw placed (online || lead + trail > 0) fcur maxx
+              // Starting the inner walk's rightmost at ZERO and not at the outer one: the union this
+              // element reports is of ITS fragments, and inheriting the widest anything before it
+              // reached made a span as wide as whatever preceded it on the line.
+              walk ks (sx + lead) line false saw placed (online || lead + trail > 0) fcur 0
                    (nw || est.ws == "nowrap" || est.ws == "pre") hc Nil in
             let g2 = if x2u == sx + lead then gap else g2a in
             // Still not right for `block-in-inline-nested-002-ref`, and the residue is one space: the
@@ -1061,16 +1083,24 @@ module Layout {
             // A right-to-left line is filled from the right, so a fragment's left edge is the width less
             // where it ENDS. Mirroring the whole extent rather than each coordinate keeps the box the same
             // size it was, which is the only part of it the direction does not change.
-            let bx = if rtl then cw - Font.scale f x2 size else Font.scale f sx size in
+            // A fragment that spans lines starts at the LINE's left edge and not at its own first
+            // fragment's, because the union of its fragments reaches back to wherever the second line
+            // began. Reading the first fragment's start put an `<a>` that wraps at x = 694 — where its
+            // first line picks up near the right margin — instead of at 8, where its second line starts.
+            let bx = if rtl then cw - Font.scale f x2 size
+                     else if l2 == sl then Font.scale f sx size
+                     else Font.scale f float_w size in
             // The WIDTH is the scaled difference, not the difference of two scaled numbers. Rounding each
             // end and subtracting rounds twice and lands a pixel out — the same "scale once" the glyph
             // advances and the table columns already needed, met a third time.
-            // Across lines, the box is as wide as its widest fragment. `cw - bx` is the container, which
-            // is right when the container is what the lines were measured against and zero when the
-            // container is zero — and text in a zero-width container still has a width.
+            // Across lines it reaches from that left edge to the rightmost point any of its fragments
+            // got to, which the walk has been tracking. The floor of `cw - bx` that used to be here was
+            // the container's width, and a union of fragments is not the container: it made an element
+            // that wraps three pixels too wide, and it was right only where the widest fragment happened
+            // to fill the line.
             let across = let m = if mx2 > x2 then mx2 else x2 in
                          let byw = Font.scale f m size - bx in
-                         if byw > cw - bx then byw else cw - bx in
+                         if byw > 0 then byw else 0 in
             let bw = if l2 == sl then Font.scale f (x2 - sx) size else across in
             // Relative positioning moves an inline fragment and its contents after they are laid out,
             // exactly as it does a block: the cursor, the line and everything after are unmoved.
@@ -1116,7 +1146,7 @@ module Layout {
             walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) nw hc acc
           | Doctype (_p, _q, _r) ->
             walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) nw hc acc in
-      walk kids float_w 0 false false false false 0 0 nw0 Nil Nil in
+      walk kids (float_w + tiu) 0 false false false false 0 0 nw0 Nil Nil in
     let (bs0, x0, line0, _g0, saw0, _fc0, _mx0, hc0) = onepass Nil in
     // Nothing but text on any line means the first pass already placed everything against the right
     // tops, and the second is skipped. This is the common case by a long way.
@@ -1126,7 +1156,7 @@ module Layout {
       | Cons (_c0, _r0) ->
         let (bs1, x1, line1, _g1, saw1, _fc1, _mx1, hc1) = onepass hc0 in
         (bs1, x1, line1, saw1, hc1) in
-    let n = if x == float_w && line == 0 then 0 else line + 1 in
+    let n = if x == float_w + tiu && line == 0 then 0 else line + 1 in
     // The third answer: whether anything block-level turned up inside. Asking that as a QUERY before
     // laying out means walking every descendant of every element and resolving its style each time —
     // which is note 166's square, and here it was worse than a square and did not finish. Reporting it
