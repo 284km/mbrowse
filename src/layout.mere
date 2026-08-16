@@ -1290,8 +1290,28 @@ module Layout {
     let sum_cols = let rec go = fn (xs: int list) -> fn (a: int) ->
                      match xs with Nil -> a | Cons (x, r) -> go r (a + x) in
                    go px_cols 0 in
-    let inner = if ncols == 0 then 0 else sum_cols + sp * (ncols + 1) in
+    // A table with no rows in it still has contents. `<div style="display: table">test</div>` has no
+    // `<tr>` and no `<td>`, and the standard generates them: the text is wrapped in an anonymous cell
+    // inside an anonymous row. What is here is NOT that — it is the width of the case where there are
+    // no rows at all, which is the table shrinking to fit what it holds. The anonymous boxes themselves
+    // are still missing, so the contents generate no boxes and only the table's own width is right.
+    // The corpus has one document that asks and it asks only for the width.
+    let inner = if ncols == 0 then _max_content f ua author anc kids
+                else sum_cols + sp * (ncols + 1) in
     let table_w = if st.w >= 0 then st.w else if inner > avail then avail else inner in
+    // ...and it lays those contents out as a block container would, which is the anonymous cell the
+    // standard generates standing in for itself. Only when there are no rows: with rows the cells are
+    // real and none of this is reached. It is enough for a table whose content is one paragraph and is
+    // not enough for one that mixes bare text with real rows — the standard's rule for that wraps the
+    // stray content in its own anonymous row, and this does not.
+    let (nobs, nobh) =
+      if ncols > 0 then (Nil, 0)
+      else
+        let rtl0 = match anc with
+                   | Nil -> false
+                   | Cons (a0, up0) -> Style.inherited ua author "direction" "ltr" a0 up0 == "rtl" in
+        let (ibs0, _in0, ih0, _isaw0) = _inline f ua author anc kids table_w tfs rtl0 in
+        (ibs0, ih0) in
     // Document order, built forwards. A table's boxes are a group, then its rows, and each row's cells
     // straight after it — an accumulator that is reversed at the end puts the cells before their row.
     let rec lay = fn (rowex: int) -> fn (gs: (str * attr list * node list * sty) list) -> fn (y: int) ->
@@ -1447,7 +1467,7 @@ module Layout {
     let endy = y3 in
     // The last row already left a spacing behind it, so one more closes the table and two would count
     // the gap after the final row twice.
-    (bs, table_w, endy + sp)
+    (if ncols == 0 then nobs else bs, table_w, if ncols == 0 then nobh else endy + sp)
 
   // One block box and everything under it, at coordinates relative to its own border box.
   and _block = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
