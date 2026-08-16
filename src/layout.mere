@@ -774,7 +774,14 @@ module Layout {
           // two margins join the run rather than ending it, so the cursor does not move past it and it
           // adds nothing to the parent's height. The box is still placed, and after the gap — which is
           // why an empty `<div>` after a paragraph sits below its parent's own bottom edge.
-          let through = fh == 0 in
+          //
+          // ...and only when the height is AUTO. A box whose height is stated does not collapse
+          // through even when the number stated is zero: `div { height: 0 }` around content that
+          // overflows it is still a box that the flow reached, and its parent's height reaches it.
+          // Asking "is it zero tall" instead of "did it say how tall" made a document's body sixteen
+          // pixels short while every box inside it was exactly right — which is what a total being the
+          // only wrong number looks like.
+          let through = fh == 0 && st.h < 0 && st.h_pct < 0 in
           // A float that escaped this child is still in this box's flow, so its reach is remembered here
           // and keeps escaping until a box contains it.
           let (fr0, fb0) = fs in
@@ -1613,7 +1620,11 @@ module Layout {
     (Cons (me, inner), h,
      (if sep_top then st.mt else _collapse st.mt first_mt),
      (if sep_bot then st.mb else _collapse st.mb open_mb),
-     (if makes_bfc then 0 else fbot + st.bt + st.pt));
+     // ...and NO float reached anywhere is not a float that reached this box's top border. `fbot` is
+     // zero when nothing escaped, and adding the border and padding to it turned that zero into a
+     // number — a `border: 100px` box with no float in it reported a float reaching 100 pixels down,
+     // and the page grew to hold a float that does not exist.
+     (if makes_bfc || fbot == 0 then 0 else fbot + st.bt + st.pt));
 
   // The font is a parameter and not a constant, because it is the one input to layout that is a file.
   // Loaded once per document: reading it per box would read half a megabyte for every element.
