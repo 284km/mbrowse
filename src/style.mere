@@ -24,6 +24,10 @@ type sty = {
   // Whether `width` and `height` state the CONTENT box or the BORDER box. One property that changes
   // what two others mean, which is why it is a field and not a special case at the one call site.
   bsz: str,
+  // `white-space`, as this element itself states it. It INHERITS, and what is here is the own value —
+  // the inline walk carries the inherited one down as it descends, which is the same walk that would
+  // have to be done to ask for it.
+  ws: str,
   left: int, top: int,                 // -1 when the property said nothing
   w: int, h: int,                      // -1 for auto
   w_pct: int, h_pct: int,              // -1 when not a percentage
@@ -573,6 +577,7 @@ module Style {
       // yet, which is a separate gap the corpus also names.
       valign = let v = to_lower (get "vertical-align") in if v == "" then "baseline" else v,
       bsz = let v = to_lower (get "box-sizing") in if v == "" then "content-box" else v,
+      ws = to_lower (get "white-space"),
       // `auto` and absent are the same answer here — both mean "the box goes where it would have gone",
       // which is the static position, and only a length says otherwise.
       left = let v = get "left" in if v == "" || to_lower v == "auto" then 0 - 1 else px_of v,

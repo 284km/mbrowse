@@ -73,7 +73,7 @@ module Layout {
           overflow = st.overflow, valign = st.valign, left = st.left, top = st.top,
           // A shrink-to-fit width is a CONTENT width by construction — it was measured from the
           // contents — so the box it is put into has to be told to read it as one.
-          bsz = "content-box",
+          bsz = "content-box", ws = st.ws,
           w = w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
           mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = st.pr, pb = st.pb, pl = st.pl,
@@ -82,7 +82,7 @@ module Layout {
   let _no_h_edges = fn (st: sty) ->
     sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
           overflow = st.overflow, valign = st.valign, left = st.left, top = st.top,
-          bsz = st.bsz, w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
+          bsz = st.bsz, ws = st.ws, w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
           mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = 0, pb = st.pb, pl = 0,
           bt = st.bt, br = 0, bb = st.bb, bl = 0 };
@@ -802,6 +802,14 @@ module Layout {
     // line-height smaller than the font's puts the baseline higher than the font alone would, and the
     // text hangs out of its own line box. Taking `asc` as the remainder keeps `asc + desc == lh`, which
     // two roundings that each land right can still break.
+    // `white-space: nowrap` for the box whose content this is. It inherits, so the walk below carries
+    // it DOWN as it descends into elements — which is the same descent that asking for the inherited
+    // value would have to make, done once instead of once per element.
+    let nw0 = match anc with
+              | Nil -> false
+              | Cons (e0, up) ->
+                let v = Style.inherited ua author "white-space" "normal" e0 up in
+                v == "nowrap" || v == "pre" in
     let natural = Font.line_height f size in
     let dnat = Font.scale f (0 - f.descender) size in
     let half = (lh - natural) / 2 in
@@ -845,21 +853,24 @@ module Layout {
     // whatever the flag says, and the flag applies only to the first. Carrying it forward instead put
     // a space between `<span>One</span>` and `<span>Two</span>`, where the source has none.
     let rec words = fn (ws: str list) -> fn (x: int) -> fn (line: int) -> fn (gap: bool) ->
-                    fn (first: bool) -> fn (placed: bool) ->
+                    fn (first: bool) -> fn (placed: bool) -> fn (nw: bool) ->
       match ws with
       | Nil -> (x, line, gap, placed)
       | Cons (w, rest) ->
         // An empty piece is where a space was, and a trailing one is how a list says it ended in one.
-        if w == "" then words rest x line true first placed
+        if w == "" then words rest x line true first placed nw
         else
           let wu = Font.text_units f w in
           let need = if first then gap else true in
-          if not placed then words rest (x + wu) line false false true
-          else if x + (if need then space else 0) + wu <= cap then
-            words rest (x + (if need then space else 0) + wu) line false false true
+          if not placed then words rest (x + wu) line false false true nw
+          else if nw || x + (if need then space else 0) + wu <= cap then
+            // `nowrap` means the line does not end where it runs out of room. It ends where the source
+            // says — at a `<br>`, or nowhere — and the text overflows its container, which is the
+            // point of asking for it.
+            words rest (x + (if need then space else 0) + wu) line false false true nw
           // A word that does not fit starts the next line, and one wider than the whole line gets a
           // line of its own and overflows — which is what a browser does rather than cutting it.
-          else words rest wu (line + 1) false false true in
+          else words rest wu (line + 1) false false true nw in
     // Floats come out of the inline content before anything is placed. A float is not on the line — it
     // is beside it — so it takes room at the line's left edge, everything else starts after it, and a run
     // holding nothing but a float makes no line at all. Hoisting them first is what lets the element that
@@ -910,6 +921,10 @@ module Layout {
                      // fragment, not as wide as the container — and with `width: 0` the container is no
                      // width at all while the text still has to go somewhere.
                      fn (maxx: int) ->
+                     // `white-space: nowrap`, carried DOWN rather than asked for: it inherits, and the
+                     // walk is already descending through exactly the elements whose values would have
+                     // to be consulted.
+                     fn (nw: bool) ->
                      // What has been found out about the lines so far, threaded rather than returned
                      // from a second traversal: the walk already visits everything exactly once.
                      fn (hc: (int * int * int * int) list) -> fn (acc: box list) ->
@@ -919,8 +934,9 @@ module Layout {
           match n with
           | Text t ->
             // Split on the collapsed text so an empty piece marks where a space was.
-            let (x2, l2, g2, p2) = words (str_split (_collapse_runs t) " ") x line gap true placed in
-            walk rest x2 l2 g2 saw p2 (online || p2) fcur (if x > maxx then x else maxx) hc acc
+            let (x2, l2, g2, p2) =
+              words (str_split (_collapse_runs t) " ") x line gap true placed nw in
+            walk rest x2 l2 g2 saw p2 (online || p2) fcur (if x > maxx then x else maxx) nw hc acc
           | Element (tag, attrs, ks) ->
             // An element's box starts at its first GLYPH, not at the cursor. A space owed from before it
             // belongs to the text outside, so counting the cursor made every inline element four pixels
@@ -951,7 +967,7 @@ module Layout {
             // reports for it. At the CURSOR and not past a pending space: a space before a break is at
             // the end of a line, and a line's trailing white space is removed.
             if to_lower tag == "br" then
-              walk rest 0 (line + 1) false saw false false fcur (if x > maxx then x else maxx) hc
+              walk rest 0 (line + 1) false saw false false fcur (if x > maxx then x else maxx) nw hc
                 (Cons (box { tag = "br", x = Font.scale f x size, y = ltop hs line, w = 0,
                              h = hline hs line, pinned = false }, acc))
             else
@@ -960,7 +976,7 @@ module Layout {
               // its own box goes down here so that it lands in document order.
               let fw = Font.text_units f (_collapse_ws (_inline_text ks "")) + est.bl + est.pl
                        + est.pr + est.br in
-              walk rest x line gap saw placed online (fcur + fw) maxx hc
+              walk rest x line gap saw placed online (fcur + fw) maxx nw hc
                 (list_append acc
                    (Cons (box { tag = to_lower tag, x = Font.scale f fcur size, y = 0,
                                 w = Font.scale f fw size, h = lh, pinned = false }, Nil)))
@@ -1015,7 +1031,7 @@ module Layout {
               let ay = if top_aligned then ltop hs al
                        else ltop hs al + hbase hs al - a_above in
               walk rest (ax + advu) al false saw true true fcur
-                   (if ax + advu > maxx then ax + advu else maxx)
+                   (if ax + advu > maxx then ax + advu else maxx) nw
                    (Cons ((al, (if top_aligned then 0 else a_above),
                            (if top_aligned then 0 else a_below),
                            (if top_aligned then mh else 0)), hc))
@@ -1030,7 +1046,8 @@ module Layout {
             // An element that consumes nothing still has to hand the space back, which is why the gap is
             // restored afterwards rather than passed in. Swallowing it cost eleven documents once.
             let (inner, x2u, l2, g2a, saw2, fcur2, mx2, hc2) =
-              walk ks (sx + lead) line false saw placed (online || lead + trail > 0) fcur maxx hc Nil in
+              walk ks (sx + lead) line false saw placed (online || lead + trail > 0) fcur maxx
+                   (nw || est.ws == "nowrap" || est.ws == "pre") hc Nil in
             let g2 = if x2u == sx + lead then gap else g2a in
             // Still not right for `block-in-inline-nested-002-ref`, and the residue is one space: the
             // browser puts an inline element four pixels to the left of where this does, once, at the
@@ -1084,7 +1101,7 @@ module Layout {
             // have been run is worth more here than another guess: the obvious repair is a net loss and
             // will look obvious again next time.
             walk rest x2 l2 g2 (saw2 || _is_block_level est.display) (placed || x2 > sx)
-                 (online || lead + trail > 0 || x2 > sx) fcur2 (if mx2 > maxx then mx2 else maxx) hc2
+                 (online || lead + trail > 0 || x2 > sx) fcur2 (if mx2 > maxx then mx2 else maxx) nw hc2
                  (list_append (_shift inner rdx rdy)
                     (Cons (box { tag = to_lower tag, x = bx + rdx, y = fy + rdy,
                                  w = if bw < 0 then 0 else bw,
@@ -1096,10 +1113,10 @@ module Layout {
                                      else fbot2 + est.pb + est.bb - fy,
                                  pinned = false }, acc)))
           | Comment _c ->
-            walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) hc acc
+            walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) nw hc acc
           | Doctype (_p, _q, _r) ->
-            walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) hc acc in
-      walk kids float_w 0 false false false false 0 0 Nil Nil in
+            walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) nw hc acc in
+      walk kids float_w 0 false false false false 0 0 nw0 Nil Nil in
     let (bs0, x0, line0, _g0, saw0, _fc0, _mx0, hc0) = onepass Nil in
     // Nothing but text on any line means the first pass already placed everything against the right
     // tops, and the second is skipped. This is the common case by a long way.
