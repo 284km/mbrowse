@@ -45,6 +45,7 @@ sh scripts/check.sh
 | layout geometry        | a browser's own rects          | 218 of 228 |
 | layout box sequence    | the same                       | 228 of 228 |
 | character positions    | a browser's `Range` rects      | 112 of 228 |
+| reftests               | no oracle — two of our own     | 61 of 109  |
 | font metrics           | a browser's `measureText`      | 29 of 29   |
 | glyph outlines, 5 ways | fontTools                      | exact      |
 
@@ -58,8 +59,15 @@ character somewhere else.** No box gate can see that. The causes are ligatures �
 substitutes `fi` with one glyph through GSUB and nothing here does — and single-pixel drift along a
 line.
 
-What is NOT here: painting. Layout says where every box and every glyph goes, and nothing yet turns
-that into pixels — so there is no window, no picture, and no reftest.
+**Reftests need no oracle**, and they are the only gate here that does not. Every other one asks "is
+this right" and answers with something written by somebody else; a reftest asks "do these two pages
+look the same", and both sides of that are ours — so nothing is committed as an expectation and
+nothing is regenerated when the engine changes. Which is exactly why they could not come first: an
+engine that draws nothing passes every one. The geometry is independently checked, so a blank page
+would already be failing elsewhere, and the reftests are free to check what geometry cannot — colour,
+what covers what, and whether the ink lands inside the box measured for it.
+
+What is NOT here: a window. The picture exists as pixels and nothing puts it on a screen.
 
 [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md) is what this repository knows it does not know, with the
 repairs that have already been tried and measured and rejected. Several of the remaining failures

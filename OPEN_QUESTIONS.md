@@ -101,27 +101,27 @@ Two causes, from the diffs:
 **What would settle it:** GSUB for the first; a decision about fractional box widths for the second.
 They are independent.
 
-## Q-6. Painting
+## Q-6. Painting — done, and what it costs
 
-Layout produces boxes. The font machinery produces ink. Nothing puts the second inside the first, so
-there is no picture, no window, and no reftest.
+Closed. `src/paint.mere` turns boxes and glyphs into pixels and `reftest_check.sh` compares 109 pairs
+the WPT authors named: **61 pass**. The pipeline runs end to end — bytes, characters, tokens, a DOM,
+styles, boxes, ink.
 
-**The first piece is done.** Layout says where each glyph goes: a glyph's box is in the same list as
-an element's, told apart by a code point, and `render_glyphs` is the other half of the list `render`
-already prints. `glyphpos_check.sh` measures it against a browser's `Range` rects.
+Two things it leaves open.
 
-What is left is the picture itself, and the shape of it is not yet decided:
+**It takes about ninety minutes**, because painting asks the outline whether it covers each pixel of
+each glyph's box and there are 218 pages of them. That is the honest cost of the only gate that
+draws; it runs last and is the one to skip while iterating. Making it quick means a real rasteriser —
+scanline, one pass per row per contour — instead of a point-in-path test per pixel. Nothing here needs
+that yet.
 
-  - **colour**, which `sty` does not carry at all. Without it a reftest cannot tell a green square
-    from a red one, which is what half of the WPT reftests are about.
-  - **what to compare.** A page is 800 pixels wide and can be 800 tall; a character grid of that is
-    half a million cells per document, and there are reftest pairs in the dozens. Comparing hashes
-    makes a failure undebuggable. This needs a decision before code.
+**Painting order is document order**, so later boxes cover earlier ones. That is right for everything
+without `z-index` and this corpus has not yet said otherwise; when it does, the answer is stacking
+contexts and not a bigger sort.
 
-**What it would unlock:** reftests, which are worth running now for exactly the reason they were the
-wrong gate to start with. An engine that draws nothing passes every reftest, so they could not come
-first; the geometry is independently checked now, so they can come next, and they check what geometry
-cannot — colour, stacking, and where the ink actually lands.
+The 48 failures are the layout failures seen from the other side. A test and its reference that lay
+out to different heights are two different pictures, and a reftest cannot say which of the two is
+wrong — that is what the other gates are for. It says that two pages disagree.
 
 ## Q-7. How long the layout gate takes
 
