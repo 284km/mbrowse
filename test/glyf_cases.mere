@@ -5,9 +5,11 @@
 // what is in it. A pair of readers that disagree about the id would otherwise both be "right" about
 // two different glyphs.
 //
-// The second argument chooses which of the two forms to print — the raw stored points, or the
-// segments they become. One runner, because the corpus of glyphs is the same and only the question
-// asked of each differs.
+// The second argument chooses which form to print — the raw stored points, the segments they become,
+// or which pixel centres those segments enclose. One runner, because the corpus of glyphs is the same
+// and only the question asked of each differs. The raster grid's four numbers are here and in
+// `gen_raster_expected.py`, and they have to agree: they are what makes the two sides raster the same
+// window rather than two different pictures of the same glyph.
 import "../src/font.mere";
 
 let path = match args () with Cons (p, _) -> p | Nil -> "";
@@ -22,6 +24,7 @@ let rec go = fn (ls: str list) ->
     else
       let g = Font.glyph f (int_of_str l) in
       let _ = print (if mode == "segments" then Font.segments_str f g
+                     else if mode == "raster" then Font.raster_str f g 24 30 32 6
                      else Font.outline_str f g) in
       go rest;
 

@@ -518,6 +518,122 @@ module Font {
                           , Cons ("M " ++ str_of_int sx ++ " " ++ str_of_int sy, acc))) in
     str_join " " (contours es 0 Nil);
 
+  // ---- rasterising ----------------------------------------------------------------------------
+
+  // Every segment as a QUADRATIC, straight ones included. A quadratic whose control point is the
+  // midpoint of its ends IS the straight line between them — the two `t` terms collapse — so the
+  // winding code below has one case instead of two, and the case it has is the harder one, which is
+  // the right way round for a piece of arithmetic nobody can eyeball.
+  let _quads = fn (f: font) -> fn (gid: int) ->
+    let (es, xs, ys, os) = _points f gid 0 0 0 in
+    let nth = fn (l: int list) -> fn (i: int) ->
+      let rec go = fn (r: int list) -> fn (k: int) ->
+        match r with Nil -> 0 | Cons (v, rest) -> if k == 0 then v else go rest (k - 1) in
+      go l i in
+    let fx = fn (i: int) -> float_of_int (nth xs i) in
+    let fy = fn (i: int) -> float_of_int (nth ys i) in
+    let on = fn (i: int) -> nth os i == 1 in
+    let half = fn (a: float) -> fn (b: float) -> (a + b) / 2.0 in
+    let rec contours = fn (ends: int list) -> fn (from: int) ->
+                       fn (acc: (float * float * float * float * float * float) list) ->
+      match ends with
+      | Nil -> acc
+      | Cons (e, rest) ->
+        if e < from then contours rest (e + 1) acc
+        else
+          let (sx, sy, first) =
+            if on from then (fx from, fy from, from + 1)
+            else if on e then (fx e, fy e, from)
+            else (half (fx e) (fx from), half (fy e) (fy from), from) in
+          let last = if on from then e else (if on e then e - 1 else e) in
+          let rec walk = fn (i: int) -> fn (ax: float) -> fn (ay: float) ->
+                         fn (px: float) -> fn (py: float) -> fn (have: bool) ->
+                         fn (out: (float * float * float * float * float * float) list) ->
+            if i > last then
+              if have then Cons ((ax, ay, px, py, sx, sy), out)
+              else Cons ((ax, ay, half ax sx, half ay sy, sx, sy), out)
+            else
+              let cx = fx i in
+              let cy = fy i in
+              if on i then
+                if have then walk (i + 1) cx cy 0.0 0.0 false (Cons ((ax, ay, px, py, cx, cy), out))
+                else walk (i + 1) cx cy 0.0 0.0 false
+                          (Cons ((ax, ay, half ax cx, half ay cy, cx, cy), out))
+              else
+                if have then
+                  let mx = half px cx in
+                  let my = half py cy in
+                  walk (i + 1) mx my cx cy true (Cons ((ax, ay, px, py, mx, my), out))
+                else walk (i + 1) ax ay cx cy true out in
+          contours rest (e + 1) (walk first sx sy 0.0 0.0 false acc) in
+    contours es 0 Nil;
+
+  // The winding number of the outline about a point, counted along the ray going in +x. A crossing
+  // is worth +1 or -1 by the direction the curve is travelling in y, which is what makes this the
+  // NONZERO rule and not the even-odd one — the two disagree exactly where a shape overlaps itself.
+  //
+  // `t` is taken on the half-open interval [0, 1). A point shared by two segments belongs to the one
+  // that starts there, or every join in the outline would be counted twice.
+  let _winding = fn (qs: (float * float * float * float * float * float) list) ->
+                 fn (px: float) -> fn (py: float) ->
+    let rec go = fn (r: (float * float * float * float * float * float) list) -> fn (w: int) ->
+      match r with
+      | Nil -> w
+      | Cons (q, rest) ->
+        let (x0, y0, cx, cy, x1, y1) = q in
+        let a = y0 - 2.0 * cy + y1 in
+        let b = 2.0 * (cy - y0) in
+        let c = y0 - py in
+        // One crossing's worth: does this `t` land on the segment, ahead of the point, and which way
+        // is the curve going through it.
+        let hit = fn (t: float) -> fn (acc: int) ->
+          if t < 0.0 || t >= 1.0 then acc
+          else
+            let u = 1.0 - t in
+            let x = u * u * x0 + 2.0 * t * u * cx + t * t * x1 in
+            if x <= px then acc
+            else
+              let dy = 2.0 * a * t + b in
+              if dy > 0.0 then acc + 1 else if dy < 0.0 then acc - 1 else acc in
+        let w2 =
+          if a > 0.0 - 0.000001 && a < 0.000001 then
+            // Linear in y. A segment that is exactly horizontal crosses nothing: the ray runs along
+            // it, and a ray that grazes an edge has to count zero or the two sides of a flat top
+            // disagree.
+            (if b > 0.0 - 0.000001 && b < 0.000001 then w else hit (0.0 - c / b) w)
+          else
+            let disc = b * b - 4.0 * a * c in
+            if disc < 0.0 then w
+            else
+              let sq = sqrt disc in
+              let t1 = (0.0 - b + sq) / (2.0 * a) in
+              let t2 = (0.0 - b - sq) / (2.0 * a) in
+              // Both roots, and when the discriminant is zero they are the same number — counted
+              // twice, which is right: the curve touches the ray and turns back, and the two
+              // crossings have opposite directions and cancel.
+              hit t2 (hit t1 w) in
+        go rest w2 in
+    go qs 0;
+
+  // The pixel centres inside a glyph, as one line of `#` and `.` with rows joined by `/`. The grid is
+  // fixed by the four numbers the generator uses, and the question asked of each pixel is the one
+  // question about rasterising that has a single answer: is its CENTRE inside.
+  let raster_str = fn (f: font) -> fn (gid: int) -> fn (ppem: int) -> fn (w: int) ->
+                   fn (h: int) -> fn (desc: int) ->
+    let qs = _quads f gid in
+    let scale_u = float_of_int f.upem / float_of_int ppem in
+    let rec rows = fn (r: int) -> fn (acc: str list) ->
+      if r >= h then str_join "/" (list_rev acc)
+      else
+        let y = (float_of_int (h - 1 - r - desc) + 0.5) * scale_u in
+        let rec cols = fn (cn: int) -> fn (line: str) ->
+          if cn >= w then line
+          else
+            let x = (float_of_int cn + 0.5) * scale_u in
+            cols (cn + 1) (line ++ (if _winding qs x y != 0 then "#" else ".")) in
+        rows (r + 1) (Cons (cols 0 "", acc)) in
+    rows 0 Nil;
+
   // A glyph's outline in the canonical form the gate compares, which is the RAW points: the
   // coordinates as they are stored, before any curve is flattened or any component placed. Comparing
   // those against fontTools is exact. Comparing a flattened shape would compare two flattenings.

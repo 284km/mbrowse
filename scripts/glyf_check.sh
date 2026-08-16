@@ -28,10 +28,21 @@
 # **The expected values are committed.** `gen_glyf_expected.py` needs fontTools; a gate that needs a
 # Python package fails for reasons that have nothing to do with the code.
 #
-# **Two modes over the same 13 glyphs**, because there are two answers and they fail for different
+# **Three modes over the same 13 glyphs**, because there are three answers and they fail for different
 # reasons. `MODE=points` compares the RAW stored points; `MODE=segments` compares what they become
-# once the two unwritten rules are applied and composites are placed. A reader can get the points
-# right and the segments wrong, and the second number is the one a rasteriser depends on.
+# once the two unwritten rules are applied and composites are placed; `MODE=raster` compares which
+# pixel CENTRES those segments enclose. A reader can get the points right and the segments wrong, and
+# the segments right and the winding backwards.
+#
+# **Rasterising has no exact oracle** — two rasterisers antialias differently, so comparing grey
+# levels compares their coverage heuristics and not the shape. The way out is to ask a weaker question
+# of a stronger oracle: *is this pixel's centre inside, by the nonzero winding rule* has one answer,
+# fontTools solves the curves to give it, and neither side is allowed a tolerance.
+#
+# What that does NOT check: coverage, antialiasing, hinting, and any pixel the outline only clips a
+# corner of. Those need a different oracle and are not here. What it does check is the whole of the
+# shape — a winding rule applied the wrong way round, a contour walked backwards, a curve solved on
+# the wrong interval, a component at the wrong offset all move pixel centres.
 #
 # **What poisoning it showed.** Each of these was broken on purpose and the gate was re-run:
 #
@@ -39,6 +50,12 @@
 #   drop a component's offset                                        2 of 13 red
 #   forget to shift a component's contour ends                       2 of 13 red
 #   ignore that a contour can START on an off-curve point            NOTHING red
+#
+# and in `raster`:
+#
+#   count every crossing as +1, which is the even-odd rule                  12 of 13 red
+#   take `t` on the closed interval, counting each join twice                1 of 13 red
+#   take only one root of the quadratic                                     11 of 13 red
 #
 # The last one is the finding. **No glyph in this font starts a contour on an off-curve point** — not
 # one of its 3,748, checked directly — so this corpus cannot see that rule at all, and the branch that
@@ -63,6 +80,7 @@ cd "$ROOT"
 MODE="${MODE:-points}"
 EXP="$DATA/outlines.expected"
 [ "$MODE" = "segments" ] && EXP="$DATA/segments.expected"
+[ "$MODE" = "raster" ] && EXP="$DATA/raster.expected"
 "$MERE" "$ROOT/test/glyf_cases.mere" "$DATA/outlines.cases" "$MODE" > "$T/raw.txt"
 # The program's own exit value is the last line and is not an outline.
 sed '$d' "$T/raw.txt" > "$T/got.txt"
