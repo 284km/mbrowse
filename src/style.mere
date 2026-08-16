@@ -395,16 +395,21 @@ module Style {
   // The winning value for a property, or "" when nothing said anything. Specificity first, then
   // document order — the cascade in the only two terms this needs, since nothing here has
   // `!important` or a layer.
-  let winner = fn (hs: hit list) -> fn (prop: str) ->
+  // The winning declaration AND what it won with, because two properties sometimes have to be compared
+  // against each other and a value alone cannot say which came from the stronger rule.
+  let winner_at = fn (hs: hit list) -> fn (prop: str) ->
     let rec go = fn (xs: hit list) -> fn (best: str) -> fn (bs: int) -> fn (bo: int) ->
       match xs with
-      | Nil -> best
+      | Nil -> (best, bs, bo)
       | Cons (h, rest) ->
         if h.prop != prop then go rest best bs bo
         else if h.spec > bs || (h.spec == bs && h.order >= bo) then
           go rest h.value h.spec h.order
         else go rest best bs bo in
     go hs "" (0 - 1) (0 - 1);
+
+  let winner = fn (hs: hit list) -> fn (prop: str) ->
+    let (v, _s, _o) = winner_at hs prop in v;
 
   // The four sides of a shorthand, in the standard's order: one value is all four, two are
   // vertical then horizontal, three add the bottom, four go clockwise from the top.
@@ -537,11 +542,19 @@ module Style {
     let get = fn (p: str) -> winner hs p in
     // A longhand beats the shorthand it belongs to when both are present, which is only right
     // because `winner` already picked the winning shorthand and the winning longhand separately.
+    // Which of the two DECLARATIONS wins, decided by the cascade's own rule rather than by "a longhand
+    // always beats the shorthand it belongs to". That shortcut is right only when they come from rules
+    // of equal weight, and the two commonest sources are not: the UA sheet writes `p { margin-top: 1em }`
+    // as a LONGHAND, so an author's `p { margin: 0 }` lost to it and every paragraph in a document that
+    // zeroed its margins kept them. One name, two questions — "is there a longhand" is not "does the
+    // longhand win" — and the first answers yes far more often than the second.
     let side = fn (short: str) -> fn (long: str) -> fn (which: int) ->
-      let l = get long in
-      if l != "" then l
+      let (lv, ls, lo) = winner_at hs long in
+      let (sv, ss, so) = winner_at hs short in
+      if lv != "" && (sv == "" || ls > ss || (ls == ss && lo >= so)) then lv
+      else if sv == "" then ""
       else
-        let (t, r, b, ll) = _sides (get short) in
+        let (t, r, b, ll) = _sides sv in
         if which == 0 then t else if which == 1 then r
         else if which == 2 then b else ll in
     // One name, two questions, met again. A negative PADDING is not a value the property accepts: the

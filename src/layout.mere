@@ -685,7 +685,18 @@ module Layout {
         // not grow. `<div style="position:absolute">` inside a page made the page as tall as if it were
         // in flow, and 94 of the 116 layout failures were that one thing.
         else if st.position == "absolute" || st.position == "fixed" then
-          let (fbs, _fh, _fmt, _fmb, _fesc2) = _block f ua author ancestors tag attrs kids cbw cbh st in
+          // An out-of-flow box with no stated width SHRINKS TO FIT, like a float and an inline-block
+          // and for the same reason: there is nothing for it to fill. It was filling its containing
+          // block, so an absolutely positioned sentence came out 800 wide where the browser says 699.
+          // Bounded by what is available, because shrink-to-fit is the smaller of what the contents
+          // want and what there is room for.
+          let ast =
+            if st.w >= 0 || st.w_pct >= 0 then st
+            else
+              let avail = cbw - st.ml - st.mr - st.bl - st.br - st.pl - st.pr in
+              let mc = _max_content f ua author (Cons (_elem_of tag attrs, ancestors)) kids in
+              _with_width st (if mc > avail then (if avail < 0 then 0 else avail) else mc) in
+          let (fbs, _fh, _fmt, _fmb, _fesc2) = _block f ua author ancestors tag attrs kids cbw cbh ast in
           // `left` and `top` are measured from the containing block, which for an absolutely positioned
           // box is the nearest POSITIONED ancestor. Here that is taken to be the parent, whose content
           // origin is where these coordinates already start from — true whenever the parent is the
@@ -906,7 +917,12 @@ module Layout {
         else Font.text_units_of_px f (Style.px_at (fn (_z: int) -> size) v) size in
     let natural = Font.line_height f size in
     let dnat = Font.scale f (0 - f.descender) size in
-    let half = (lh - natural) / 2 in
+    // Floored, not truncated. Integer division rounds toward ZERO here, and the half-leading is
+    // negative whenever the line is shorter than the font — so `(20 - 27) / 2` answered -3 where the
+    // real number is -3.62 and the browser's box top is -4. Truncation moves a negative number the
+    // wrong way, and it only shows on an odd difference, which is why every even one agreed.
+    let half = let d = lh - natural in
+               if d >= 0 then d / 2 else 0 - ((0 - d + 1) / 2) in
     let asc = natural - dnat + half in
     let desc = lh - asc in
     // What is on each line, as a sparse list of `(line, above, below)`. Sparse because a line with
