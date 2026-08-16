@@ -110,10 +110,16 @@ styles, boxes, ink.
 Two things it leaves open.
 
 **It takes about ninety minutes**, because painting asks the outline whether it covers each pixel of
-each glyph's box and there are 218 pages of them. That is the honest cost of the only gate that
-draws; it runs last and is the one to skip while iterating. Making it quick means a real rasteriser —
-scanline, one pass per row per contour — instead of a point-in-path test per pixel. Nothing here needs
-that yet.
+each glyph's box and there are 218 pages of them. That is the honest cost of the only gate that draws;
+it runs last and is the one to skip while iterating.
+
+**Where the time is NOT**: reading the curves. Caching each distinct glyph's outline per page — forty
+shapes parsed once instead of five hundred times — was written, timed, and reverted: 29 seconds either
+way on the same document, identical output. The cost is entirely the point-in-path test per pixel.
+
+So making it quick means a scanline rasteriser: solve each row's crossings once, sort them, fill the
+spans between. Roughly the width of a glyph fewer winding computations. Not written, because nothing
+needs the gate to be quick yet and the version here is the one the raster gate already checks exactly.
 
 **Painting order is document order**, so later boxes cover earlier ones. That is right for everything
 without `z-index` and this corpus has not yet said otherwise; when it does, the answer is stacking

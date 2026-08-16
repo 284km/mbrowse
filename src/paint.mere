@@ -44,6 +44,16 @@ module Paint {
         let _ = col_ x0 in row (y + 1) in
     row y0;
 
+  // **Where the time goes, measured rather than assumed.** Caching each distinct glyph's outline for
+  // the page — so a paragraph parses forty shapes once instead of five hundred times — was written and
+  // timed and changed nothing: 29 seconds either way on the same document, with identical output. The
+  // cost is not reading the curves, it is asking them about every pixel.
+  //
+  // So the way to make this quick is a scanline: solve each row's crossings once, sort them, and fill
+  // the spans between, instead of a point-in-path test per pixel. That is roughly the width of a glyph
+  // fewer winding computations. It is not written, because nothing yet needs the gate to be quick and
+  // the version that is here is the one the raster gate already checks exactly.
+  //
   // One glyph, drawn where layout put it. The box's `y` is the top of the character's content area
   // and its baseline is one ascent below that — the same ascent the box's height was built from, so
   // the two cannot drift apart.
