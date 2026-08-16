@@ -829,8 +829,17 @@ module Layout {
     // leaked: a `<p>` filling that cell came out 46 wide where the browser says 45, because the ceiling
     // was in the number the children were SIZED against and not only in the question about breaking.
     // Round where the answer is read — and the answer read here is "does it fit", not "how wide is it".
-    let cap = if cw <= 0 then 0 else ((cw * 2 + 1) * f.upem) / (2 * size) in
-    let space = Font.text_units f " " in
+    // The cursor's currency is `pixels x units-per-em`, not font units. Font units measure GLYPHS and
+    // are comparable only at one size — so a run holding a `font-size: 0.2em` span could not be added
+    // up at all, and every piece of it was laid out at the paragraph's size. This product is comparable
+    // across sizes and stays exact until the one division at the end: the same accumulator
+    // `_max_content` uses, for the same reason.
+    //
+    // Half a pixel of slack, as before: `cw` is a rounded width, the box it names is within half a
+    // pixel of it, and the commonest way for a width to exist is by measuring the text that must fit.
+    let cap = if cw <= 0 then 0 else ((cw * 2 + 1) * f.upem) / 2 in
+    // In units still — a space is a glyph — and multiplied by the size in force wherever it is used.
+    let space_u = Font.text_units f " " in
     let lh = _lh_of f bst in
     // A line is not a fixed height. It is as tall as the tallest thing above the baseline plus the
     // deepest below it, and the STRUT — the invisible box the containing element's own font puts on
@@ -856,8 +865,7 @@ module Layout {
     // A percentage is against the CONTAINING BLOCK and so cannot be resolved in the cascade; a length
     // already was, in the font size of whichever element declared it. Both survive the inheriting as
     // themselves, which is why they are two fields and not one.
-    let tiu = if bst.ti_pct >= 0 then Font.text_units_of_px f ((cw * bst.ti_pct) / 100) size
-              else Font.text_units_of_px f bst.ti_px size in
+    let tiu = (if bst.ti_pct >= 0 then (cw * bst.ti_pct) / 100 else bst.ti_px) * f.upem in
     let natural = Font.line_height f size in
     let dnat = Font.scale f (0 - f.descender) size in
     // Floored, not truncated. Integer division rounds toward ZERO here, and the half-leading is
@@ -910,25 +918,28 @@ module Layout {
     // cursor after it, and on a run that wrapped neither of those is the end of any line.
     let rec words = fn (ws: str list) -> fn (x: int) -> fn (line: int) -> fn (gap: bool) ->
                     fn (first: bool) -> fn (placed: bool) -> fn (nw: bool) -> fn (mx: int) ->
+                    // The size these words are set in, which is the element's and not the box's.
+                    fn (fsz: int) ->
       match ws with
       | Nil -> (x, line, gap, placed, if x > mx then x else mx)
       | Cons (w, rest) ->
         // An empty piece is where a space was, and a trailing one is how a list says it ended in one.
-        if w == "" then words rest x line true first placed nw mx
+        if w == "" then words rest x line true first placed nw mx fsz
         else
-          let wu = Font.text_units f w in
+          let wu = Font.text_units f w * fsz in
+          let space = space_u * fsz in
           let need = if first then gap else true in
-          if not placed then words rest (x + wu) line false false true nw mx
+          if not placed then words rest (x + wu) line false false true nw mx fsz
           else if nw || x + (if need then space else 0) + wu <= cap then
             // `nowrap` means the line does not end where it runs out of room. It ends where the source
             // says — at a `<br>`, or nowhere — and the text overflows its container, which is the
             // point of asking for it.
-            words rest (x + (if need then space else 0) + wu) line false false true nw mx
+            words rest (x + (if need then space else 0) + wu) line false false true nw mx fsz
           // A word that does not fit starts the next line, and one wider than the whole line gets a
           // line of its own and overflows — which is what a browser does rather than cutting it. The
           // cursor at this moment is where the line it is leaving ENDED, which is the only place that
           // number exists.
-          else words rest wu (line + 1) false false true nw (if x > mx then x else mx) in
+          else words rest wu (line + 1) false false true nw (if x > mx then x else mx) fsz in
     // Floats come out of the inline content before anything is placed. A float is not on the line — it
     // is beside it — so it takes room at the line's left edge, everything else starts after it, and a run
     // holding nothing but a float makes no line at all. Hoisting them first is what lets the element that
@@ -941,8 +952,8 @@ module Layout {
         | Element (tag, attrs, ks) ->
           let est = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") wst in
           if est.float_ == "left" || est.float_ == "right" then
-            let w = Font.text_units f (_collapse_ws (_inline_text ks "")) + est.bl + est.pl
-                    + est.pr + est.br in
+            let w = Font.text_units f (_collapse_ws (_inline_text ks "")) * est.fs
+                    + (est.bl + est.pl + est.pr + est.br) * f.upem in
             floats rest (fx + w) wst acc
           else
             // A fresh accumulator, so the shift below touches only what this element contained.
@@ -994,7 +1005,7 @@ module Layout {
           | Text t ->
             // Split on the collapsed text so an empty piece marks where a space was.
             let (x2, l2, g2, p2, wmx) =
-              words (str_split (_collapse_runs t) " ") x line gap true placed nw maxx in
+              words (str_split (_collapse_runs t) " ") x line gap true placed nw maxx wst.fs in
             walk rest x2 l2 g2 saw p2 (online || p2) fcur wmx nw wst hc acc
           | Element (tag, attrs, ks) ->
             // An element's box starts at its first GLYPH, not at the cursor. A space owed from before it
@@ -1011,7 +1022,7 @@ module Layout {
             // trailing white space is removed — so an empty `<span>` with a border sits against the text
             // before it and not four pixels off it.
             let empty_el = _collapse_ws (_inline_text ks "") == "" in
-            let sx = if gap && placed && not empty_el then x + space else x in
+            let sx = if gap && placed && not empty_el then x + space_u * wst.fs else x in
             let sl = line in
             // The children are walked into a FRESH accumulator so the element's own box can be placed
             // in front of them afterwards. Consing it onto the same accumulator put a nested inline
@@ -1027,18 +1038,19 @@ module Layout {
             // the end of a line, and a line's trailing white space is removed.
             if to_lower tag == "br" then
               walk rest 0 (line + 1) false saw false false fcur (if x > maxx then x else maxx) nw wst hc
-                (Cons (box { tag = "br", x = Font.scale f x size, y = ltop hs line, w = 0,
+                (Cons (box { tag = "br", x = (x + f.upem / 2) / f.upem, y = ltop hs line, w = 0,
                              h = hline hs line, pinned = false, pinx = false }, acc))
             else
             if est.float_ == "left" || est.float_ == "right" then
               // Beside the line, not on it: it does not move the cursor, does not make the line exist, and
               // its own box goes down here so that it lands in document order.
-              let fw = Font.text_units f (_collapse_ws (_inline_text ks "")) + est.bl + est.pl
-                       + est.pr + est.br in
+              let fw = Font.text_units f (_collapse_ws (_inline_text ks "")) * est.fs
+                       + (est.bl + est.pl + est.pr + est.br) * f.upem in
               walk rest x line gap saw placed online (fcur + fw) maxx nw wst hc
                 (list_append acc
-                   (Cons (box { tag = to_lower tag, x = Font.scale f fcur size, y = 0,
-                                w = Font.scale f fw size, h = lh, pinned = false, pinx = false }, Nil)))
+                   (Cons (box { tag = to_lower tag, x = (fcur + f.upem / 2) / f.upem, y = 0,
+                                w = (fw + f.upem / 2) / f.upem, h = lh,
+                                pinned = false, pinx = false }, Nil)))
             else
             if est.display == "inline-block" || est.display == "inline-table" then
               // An ATOMIC inline-level box. It sits on the line like a word: it does not break, nothing
@@ -1052,10 +1064,10 @@ module Layout {
               let (abs0, ah, _am1, _am2, _afe) = _block f ua author wst anc tag attrs ks cw (0 - 1) ist in
               let abw = match abs0 with Nil -> 0 | Cons (m0, _r0) -> m0.w in
               // The MARGIN box is what takes room on the line; `_block` reports the border box.
-              let advu = Font.text_units_of_px f (ist.ml + abw + ist.mr) size in
+              let advu = (ist.ml + abw + ist.mr) * f.upem in
               // It breaks like a word and for the same reason: what does not fit goes on the next line,
               // and what is wider than the whole line gets a line of its own and overflows.
-              let sxa = if gap && placed then x + space else x in
+              let sxa = if gap && placed then x + space_u * wst.fs else x in
               let (ax, al) = if not placed then (x, line)
                              else if sxa + advu <= cap then (sxa, line)
                              else (0, line + 1) in
@@ -1094,10 +1106,11 @@ module Layout {
                    (Cons ((al, (if top_aligned then 0 else a_above),
                            (if top_aligned then 0 else a_below),
                            (if top_aligned then mh else 0)), hc))
-                   (list_append (list_rev (_shift abs0 (Font.scale f ax size) (ay + ist.mt))) acc)
+                   (list_append (list_rev (_shift abs0 ((ax + f.upem / 2) / f.upem)
+                                                     (ay + ist.mt))) acc)
             else
-            let lead = Font.text_units_of_px f (est.bl + est.pl) size in
-            let trail = Font.text_units_of_px f (est.pr + est.br) size in
+            let lead = (est.bl + est.pl) * f.upem in
+            let trail = (est.pr + est.br) * f.upem in
             // The children start where the BOX starts — past the space owed from before it and past this
             // element's own left edge. Starting them at the plain cursor made the box a space narrower
             // than its own border: five pixels of border reported as one.
@@ -1127,9 +1140,9 @@ module Layout {
             // fragment's, because the union of its fragments reaches back to wherever the second line
             // began. Reading the first fragment's start put an `<a>` that wraps at x = 694 — where its
             // first line picks up near the right margin — instead of at 8, where its second line starts.
-            let bx = if rtl then cw - Font.scale f x2 size
-                     else if l2 == sl then Font.scale f sx size
-                     else Font.scale f float_w size in
+            let bx = if rtl then cw - (x2 + f.upem / 2) / f.upem
+                     else if l2 == sl then (sx + f.upem / 2) / f.upem
+                     else (float_w + f.upem / 2) / f.upem in
             // The WIDTH is the scaled difference, not the difference of two scaled numbers. Rounding each
             // end and subtracting rounds twice and lands a pixel out — the same "scale once" the glyph
             // advances and the table columns already needed, met a third time.
@@ -1139,9 +1152,9 @@ module Layout {
             // that wraps three pixels too wide, and it was right only where the widest fragment happened
             // to fill the line.
             let across = let m = if mx2 > x2 then mx2 else x2 in
-                         let byw = Font.scale f m size - bx in
+                         let byw = (m + f.upem / 2) / f.upem - bx in
                          if byw > 0 then byw else 0 in
-            let bw = if l2 == sl then Font.scale f (x2 - sx) size else across in
+            let bw = if l2 == sl then (x2 - sx + f.upem / 2) / f.upem else across in
             // Relative positioning moves an inline fragment and its contents after they are laid out,
             // exactly as it does a block: the cursor, the line and everything after are unmoved.
             let rdx = if est.position == "relative" && est.left >= 0 then est.left else 0 in
@@ -1155,9 +1168,15 @@ module Layout {
             // Across lines it runs from the first line's content top to the last line's content bottom,
             // which is not the sum of the line heights the moment anything on one of them is taller than
             // text.
-            let fasc = natural - dnat in
+            // In the ELEMENT's font and not the box's. A `font-size: 0.2em` span on a line set at 5em
+            // has a content area of its own size, sitting on the line's baseline — 22 pixels tall on an
+            // 80-pixel line, not 109. The baseline is the line's; only the ascent and descent about it
+            // belong to the element.
+            let enat = Font.line_height f est.fs in
+            let ednat = Font.scale f (0 - f.descender) est.fs in
+            let fasc = enat - ednat in
             let fy = ltop hs sl + hbase hs sl - fasc - est.pt - est.bt in
-            let fbot2 = ltop hs l2 + hbase hs l2 + dnat in
+            let fbot2 = ltop hs l2 + hbase hs l2 + ednat in
             // NOT the union with its descendants, and this has now been tried TWICE and measured twice.
             // `block-in-inline-nested-002-ref` wants a `<span>` with no border of its own to be ten pixels
             // taller than its line because the child inside it has a 5px border, which reads exactly like
