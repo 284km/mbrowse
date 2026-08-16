@@ -24,10 +24,15 @@
 # PPM of decimal triples is two megabytes where this is a few kilobytes, and a failing line names the
 # row and the run, which is where to look.
 #
-# **61 of 109 pass**, and the failures are the layout ones seen from the other side: a test and its
-# reference that lay out to different heights are two different pictures, and the box gate's own ten
-# failures plus the character gate's ligatures account for the shape of it. A reftest cannot say WHICH
-# number is wrong — that is what the other gates are for — it says that two pages disagree.
+# **61 of 109 pass.** A reftest cannot say WHICH of two pages is wrong — that is what the other gates
+# are for — only that they disagree.
+#
+# **What the 48 failures are has NOT been established.** Three were looked at and all three were a
+# test and its reference laying out to different heights, which is a layout failure seen from the
+# other side; whether that accounts for the other 45 is a guess until someone checks, and a guess
+# written down as a finding is worse than an open question. `REFTEST_LIST=path` writes every failing
+# pair to a file, which is what makes the check a few minutes of comparing lists rather than another
+# run of this gate.
 #
 # **It is slow: about ninety minutes for the 109 pairs**, because painting asks the outline whether it
 # covers each pixel of each glyph's box and there are 218 pages of them. That is the honest cost of
@@ -58,6 +63,7 @@ while IFS='	' read -r a b; do
     pass=$((pass + 1))
   else
     fail=$((fail + 1))
+    [ -n "$REFTEST_LIST" ] && echo "$a	$b" >> "$REFTEST_LIST"
     if [ "$shown" -lt 3 ]; then
       shown=$((shown + 1))
       ra=$(grep -c '' "$T/a2.txt"); rb=$(grep -c '' "$T/b2.txt")
