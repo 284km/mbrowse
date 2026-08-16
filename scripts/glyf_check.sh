@@ -57,6 +57,13 @@
 #   take `t` on the closed interval, counting each join twice                1 of 13 red
 #   take only one root of the quadratic                                     11 of 13 red
 #
+# `MODE=text` is the fourth, and it is the only one that uses the metrics and the outlines TOGETHER.
+# Each has been checked alone — the advances against a browser, the outlines against fontTools — and
+# neither check can see the join: a reader with the right widths and the right shapes still draws
+# nonsense if it advances by the wrong one, or advances before drawing instead of after. Its strings
+# have no kerned pairs in them, because kerning has its own gate and a gate asked to check two things
+# cannot say which of them broke.
+#
 # The last one is the finding. **No glyph in this font starts a contour on an off-curve point** — not
 # one of its 3,748, checked directly — so this corpus cannot see that rule at all, and the branch that
 # implements it is written but NOT verified by anything here. It is kept because the format allows it
@@ -81,7 +88,13 @@ MODE="${MODE:-points}"
 EXP="$DATA/outlines.expected"
 [ "$MODE" = "segments" ] && EXP="$DATA/segments.expected"
 [ "$MODE" = "raster" ] && EXP="$DATA/raster.expected"
-"$MERE" "$ROOT/test/glyf_cases.mere" "$DATA/outlines.cases" "$MODE" > "$T/raw.txt"
+# The text mode is a different corpus — strings, not glyphs — and a different runner.
+CASES="$DATA/outlines.cases"; RUNNER="$ROOT/test/glyf_cases.mere"
+if [ "$MODE" = "text" ]; then
+  CASES="$DATA/textraster.cases"; EXP="$DATA/textraster.expected"
+  RUNNER="$ROOT/test/textraster_cases.mere"
+fi
+"$MERE" "$RUNNER" "$CASES" "$MODE" > "$T/raw.txt"
 # The program's own exit value is the last line and is not an outline.
 sed '$d' "$T/raw.txt" > "$T/got.txt"
 
@@ -102,7 +115,7 @@ while [ "$i" -le "$want" ]; do
     fail=$((fail + 1))
     if [ "$shown" -lt 3 ]; then
       shown=$((shown + 1))
-      cp=$(sed -n "${i}p" "$DATA/outlines.cases")
+      cp=$(sed -n "${i}p" "$CASES")
       echo "  FAIL code point $cp"
       echo "    want: $(echo "$w" | cut -c1-100)"
       echo "    got:  $(echo "$g" | cut -c1-100)"
@@ -113,6 +126,7 @@ done
 
 echo "glyf_$MODE: $pass passed, $fail failed, of $want glyphs"
 EXPECT_PASS=${EXPECT_PASS:-13}
+[ "$MODE" = "text" ] && EXPECT_PASS="${EXPECT_PASS_TEXT:-6}"
 if [ "$pass" -ne "$EXPECT_PASS" ]; then
   echo "glyf_$MODE: expected exactly $EXPECT_PASS passing, got $pass — raise EXPECT_PASS if this is the reader growing"
   exit 1

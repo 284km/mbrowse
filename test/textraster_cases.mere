@@ -1,0 +1,14 @@
+// One line per string, in the canonical form `gen_textraster_expected.py` writes.
+import "../src/font.mere";
+
+let path = match args () with Cons (p, _) -> p | Nil -> "";
+let f = Font.load "test/data/font/NotoSans-Regular.ttf";
+
+let rec go = fn (ls: str list) ->
+  match ls with
+  | Nil -> 0
+  | Cons (l, rest) ->
+    if l == "" then go rest
+    else let _ = print (Font.text_raster f l 16 22 5) in go rest;
+
+go (read_lines path)

@@ -634,6 +634,48 @@ module Font {
         rows (r + 1) (Cons (cols 0 "", acc)) in
     rows 0 Nil;
 
+  // A whole string rastered: the first thing that uses the metrics and the outlines TOGETHER.
+  //
+  // Each has been checked alone — the advances against a browser, the outlines against fontTools —
+  // and neither check can see the join between them. A reader with the right widths and the right
+  // shapes still draws nonsense if it advances by the wrong one, or advances before drawing instead
+  // of after. This is the smallest thing that can tell.
+  //
+  // Advances only, no kerning: kerning has its own gate against a browser, and a gate asked to check
+  // two things cannot say which of them broke.
+  let text_raster = fn (f: font) -> fn (s: str) -> fn (ppem: int) -> fn (h: int) ->
+                    fn (desc: int) ->
+    let cs = utf8_chars s in
+    // Every glyph's quads, moved to where its own pen position puts it, in one list — so the winding
+    // is counted over the whole line at once and a shape that overlaps its neighbour is not two
+    // separate answers about the same pixel.
+    let rec place = fn (xs: str list) -> fn (pen: int) ->
+                    fn (acc: (float * float * float * float * float * float) list) ->
+      match xs with
+      | Nil -> (acc, pen)
+      | Cons (c, rest) ->
+        let g = glyph f (codepoint c) in
+        let dx = float_of_int pen in
+        let moved = list_map (_quads f g)
+                      (fn (q: (float * float * float * float * float * float)) ->
+                         let (x0, y0, cx, cy, x1, y1) = q in
+                         (x0 + dx, y0, cx + dx, cy, x1 + dx, y1)) in
+        place rest (pen + advance f g) (list_append acc moved) in
+    let (qs, total) = place cs 0 Nil in
+    let scale_u = float_of_int f.upem / float_of_int ppem in
+    let w = (total * ppem) / f.upem + 2 in
+    let rec rows = fn (r: int) -> fn (acc: str list) ->
+      if r >= h then str_join "/" (list_rev acc)
+      else
+        let y = (float_of_int (h - 1 - r - desc) + 0.5) * scale_u in
+        let rec cols = fn (cn: int) -> fn (line: str) ->
+          if cn >= w then line
+          else
+            let x = (float_of_int cn + 0.5) * scale_u in
+            cols (cn + 1) (line ++ (if _winding qs x y != 0 then "#" else ".")) in
+        rows (r + 1) (Cons (cols 0 "", acc)) in
+    rows 0 Nil;
+
   // A glyph's outline in the canonical form the gate compares, which is the RAW points: the
   // coordinates as they are stored, before any curve is flattened or any component placed. Comparing
   // those against fontTools is exact. Comparing a flattened shape would compare two flattenings.
