@@ -711,6 +711,15 @@ module Font {
         rows (r + 1) (Cons (cols 0 "", acc)) in
     rows 0 Nil;
 
+  // The two things a painter needs and nothing else here does: a glyph's curves, worked out once, and
+  // the inside test against them. They are the same `_quads` and `_winding` the raster gate uses —
+  // exposed rather than reimplemented, so that what is drawn on a page is checked by the gate that
+  // checks what is drawn in a box.
+  let glyph_quads = fn (f: font) -> fn (gid: int) -> _quads f gid;
+
+  let quads_cover = fn (qs: (float * float * float * float * float * float) list) ->
+                    fn (gx: float) -> fn (gy: float) -> _winding qs gx gy != 0;
+
   // A glyph's outline in the canonical form the gate compares, which is the RAW points: the
   // coordinates as they are stored, before any curve is flattened or any component placed. Comparing
   // those against fontTools is exact. Comparing a flattened shape would compare two flattenings.

@@ -1,0 +1,130 @@
+// Boxes and glyphs to pixels.
+//
+// Everything below this point has been checked against something that is not this program: the boxes
+// against a browser's own rects, the characters against its `Range`, the outlines against fontTools.
+// This is where those answers become a picture, and it is the first thing here with no external
+// oracle at all — because the question it answers is not "is this right" but "do these two pages
+// look the same", and both sides of that are ours.
+//
+// That is what a REFTEST is, and it is why reftests could not come first. An engine that draws
+// nothing passes every one of them. They can come now, after the geometry is independently known,
+// and they check the three things geometry cannot: colour, what is painted over what, and whether
+// the ink lands inside the box that was measured for it.
+//
+// **Painting order is document order.** Later boxes cover earlier ones, which is what a tree walk
+// gives and is right for everything without `z-index` — the corpus has a handful of documents that
+// need more and they will say so.
+
+import "layout.mere";
+import "font.mere";
+
+module Paint {
+  let white = 16777215;
+
+  // The canvas is a mutable vector because a painter overwrites: the whole point of drawing a box on
+  // top of another is that the pixel underneath stops existing. Building it functionally would mean
+  // rebuilding a row per box, which is the same work with an allocation for every stroke.
+  let _blank = fn (n: int) ->
+    let v = vec_new () in
+    let rec go = fn (i: int) -> if i >= n then v else let _ = vec_push v white in go (i + 1) in
+    go 0;
+
+  let _fill = fn (v: int Vec) -> fn (w: int) -> fn (h: int) ->
+              fn (bx: int) -> fn (by: int) -> fn (bw: int) -> fn (bh: int) -> fn (col: int) ->
+    let x0 = if bx < 0 then 0 else bx in
+    let y0 = if by < 0 then 0 else by in
+    let x1 = if bx + bw > w then w else bx + bw in
+    let y1 = if by + bh > h then h else by + bh in
+    let rec row = fn (y: int) ->
+      if y >= y1 then 0
+      else
+        let rec col_ = fn (x: int) ->
+          if x >= x1 then 0
+          else let _ = vec_set v (y * w + x) col in col_ (x + 1) in
+        let _ = col_ x0 in row (y + 1) in
+    row y0;
+
+  // One glyph, drawn where layout put it. The box's `y` is the top of the character's content area
+  // and its baseline is one ascent below that — the same ascent the box's height was built from, so
+  // the two cannot drift apart.
+  //
+  // Only the pixels inside the glyph's own box are asked about. A glyph that overflows its box would
+  // be clipped, which is a real difference from a browser and is not one this corpus can show: the
+  // box is the font's content area and an outline that leaves it is a font with overshoot beyond its
+  // own ascender.
+  let _glyph = fn (v: int Vec) -> fn (w: int) -> fn (h: int) -> fn (f: font) -> fn (b: box) ->
+    let gid = Font.glyph f b.cp in
+    let qs = Font.glyph_quads f gid in
+    match qs with
+    | Nil -> 0
+    | Cons (_q, _r) ->
+      let asc = Font.line_height f b.fs - Font.scale f (0 - f.descender) b.fs in
+      let base = b.y + asc in
+      let upem = float_of_int f.upem in
+      let sz = float_of_int b.fs in
+      let x0 = if b.x < 0 then 0 else b.x in
+      let y0 = if b.y < 0 then 0 else b.y in
+      let x1 = if b.x + b.w > w then w else b.x + b.w in
+      let y1 = if b.y + b.h > h then h else b.y + b.h in
+      let rec row = fn (y: int) ->
+        if y >= y1 then 0
+        else
+          // The page's y grows downward and the font's grows up from the baseline, so this is the one
+          // place the two coordinate systems meet and the subtraction is the meeting.
+          let gy = (float_of_int base - (float_of_int y + 0.5)) * upem / sz in
+          let rec col_ = fn (x: int) ->
+            if x >= x1 then 0
+            else
+              let gx = (float_of_int x + 0.5 - float_of_int b.x) * upem / sz in
+              let _ = if Font.quads_cover qs gx gy then (let _ = vec_set v (y * w + x) b.fg in 0)
+                      else 0 in
+              col_ (x + 1) in
+          let _ = col_ x0 in row (y + 1) in
+      row y0;
+
+  // The whole page. Backgrounds first in document order, then the ink — not because the standard says
+  // so in those words, but because every glyph in this list belongs to a box that is already in it,
+  // and painting them interleaved would let a later box's background cover text that is inside it.
+  let paint = fn (f: font) -> fn (bs: box list) -> fn (w: int) -> fn (h: int) ->
+    let v = _blank (w * h) in
+    let rec backs = fn (l: box list) ->
+      match l with
+      | Nil -> 0
+      | Cons (b, r) ->
+        let _ = if b.cp == 0 && b.bg >= 0 then _fill v w h b.x b.y b.w b.h b.bg else 0 in
+        backs r in
+    let rec inks = fn (l: box list) ->
+      match l with
+      | Nil -> 0
+      | Cons (b, r) ->
+        let _ = if b.cp != 0 then _glyph v w h f b else 0 in
+        inks r in
+    let _ = backs bs in
+    let _ = inks bs in
+    v;
+
+  // Run-length rows: `count×rrggbb`, space separated, one line per row.
+  //
+  // Not a PPM, and the reason is what this is compared against. A reftest diffs two renderings, so
+  // the format has to be exact and diffable and does not have to be an image — and an image is 2MB of
+  // decimal triples per page while a page is mostly one colour per row. A failing line names the row
+  // and the run, which is where to look.
+  let hex6 = fn (c: int) ->
+    let d = "0123456789abcdef" in
+    let nib = fn (sh: int) -> char_at d ((c / sh) - (c / (sh * 16)) * 16) in
+    nib 1048576 ++ nib 65536 ++ nib 4096 ++ nib 256 ++ nib 16 ++ nib 1;
+
+  let render = fn (v: int Vec) -> fn (w: int) -> fn (h: int) ->
+    let rec row = fn (y: int) -> fn (out: str list) ->
+      if y >= h then str_join "\n" (list_rev out)
+      else
+        let rec run = fn (x: int) -> fn (cur: int) -> fn (n: int) -> fn (acc: str list) ->
+          if x >= w then list_rev (Cons (str_of_int n ++ "x" ++ hex6 cur, acc))
+          else
+            let c = vec_get v (y * w + x) in
+            if c == cur then run (x + 1) cur (n + 1) acc
+            else run (x + 1) c 1 (Cons (str_of_int n ++ "x" ++ hex6 cur, acc)) in
+        let line = str_join " " (run 1 (vec_get v (y * w)) 1 Nil) in
+        row (y + 1) (Cons (line, out)) in
+    row 0 Nil;
+}

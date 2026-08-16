@@ -20,4 +20,6 @@ MODE=text sh "$ROOT/scripts/glyf_check.sh"
 MODE=coverage sh "$ROOT/scripts/glyf_check.sh"
 sh "$ROOT/scripts/layout_check.sh"
 sh "$ROOT/scripts/glyphpos_check.sh"
+# Last, and slowest by a long way: the only gate that draws.
+sh "$ROOT/scripts/reftest_check.sh"
 echo "check: ok"

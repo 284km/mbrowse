@@ -1,0 +1,13 @@
+// One page, painted, as run-length rows.
+import "../src/paint.mere";
+import "../src/tree.mere";
+
+let path = match args () with Cons (p, _) -> p | Nil -> "";
+let src = str_join "\n" (read_lines path);
+let f = Font.load "test/data/font/NotoSans-Regular.ttf";
+let bs = Layout.boxes "test/data/font/NotoSans-Regular.ttf" (Tree.build (Html.tokenize src));
+// The page is as tall as the root box and as wide as the viewport, so two documents that lay out to
+// different heights are different pictures rather than one being cropped to the other.
+let h = match bs with Cons (b, _) -> (if b.h < 1 then 1 else b.h) | Nil -> 1;
+let _ = print (Paint.render (Paint.paint f bs 800 h) 800 h);
+0
