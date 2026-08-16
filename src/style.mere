@@ -651,15 +651,47 @@ module Style {
       else
         let lv = to_lower v in
         if lv == "auto" || str_index_of lv "%" >= 0 then 0 else px_of v in
+    // Four ways to say how wide a border is, and they are ranked by which DECLARATION wins rather than
+    // by a fixed order of preference — the same correction the margins needed. `border-width: 4px 0` was
+    // not read at all, so a `border: 4px solid` beside it put four pixels on the sides that were told to
+    // have none, and an inline-block came out eight pixels wider than the browser's.
+    //
+    // The winner is tracked by WHICH property it came from and not by comparing values, because the
+    // three of them can hold the same string and because `border-width` is read differently: it is a
+    // sides shorthand carrying no style, so its own side has to be picked out of it and the style has
+    // to come from somewhere else. A width with no style anywhere still draws nothing.
     let bw = fn (which: int) ->
-      let one = get ("border-" ++ (if which == 0 then "top" else if which == 1 then "right"
-                                   else if which == 2 then "bottom" else "left")) in
-      let all = get "border" in
+      let side = if which == 0 then "top" else if which == 1 then "right"
+                 else if which == 2 then "bottom" else "left" in
+      let (ov, os, oo) = winner_at hs ("border-" ++ side ++ "-width") in
+      let (sv, ss, so) = winner_at hs ("border-" ++ side) in
+      let (wv, ws, wo) = winner_at hs "border-width" in
+      let (av, as_, ao) = winner_at hs "border" in
       let stw = to_lower (get "border-style") in
-      if one != "" then _border_width one
-      else if all != "" then _border_width all
+      // Weakest first, each overwritten by anything at least as strong. `src` is 1 `border`,
+      // 2 `border-width`, 3 `border-<side>`, 4 `border-<side>-width`.
+      let pick = fn (best: (str * int * int * int)) -> fn (v: str) -> fn (sp2: int) ->
+                 fn (o2: int) -> fn (src: int) ->
+        let (bv, bs, bo, bsrc) = best in
+        if v != "" && (bv == "" || sp2 > bs || (sp2 == bs && o2 >= bo))
+        then (v, sp2, o2, src) else (bv, bs, bo, bsrc) in
+      let r1 = pick ("", 0 - 1, 0 - 1, 0) av as_ ao 1 in
+      let r2 = pick r1 wv ws wo 2 in
+      let r3 = pick r2 sv ss so 3 in
+      let (vv, _vs, _vo, vsrc) = pick r3 ov os oo 4 in
+      if vsrc == 2 then
+        // A style has to come from somewhere, and `border-width` never carries one.
+        let styled = _border_width av > 0 || (stw != "" && stw != "none" && stw != "hidden") in
+        if not styled then 0
+        else
+          let (t, r, b, l) = _sides vv in
+          let one = if which == 0 then t else if which == 1 then r
+                    else if which == 2 then b else l in
+          if one == "" then 0 else (let q = px_of one in if q < 0 then 0 else q)
+      else if vv != "" then _border_width vv
       else if stw != "" && stw != "none" && stw != "hidden" then 3
       else 0 in
+
     // Not named in either sheet means `inline`, which is the initial value and the right answer
     // for every tag the UA sheet does not mention.
     // Being taken out of flow BLOCKIFIES a box: an absolutely positioned or floated `display: inline`
