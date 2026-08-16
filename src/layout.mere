@@ -1581,6 +1581,16 @@ module Layout {
     let inner_ancestors = Cons (e, ancestors) in
     // A table's width is decided by its own contents rather than handed down from the containing block,
     // so the table is laid out before the box is sized and not after.
+    // NOT `inline-table`, and that is measured rather than an oversight. An inline-table IS a table —
+    // it differs from `table` in where it sits and not in how its rows are worked out — and letting it
+    // in here cost a document and gained none. The reason is the gap named at the rowless-table branch
+    // in `_table`: the standard generates anonymous row-group and row boxes around a stray cell, and
+    // this does not. The corpus's inline-tables are written `<span display:inline-table><span
+    // display:table-cell>`, with no row between them, so admitting them to the table algorithm hands
+    // that algorithm a table with no rows and takes away the block layout that was accidentally closer.
+    //
+    // The anonymous boxes are the fix; this line is the symptom. Written here so the obvious
+    // one-word change is not made again without them.
     let is_table = st.display == "table" in
     let (tbs, tw, th) =
       if is_table then
