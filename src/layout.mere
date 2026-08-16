@@ -382,36 +382,72 @@ module Layout {
   // The widest a box's contents want to be. A shrink-to-fit box — an inline-block, a float, a table — is
   // as wide as this and no wider, where an ordinary block is as wide as it is given. Text contributes its
   // whole length on one line, because "max content" means the width at which nothing wraps.
-  let rec _max_content = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
-                         fn (pst: sty) ->
-                         fn (anc: elem list) -> fn (ns: node list) ->
-    // Once, not once per node. Resolving a font size walks the ancestor chain and matches selectors at
-    // every level of it, and `anc` does not change inside this walk — asking it per node made this the
-    // slowest thing in the engine and the answer was the same every time.
+  // The accumulator is `sum of (font units x that piece's font size)`, and it is divided by the units
+  // per em ONCE at the end of a run. That is what lets a run hold pieces at DIFFERENT sizes and still
+  // be rounded once: font units are only comparable at one size, pixels round per piece, and this
+  // product is comparable across sizes and exact until the division.
+  //
+  // Measuring each piece separately in pixels was tried and cost three documents a pixel each — the
+  // fifth time in this file that rounding where the answer is computed rather than where it is read has
+  // been the whole bug.
+  let rec _mc_acc = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
+                    fn (pst: sty) -> fn (anc: elem list) -> fn (ns: node list) ->
+                    fn (best: int) -> fn (run: int) -> fn (trail: int) ->
     let mfs = pst.fs in
-    let rec go = fn (xs: node list) -> fn (best: int) -> fn (run: str) ->
-      match xs with
-      | Nil ->
-        let w = Font.text_width f (_collapse_ws run) mfs in
-        if w > best then w else best
-      | Cons (n, rest) ->
-        match n with
-        | Element (tag, attrs, kids) ->
-          let e = _elem_of tag attrs in
-          let st = style_of ua author e anc (_attr attrs "style") pst in
-          if st.display == "none" then go rest best run
-          else if _is_block_level st.display then
-            // A block child ends the run of inline content beside it and contributes its own outer width.
-            let inner = if st.w >= 0 then st.w
-                        else _max_content f ua author pst (Cons (e, anc)) kids in
-            let outer = inner + st.ml + st.mr + st.pl + st.pr + st.bl + st.br in
-            let w0 = Font.text_width f (_collapse_ws run) mfs in
-            go rest (if outer > best then (if outer > w0 then outer else w0)
-                     else (if w0 > best then w0 else best)) ""
-          else go rest best (run ++ _inline_text kids "")
-        | Text t -> go rest best (run ++ t)
-        | _ -> go rest best run in
-    go ns 0 "";
+    // A run drops the white space at its ENDS, the same way a line box does — so the width is the
+    // accumulator less whatever a trailing space contributed. `trail` carries that amount rather than a
+    // flag, because the space at the end of a run may have been typed at a different size from the one
+    // this level is measuring in.
+    let flush = fn (r: int) -> fn (t: int) -> (r - t + f.upem / 2) / f.upem in
+    match ns with
+    | Nil -> (best, run, trail)
+    | Cons (n, rest) ->
+      match n with
+      | Element (tag, attrs, kids) ->
+        let e = _elem_of tag attrs in
+        let st = style_of ua author e anc (_attr attrs "style") pst in
+        let edges = st.ml + st.mr + st.pl + st.pr + st.bl + st.br in
+        if st.display == "none" then _mc_acc f ua author pst anc rest best run trail
+        else if _is_block_level st.display then
+          // A block child ends the run of inline content beside it and contributes its own outer width.
+          let inner = if st.w >= 0 then st.w
+                      else
+                        let (b3, r3, t3) = _mc_acc f ua author st (Cons (e, anc)) kids 0 0 0 in
+                        let w3 = flush r3 t3 in
+                        if w3 > b3 then w3 else b3 in
+          let outer = inner + edges in
+          let fl = flush run trail in
+          let b2 = if fl > best then fl else best in
+          _mc_acc f ua author pst anc rest (if outer > b2 then outer else b2) 0 0
+        else
+          // An inline element's contents are measured in ITS style — a `font-size: 0.2em` span inside a
+          // paragraph is a fifth of the size the paragraph is measured at — and its own horizontal
+          // edges take room on the same line beside them. An edge after the text also means the run no
+          // longer ENDS in a space, whatever the text did.
+          let (b4, r4, t4) = _mc_acc f ua author st (Cons (e, anc)) kids best run trail in
+          _mc_acc f ua author pst anc rest b4 (r4 + edges * f.upem)
+                  (if edges > 0 then 0 else t4)
+      | Text t ->
+        let c0 = _collapse_runs t in
+        // White space at the START of a run is dropped as well, and "the start" is where nothing has
+        // been measured yet.
+        let c = if run == 0 && str_len c0 > 0 && char_at c0 0 == " "
+                then substring c0 1 (str_len c0) else c0 in
+        if c == "" then _mc_acc f ua author pst anc rest best run trail
+        else
+          let u = Font.text_units f c * mfs in
+          let t2 = if char_at c (str_len c - 1) == " " then Font.text_units f " " * mfs else 0 in
+          _mc_acc f ua author pst anc rest best (run + u) t2
+      | _ -> _mc_acc f ua author pst anc rest best run trail;
+
+  // The widest a box's contents want to be. A shrink-to-fit box — an inline-block, a float, a table — is
+  // as wide as this and no wider, where an ordinary block is as wide as it is given. Text contributes its
+  // whole length on one line, because "max content" means the width at which nothing wraps.
+  let _max_content = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
+                     fn (pst: sty) -> fn (anc: elem list) -> fn (ns: node list) ->
+    let (b, r, t) = _mc_acc f ua author pst anc ns 0 0 0 in
+    let w = (r - t + f.upem / 2) / f.upem in
+    if w > b then w else b;
 
   // A list of siblings, stacked. `cbw` is the containing block's content width; `open_mb` is the
   // bottom margin left hanging by whatever came before. `swallow_first` says that the first
@@ -1236,10 +1272,12 @@ module Layout {
           match _kids_of f ua author st anc rk with
           | Nil -> 0
           | Cons (c, _m2) -> extra c in
-    let px_cols = list_map cols (fn (u: int) -> Font.scale f u tfs + pad0) in
-    let sum_cols = let rec go = fn (xs: int list) -> fn (a: int) ->
-                     match xs with Nil -> a | Cons (x, r) -> go r (a + x) in
-                   go px_cols 0 in
+    let px_cols0 = list_map cols (fn (u: int) -> Font.scale f u tfs + pad0) in
+    let _sum = fn (xs: int list) ->
+      let rec go = fn (ys: int list) -> fn (a: int) ->
+        match ys with Nil -> a | Cons (x, r) -> go r (a + x) in
+      go xs 0 in
+    let sum0 = _sum px_cols0 in
     // A table with no rows in it still has contents. `<div style="display: table">test</div>` has no
     // `<tr>` and no `<td>`, and the standard generates them: the text is wrapped in an anonymous cell
     // inside an anonymous row. What is here is NOT that — it is the width of the case where there are
@@ -1247,13 +1285,32 @@ module Layout {
     // are still missing, so the contents generate no boxes and only the table's own width is right.
     // The corpus has one document that asks and it asks only for the width.
     let inner = if ncols == 0 then _max_content f ua author st anc kids
-                else sum_cols + sp * (ncols + 1) in
+                else sum0 + sp * (ncols + 1) in
+    let table_w = if st.w >= 0 then st.w else if inner > avail then avail else inner in
+    // When the table did not get the width its contents wanted, the COLUMNS are what gives. They were
+    // left at their natural size, so a table clamped to 400 reported a row and a cell 1181 wide inside
+    // itself — a box wider than the box it is in, which is not a thing a table does. Shared out in
+    // proportion, with the last column taking the remainder so the parts add up to the whole exactly.
+    let room = table_w - sp * (ncols + 1) in
+    let px_cols =
+      if ncols == 0 || sum0 <= room || sum0 <= 0 then px_cols0
+      else
+        let rec squeeze = fn (xs: int list) -> fn (rem: int) -> fn (out: int list) ->
+          match xs with
+          | Nil -> list_rev out
+          | Cons (x, rest) ->
+            match rest with
+            | Nil -> list_rev (Cons ((if rem < 0 then 0 else rem), out))
+            | Cons (_y, _r) ->
+              let w = (x * room) / sum0 in
+              squeeze rest (rem - w) (Cons (w, out)) in
+        squeeze px_cols0 room Nil in
+    let sum_cols = _sum px_cols in
     // A row reaches from the first cell's left edge to the last one's right, and the gaps BETWEEN the
     // columns are inside that. `sum_cols` is the columns alone; a two-column row was reported four
     // pixels wide when its two cells sit at 10 and 14 and are two wide each. The spacing outside the
     // first and last columns is not part of a row — that belongs to the table.
     let row_w = sum_cols + (if ncols > 1 then (ncols - 1) * sp else 0) in
-    let table_w = if st.w >= 0 then st.w else if inner > avail then avail else inner in
     // ...and it lays those contents out as a block container would, which is the anonymous cell the
     // standard generates standing in for itself. Only when there are no rows: with rows the cells are
     // real and none of this is reached. It is enough for a table whose content is one paragraph and is
