@@ -23,9 +23,12 @@ import "font.mere";
 // containing block, and this file lays everything out relative and shifts once — so the only way to say
 // "82 from the page" in a system with no absolute origin is to opt out of the shifting.
 //
-// Only the Y. `top` said where to be; `left` did not, so the X is still the static position and still
-// belongs to the fragment it was measured in.
-type box = { tag: str, x: int, y: int, w: int, h: int, pinned: bool };
+// Two pins and not one, because the two axes are answered by two different properties. `top` says
+// where the Y is and `left` says where the X is, and a box may state one and leave the other `auto` —
+// so a single flag either dragged the static X to the page origin or let an absolute `left` be shifted
+// by every container above it. A `left: 7.5em` box in a body indented by 2em came out at 152 where the
+// page says 120.
+type box = { tag: str, x: int, y: int, w: int, h: int, pinned: bool, pinx: bool };
 
 // A subtree becomes four things: its boxes relative to its own border-box top-left, the border
 // box's height, and the two margins that ESCAPE it — a margin that collapsed through this box
@@ -114,8 +117,9 @@ module Layout {
 
   let _shift = fn (bs: box list) -> fn (dx: int) -> fn (dy: int) ->
     list_map bs (fn (b: box) ->
-      box { tag = b.tag, x = b.x + dx, y = if b.pinned then b.y else b.y + dy,
-            w = b.w, h = b.h, pinned = b.pinned });
+      box { tag = b.tag, x = if b.pinx then b.x else b.x + dx,
+            y = if b.pinned then b.y else b.y + dy,
+            w = b.w, h = b.h, pinned = b.pinned, pinx = b.pinx });
 
   // Two adjoining margins collapse to one. Positive against positive is the larger; a negative
   // is added to the largest positive rather than compared with it, which is the standard's rule
@@ -545,7 +549,7 @@ module Layout {
             let (allbs, yend, ubot, uy) = pieces kids top true Nil top top in
             let sdx = if st.position == "relative" && st.left >= 0 then st.left else 0 in
             let sdy = if st.position == "relative" && st.top >= 0 then st.top else 0 in
-            let me = box { tag = to_lower tag, x = sdx, y = uy + sdy, w = cbw, h = ubot - uy, pinned = false } in
+            let me = box { tag = to_lower tag, x = sdx, y = uy + sdy, w = cbw, h = ubot - uy, pinned = false, pinx = false } in
             _stack f ua author pst ancestors rest cbw cbh yend 0 swallow_first
                    (if not seen then 0 else first_mt) true yend fs
                    (list_append (list_rev (_shift allbs sdx sdy)) (Cons (me, acc)))
@@ -620,12 +624,13 @@ module Layout {
             | Nil -> false
             | Cons (_par, _up) -> pst.position != "static" in
           let pin = st.top >= 0 && not anc_positioned in
+          let pinx = st.left >= 0 && not anc_positioned in
           let bs0 = _shift fbs (if st.left >= 0 then st.left else 0)
                       (if st.top >= 0 then st.top else y + _collapse open_mb 0) in
-          let bs = if not pin then bs0
+          let bs = if not pin && not pinx then bs0
                    else list_map bs0 (fn (b: box) ->
                           box { tag = b.tag, x = b.x, y = b.y, w = b.w, h = b.h,
-                                pinned = true }) in
+                                pinned = pin || b.pinned, pinx = pinx || b.pinx }) in
           _stack f ua author pst ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom fs
                  (list_append (list_rev bs) acc)
         // A float is out of flow too, but not in the same way: it is placed at the containing block's
@@ -640,10 +645,12 @@ module Layout {
           // offers. Given the block width it filled the line, and a float that fills the line is not a
           // float at all — `<div style="float:left;border-left:5px">` with nothing in it is five pixels
           // wide, which is its border and no more.
+          // Shrink-to-fit is the width the CONTENTS want, and a float holding a `<div style="width:
+          // 5em">` and no words wants eighty pixels however little text is in it. Measuring the text
+          // gave zero, so the float was its own border and nothing else — the same defect as the table
+          // column above, in the second of the three places that size a box by what is inside it.
           let fst = if st.w >= 0 || st.w_pct >= 0 then st
-                    else _with_width st
-                           (Font.text_width f (_collapse_ws (_inline_text kids ""))
-                              st.fs) in
+                    else _with_width st (_max_content f ua author pst (Cons (e, ancestors)) kids) in
           let (fbs, fh, fmt2, fmb2, _fesc) =
             _block f ua author pst ancestors tag attrs kids cbw cbh fst in
           let (_fr0, fbot) = fs in
@@ -985,7 +992,7 @@ module Layout {
             if to_lower tag == "br" then
               walk rest 0 (line + 1) false saw false false fcur (if x > maxx then x else maxx) nw wst hc
                 (Cons (box { tag = "br", x = Font.scale f x size, y = ltop hs line, w = 0,
-                             h = hline hs line, pinned = false }, acc))
+                             h = hline hs line, pinned = false, pinx = false }, acc))
             else
             if est.float_ == "left" || est.float_ == "right" then
               // Beside the line, not on it: it does not move the cursor, does not make the line exist, and
@@ -995,7 +1002,7 @@ module Layout {
               walk rest x line gap saw placed online (fcur + fw) maxx nw wst hc
                 (list_append acc
                    (Cons (box { tag = to_lower tag, x = Font.scale f fcur size, y = 0,
-                                w = Font.scale f fw size, h = lh, pinned = false }, Nil)))
+                                w = Font.scale f fw size, h = lh, pinned = false, pinx = false }, Nil)))
             else
             if est.display == "inline-block" || est.display == "inline-table" then
               // An ATOMIC inline-level box. It sits on the line like a word: it does not break, nothing
@@ -1138,7 +1145,7 @@ module Layout {
                                  h = if l2 == sl && x2 == sx && est.bt + est.bb == 0
                                         && not online && lead + trail == 0 then 0
                                      else fbot2 + est.pb + est.bb - fy,
-                                 pinned = false }, acc)))
+                                 pinned = false, pinx = false }, acc)))
           | Comment _c ->
             walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) nw wst hc acc
           | Doctype (_p, _q, _r) ->
@@ -1178,9 +1185,18 @@ module Layout {
     // A column is measured in FONT UNITS, not pixels. Rounding the width first and then asking whether
     // the text fits in it wraps a line whose text is 71.2 wide into a column of 71 — the column was
     // sized from that very text, so it has to be compared against it at the same precision.
+    // A column is as wide as its widest cell's CONTENT, and content is not only text. A cell holding
+    // a `<div style="width: 5em">` and no words measured zero, so the table came out eight pixels wide
+    // — its own border and nothing else — wrapped around an eighty-pixel box.
+    //
+    // Text is still measured in font units directly rather than through the pixel figure, because that
+    // is the precision the whole column algorithm is built on; the block width arrives already rounded
+    // to whole pixels and converting it back is exact.
     let cell_units = fn (c: (str * attr list * node list * sty)) ->
       let (_ct, _ca, ck, _cs) = c in
-      Font.text_units f (_collapse_ws (_inline_text ck "")) in
+      let t = Font.text_units f (_collapse_ws (_inline_text ck "")) in
+      let m = Font.text_units_of_px f (_max_content f ua author st anc ck) tfs in
+      if m > t then m else t in
     let extra = fn (c: (str * attr list * node list * sty)) ->
       let (_ct, _ca, _ck, cs) = c in
       cs.pl + cs.pr + (if cs.bl + cs.br == 0 then 2 * cellb else cs.bl + cs.br) in
@@ -1332,12 +1348,12 @@ module Layout {
                               | Nil -> Nil
                               | Cons (me, inside) ->
                                 Cons (box { tag = me.tag, x = x, y = ry, w = cw2, h = rh,
-                                            pinned = false },
+                                            pinned = false, pinx = false },
                                       _shift inside x (ry + vgap)) in
                 place more2 (match ws with Nil -> Nil | Cons (_w, rr) -> rr) (x + cw2 + sp)
                       (list_append a2 cell_bs) in
             let row_box = box { tag = to_lower rt, x = sp, y = ry, w = row_w, h = rh,
-                                pinned = false } in
+                                pinned = false, pinx = false } in
             lay_rows rest (ry + rh + sp) 0
                      (place laid px_cols sp (list_append a (Cons (row_box, Nil)))) in
         let gy = y + sp in
@@ -1345,7 +1361,7 @@ module Layout {
         // The group's own box is placed before its rows, so it is spliced in rather than appended: its
         // height is not known until the rows are laid out, and document order does not wait for that.
         let gbox = box { tag = to_lower gt, x = sp, y = gy, w = row_w, h = gy2 - sp - gy,
-                         pinned = false } in
+                         pinned = false, pinx = false } in
         lay rowex more (gy2 - sp) rem3
             (list_append acc (Cons (gbox, _drop acc a2))) in
     // A `<tfoot>` is laid out after the bodies whatever order it was written in, and a `<thead>` before
@@ -1537,7 +1553,7 @@ module Layout {
     // left after its own width and its right margin — the same margin read from the other end. With this
     // missing, a block with `margin: 10px` in a 100px RTL container sat at 10 where the browser puts it
     // at 0.
-    let me = box { tag = to_lower tag, x = bx0, y = 0, w = bw_total, h = h, pinned = false } in
+    let me = box { tag = to_lower tag, x = bx0, y = 0, w = bw_total, h = h, pinned = false, pinx = false } in
     // A fifth answer: how far a float inside this box reached, when this box does NOT contain floats.
     // The float escapes upward until something does contain it — and the initial containing block always
     // does, which is why a page is as tall as a float that overflowed every box on the way out.
