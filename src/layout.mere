@@ -1029,8 +1029,7 @@ module Layout {
             // trailing white space is removed — so an empty `<span>` with a border sits against the text
             // before it and not four pixels off it.
             let empty_el = _collapse_ws (_inline_text ks "") == "" in
-            let sx = if gap && placed && not empty_el then x + space_u * wst.fs else x in
-            let sl = line in
+            let sx0 = if gap && placed && not empty_el then x + space_u * wst.fs else x in
             // The children are walked into a FRESH accumulator so the element's own box can be placed
             // in front of them afterwards. Consing it onto the same accumulator put a nested inline
             // element after its own children in document order, which the box-sequence number sees.
@@ -1126,6 +1125,17 @@ module Layout {
             else
             let lead = (est.bl + est.pl) * f.upem in
             let trail = (est.pr + est.br) * f.upem in
+            // A break opportunity BEFORE an inline element is where the line ends when the element's
+            // opening edge and its first word will not fit together. Adding the edge at the cursor and
+            // then wrapping only the word strands the border at the end of the line it left, and reports
+            // the element as a fragment across two lines where the browser has it on one.
+            let fw1 =
+              let t = _collapse_ws (_inline_text ks "") in
+              let i = str_index_of t " " in
+              Font.text_units f (if i >= 0 then substring t 0 i else t) * est.fs in
+            let wrapb = placed && not nw && cap > 0 && fw1 > 0 && sx0 + lead + fw1 > cap in
+            let sx = if wrapb then 0 else sx0 in
+            let sl = if wrapb then line + 1 else line in
             // The children start where the BOX starts — past the space owed from before it and past this
             // element's own left edge. Starting them at the plain cursor made the box a space narrower
             // than its own border: five pixels of border reported as one.
@@ -1136,7 +1146,8 @@ module Layout {
               // Starting the inner walk's rightmost at ZERO and not at the outer one: the union this
               // element reports is of ITS fragments, and inheriting the widest anything before it
               // reached made a span as wide as whatever preceded it on the line.
-              walk ks (sx + lead) line false saw placed (online || lead + trail > 0) fcur 0
+              walk ks (sx + lead) sl false saw (placed && not wrapb)
+                   (online || lead + trail > 0) fcur 0
                    (nw || est.ws == "nowrap" || est.ws == "pre") est hc Nil in
             let g2 = if x2u == sx + lead then gap else g2a in
             // Still not right for `block-in-inline-nested-002-ref`, and the residue is one space: the
