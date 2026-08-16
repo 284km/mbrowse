@@ -189,6 +189,9 @@ module Tree {
     || n == "thead" || n == "title" || n == "tr" || n == "track" || n == "ul"
     || n == "wbr" || n == "xmp";
 
+  let _ws_char = fn (c: str) ->
+    c == " " || c == "\t" || c == "\n" || c == "\r" || c == chr 12;
+
   let _is_ws = fn (s: str) ->
     let rec go = fn (i: int) ->
       if i >= str_len s then true
@@ -214,6 +217,17 @@ module Tree {
 
   let _parent = fn (open_ids: int list) ->
     match open_ids with Cons (x, _) -> x | Nil -> 0;
+
+  // Every open element with this name, gone from the stack — removed in place and not popped
+  // through, which is a different operation: popping through would also close everything inside it.
+  let _drop_named = fn (arena: anode list) -> fn (open_ids: int list) -> fn (n: str) ->
+    list_filter open_ids (fn (id: int) -> (Nodes._nth arena id).name != n);
+
+  // The `<html>` element: the stack is innermost-first, so it is the last thing on it.
+  let rec _root_of = fn (open_ids: int list) ->
+    match open_ids with
+    | Nil -> 0
+    | Cons (x, rest) -> match rest with Nil -> x | Cons (_y, _r) -> _root_of rest;
 
   let _name_of = fn (arena: anode list) -> fn (id: int) ->
     (Nodes._nth arena id).name;
@@ -516,7 +530,12 @@ module Tree {
             let (a, _id) = Nodes.doctype arena (_parent open_ids) name in
             go rest "before html" a open_ids afe
         | TComment data ->
-          let (a, _id) = Nodes.comment arena (_parent open_ids) data in
+          // After the body, a comment belongs to the HTML element and not to whatever is deepest.
+          // `</body>` does not pop the body — the mode changes and the stack does not — so the
+          // deepest open element is still the body, and a comment written after the document went
+          // inside it.
+          let at = if mode == "after body" then _root_of open_ids else _parent open_ids in
+          let (a, _id) = Nodes.comment arena at data in
           go rest mode a open_ids afe
         | TChar data ->
           // Text inside an element that holds text goes inside it, whatever the insertion
@@ -537,20 +556,38 @@ module Tree {
             else
               let (a, _id) = Nodes.add_text arena (_parent open_ids) ws in
               go rest mode a open_ids afe
+          // In the head, white space is INSERTED and not ignored, and a run that begins with it
+          // splits: the standard reads one character at a time, so a tokenizer that hands over runs
+          // has to break the run where the standard would have changed mode. `<script></script> -->`
+          // keeps its space in the head and starts the body at the arrow.
+          else if mode == "in head" || mode == "after head" then
+            let n = str_len data in
+            let rec lead = fn (i: int) -> if i < n && _ws_char (char_at data i) then lead (i + 1)
+                                          else i in
+            let k = lead 0 in
+            if k == 0 then
+              let (a, o) = _open_body (mode == "after head") arena open_ids in
+              go ts "in body" a o afe
+            else
+              let (a, _id) = Nodes.add_text arena (_parent open_ids) (substring data 0 k) in
+              if k == n then go rest mode a open_ids afe
+              else go (Cons (TChar (substring data k n), rest)) mode a open_ids afe
           else if _is_ws data && mode != "in body" && mode != "after body" then
             go rest mode arena open_ids afe
           // After the body, characters are processed with the body's own rules — which is
           // why the space in `X</html> ` joins the text rather than vanishing.
           else if mode == "in body" || mode == "after body" then
+            // Anything inserted into a new block reopens the formatting elements that are
+            // listed but no longer open — that is what the list is for, and it applies to
+            // FOSTERED text as well. The fostered path skipped it, so text pushed out of a
+            // table came out bare where the browser wraps it in a reopened `<a>`.
             let fb = _foster_target arena open_ids in
-            if fb >= 0 then
-              let a = Nodes.insert_text_before arena fb data in
-              go rest mode a open_ids afe
+            let (a0, o0, l0, p0) = Reconstruct.run arena open_ids afe (_parent open_ids) fb in
+            if fb >= 0 && p0 == _parent open_ids then
+              // Nothing was reopened, so the text itself is what gets fostered.
+              let a = Nodes.insert_text_before a0 fb data in
+              go rest mode a o0 l0
             else
-              // Anything inserted into a new block reopens the formatting elements
-              // that are listed but no longer open — that is what the list is for.
-              let (a0, o0, l0, p0) =
-                Reconstruct.run arena open_ids afe (_parent open_ids) in
               let (a, _id) = Nodes.add_text a0 p0 data in
               go rest mode a o0 l0
           else
@@ -685,7 +722,12 @@ module Tree {
               let rec strip = fn (l: afe list) ->
                 let h = Formatting.find l "a" in
                 if h < 0 then l else strip (Formatting.remove l h) in
-              go ts mode a2 o2 (strip l2)
+              // ...and out of the STACK too, which is the other half of the same sentence in the
+              // standard and was missing. An `<a>` the agency did not itself remove stayed open, so
+              // everything after it — a `<p>`, a `<div>`, the rest of the document — was built inside
+              // a link that had already been superseded. Removed in place, not popped through: what is
+              // inside it is finished and belongs where it is.
+              go ts mode a2 (_drop_named a2 o2 "a") (strip l2)
             // A `<nobr>` with a nobr already in scope runs the agency for it first — the
             // same shape as the `<a>` rule above, with scope as the condition instead of the
             // list, which is why `<nobr><nobr><nobr>` is three siblings.
@@ -749,7 +791,7 @@ module Tree {
                 if not (_reconstructs name) then (arena, open_ids, afe)
                 else
                   let (a0, o0, l0, _p0) =
-                    Reconstruct.run arena open_ids afe (_parent open_ids) in
+                    Reconstruct.run arena open_ids afe (_parent open_ids) (0 - 1) in
                   (a0, o0, l0) in
               // Where a table tag belongs: first pop back to the context it lives in, then
               // create the parts the document did not write. Both, in that order — popping
@@ -845,7 +887,12 @@ module Tree {
           // `<p><hr></p>` ends with two paragraphs — the hr closed the first, and the stray
           // end tag is what the second is made of.
           else if name == "p" && not (_open_has arena open_ids "p") then
-            go (Cons (TStart ("p", Nil, false), rest)) mode arena open_ids afe
+            // Insert one AND CLOSE it. The standard's words are "insert an HTML element for a `p`
+            // start tag token, then close a p element", and only the first half was here — so the
+            // paragraph this end tag conjured stayed open and swallowed whatever came next.
+            // Re-injecting the end tag as well is safe: by the time it is read a `p` IS open, so it
+            // takes the ordinary path and pops.
+            go (Cons (TStart ("p", Nil, false), Cons (TEnd "p", rest))) mode arena open_ids afe
           else if name == "html" || name == "body" then
             if mode == "in body" then go rest "after body" arena open_ids afe
             else go rest mode arena open_ids afe
@@ -867,7 +914,21 @@ module Tree {
                    || name == "tfoot" || name == "tr" || name == "caption")
                   && _open_has arena open_ids name then
             let o = _pop_through arena open_ids name in
-            let l = if name == "caption" then Formatting.clear_to_marker afe else afe in
+            // Every marker-scope element the pop passed THROUGH takes its marker with it, not just
+            // a caption. `</table>` around an unclosed `<td>` closes that cell, and closing a cell
+            // is how the formatting opened inside it is forgotten — otherwise an `<i>` from inside
+            // the cell is reopened around the text that follows the table, which is a tag the
+            // document never wrote appearing outside the element it was written in.
+            let rec count_markers = fn (xs: int list) -> fn (n: int) ->
+              match xs with
+              | Nil -> n
+              | Cons (x, rest2) ->
+                let nm = _name_of arena x in
+                let n2 = if _is_marker_scope nm then n + 1 else n in
+                if nm == name then n2 else count_markers rest2 n2 in
+            let rec clear_n = fn (l2: afe list) -> fn (i: int) ->
+              if i <= 0 then l2 else clear_n (Formatting.clear_to_marker l2) (i - 1) in
+            let l = clear_n afe (count_markers open_ids 0) in
             go rest mode arena o l
           else if _end_tag_matches arena open_ids name then
             let o = _pop_through arena open_ids name in

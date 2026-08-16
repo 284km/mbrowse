@@ -160,22 +160,27 @@ module Reconstruct {
   // Reopen, oldest first, under `parent`. Each reopened element becomes the parent of
   // the next, which is what "innermost last" means and what a flat loop would get
   // backwards.
+  // `foster` is the table to reopen IN FRONT OF, or -1. Reconstruction inside a table is fostered
+  // like everything else there: the reopened elements belong before the table, not inside it. Only
+  // the OUTERMOST one is placed that way — the rest nest inside it, which is what reconstruction is.
   let run = fn (arena: anode list) -> fn (open_ids: int list) ->
-            fn (list: afe list) -> fn (parent: int) ->
+            fn (list: afe list) -> fn (parent: int) -> fn (foster: int) ->
     if not (needed list open_ids) then (arena, open_ids, list, parent)
     else
       let rec go = fn (todo: (int * str * attr list) list) ->
                    fn (a: anode list) -> fn (o: int list) ->
-                   fn (l: afe list) -> fn (p: int) ->
+                   fn (l: afe list) -> fn (p: int) -> fn (first: bool) ->
         match todo with
         | Nil -> (a, o, l, p)
         | Cons ((old_id, name, attrs), rest) ->
-          if _in_open o old_id then go rest a o l p
+          if _in_open o old_id then go rest a o l p first
           else
-            let (a2, new_id) = Nodes.element a p name attrs in
+            let (a2, new_id) =
+              if first && foster >= 0 then Nodes.insert_before a foster 0 name attrs ""
+              else Nodes.element a p name attrs in
             // The entry now names the new element: the old one is finished and
             // nothing may reopen it a second time.
             let l2 = Formatting.push (Formatting.remove l old_id) new_id name attrs in
-            go rest a2 (Cons (new_id, o)) l2 new_id in
-      go (Formatting.entries_after_marker list) arena open_ids list parent;
+            go rest a2 (Cons (new_id, o)) l2 new_id false in
+      go (Formatting.entries_after_marker list) arena open_ids list parent true;
 }
