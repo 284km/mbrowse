@@ -32,14 +32,15 @@
 # whole time. A corpus does not only tell you whether you are right. It tells you what to do
 # next, and it is the only thing here that can.
 #
-# The taxonomy, re-derived from the failures at 204 of 228 with all 228 box sequences right. **It is re-derived every time and
+# The taxonomy, re-derived from the failures at 205 of 228 with all 228 box sequences right. **It is re-derived every time and
 # never carried forward**, because it has been wrong four times: it once named `font-size`,
 # which not one document sets; then floats, which were a tenth of it; then anonymous boxes; then
 # floats beside each other, which was really a formatting context dodging one.
 #
-#    6  a `<table>` sized wrong, all six of them documents whose table carries `height="200"` or
-#       `valign="bottom"` — PRESENTATIONAL ATTRIBUTES, which are not mapped to style at all. The
-#       cascade never sees them. That is a whole missing layer and not a layout bug.
+#    5  what is left of the table documents. The presentational attributes now reach the cascade and
+#       one of the six is exact; the rest have moved on to an inline-block question — a `<span>` with
+#       a block inside it, sized and stacked, which is the block-in-inline split again wearing a
+#       different display.
 #    4  the block-in-inline split, where a fragment wants to be taller than its line.
 #   10  the rest, one or two documents each.
 #
@@ -72,7 +73,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "layout_check: no mere — set MERE=..." >&2; exit 1; }
 DATA="$ROOT/test/data/layout"
-EXPECT_PASS=${EXPECT_PASS:-204}
+EXPECT_PASS=${EXPECT_PASS:-205}
 
 T="${TMPDIR:-/tmp}/mbrowse_layout.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 

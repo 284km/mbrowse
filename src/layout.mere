@@ -79,6 +79,18 @@ module Layout {
           pt = st.pt, pr = st.pr, pb = st.pb, pl = st.pl,
           bt = st.bt, br = st.br, bb = st.bb, bl = st.bl };
 
+  // The same style with a border on every side, for a cell in a table that carries `border`. HTML says
+  // the attribute puts a border on the table AND one pixel on every cell in it, which is a statement
+  // about DESCENDANTS that an attribute on one element cannot make on its own — so it is made here,
+  // where the table is laying its cells out and knows both.
+  let _with_border = fn (st: sty) -> fn (w: int) ->
+    sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
+          overflow = st.overflow, valign = st.valign, left = st.left, top = st.top,
+          bsz = st.bsz, ws = st.ws, w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
+          mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
+          pt = st.pt, pr = st.pr, pb = st.pb, pl = st.pl,
+          bt = w, br = w, bb = w, bl = w };
+
   let _no_h_edges = fn (st: sty) ->
     sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
           overflow = st.overflow, valign = st.valign, left = st.left, top = st.top,
@@ -207,6 +219,15 @@ module Layout {
       | Cons (a, rest) -> if to_lower a.name == name then a.value else go rest in
     go attrs;
 
+  // Whether the attribute is PRESENT, which is not the same question as what its value is: `border=""`
+  // and no `border` at all both read as the empty string, and HTML gives them opposite meanings.
+  let _has_attr = fn (attrs: attr list) -> fn (name: str) ->
+    let rec go = fn (xs: attr list) ->
+      match xs with
+      | Nil -> false
+      | Cons (a, rest) -> if to_lower a.name == name then true else go rest in
+    go attrs;
+
   // The document's own stylesheets, which for these documents means the text inside every
   // `<style>` element. Collected in one walk before layout starts rather than looked for during
   // it: a stylesheet is a property of the document, and finding it while placing boxes would
@@ -250,12 +271,54 @@ module Layout {
     // The `em` this element's own values are measured in is its own font size, which is the one thing
     // in a stylesheet that has to be resolved before anything else can be. Passed as a thunk so that
     // the chain walk happens only for a value that is actually written in `em`.
-    Style.resolve (list_append h1 (list_append h2 h3)) e.tag
+    let hp = Style.pres_hits e.pres in
+    Style.resolve (list_append h1 (list_append hp (list_append h2 h3))) e.tag
       (fn (_z: int) -> _font_size ua author (Cons (e, ancestors)));
+
+  // The presentational attributes, written as the CSS that HTML says they mean. This is a LAYER that
+  // was missing rather than a bug: the cascade never saw `height="200"` or `valign="bottom"` at all,
+  // because nothing turned them into declarations, and six documents in the corpus are laid out from
+  // attributes alone.
+  //
+  // Only what the corpus asks for, and it is worth saying which: `width` and `height` on the elements
+  // that take them, `valign` on a cell, `border` and `cellspacing` on a table. `align`, `bgcolor`,
+  // `cellpadding` and the rest are not here — `cellpadding` in particular cannot be, because it says
+  // something about DESCENDANTS and an attribute on one element cannot reach them.
+  let _pres_of = fn (tag: str) -> fn (attrs: attr list) ->
+    let t = to_lower tag in
+    // A number alone means pixels; a percentage stays one. Anything else is not a value and is dropped,
+    // which is what "the attribute must be a valid non-negative integer" comes to.
+    let dim = fn (v: str) ->
+      if v == "" then ""
+      else
+        let n = str_len v in
+        let rec digits = fn (i: int) ->
+          if i >= n then i
+          else if char_at v i >= "0" && char_at v i <= "9" then digits (i + 1) else i in
+        let e = digits 0 in
+        if e == 0 then ""
+        else if e == n then substring v 0 e ++ "px"
+        else if substring v e n == "%" then v
+        else "" in
+    let one = fn (prop: str) -> fn (v: str) -> if v == "" then "" else prop ++ ": " ++ v ++ ";" in
+    let sized = t == "table" || t == "td" || t == "th" || t == "tr" || t == "col"
+                || t == "img" || t == "hr" in
+    let cell = t == "td" || t == "th" || t == "tr" || t == "tbody" || t == "thead" || t == "tfoot" in
+    (if sized then one "width" (dim (_attr attrs "width")) else "")
+    ++ (if sized then one "height" (dim (_attr attrs "height")) else "")
+    ++ (if cell then one "vertical-align" (to_lower (_attr attrs "valign")) else "")
+    ++ (if t == "table" then one "border-spacing" (dim (_attr attrs "cellspacing")) else "")
+    // `<table border>` with no value is a border of one pixel, and `border="0"` is none. The style is
+    // part of it: a border with no style draws nothing and is zero wide, which this file already knows.
+    ++ (if t == "table" && _has_attr attrs "border" then
+          (let v = _attr attrs "border" in
+           let w = if v == "" then "1px" else dim v in
+           if w == "" || w == "0px" then "" else "border: " ++ w ++ " solid;")
+        else "");
 
   let _elem_of = fn (tag: str) -> fn (attrs: attr list) ->
     elem { tag = to_lower tag, id = _attr attrs "id", cls = to_lower (_attr attrs "class"),
-           sty_attr = _attr attrs "style" };
+           sty_attr = _attr attrs "style", pres = _pres_of tag attrs };
 
   // ---- inline content ------------------------------------------------------------
 
@@ -1170,6 +1233,8 @@ module Layout {
 
   and _table = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
                fn (anc: elem list) -> fn (kids: node list) -> fn (st: sty) -> fn (avail: int) ->
+               // One pixel on every cell when the table itself carries `border`, and zero otherwise.
+               fn (cellb: int) ->
     let sp = st.spacing in
     let tfs = _font_size ua author anc in
     let lh = Font.line_height f tfs in
@@ -1183,7 +1248,8 @@ module Layout {
       let (_ct, _ca, ck, _cs) = c in
       Font.text_units f (_collapse_ws (_inline_text ck "")) in
     let extra = fn (c: (str * attr list * node list * sty)) ->
-      let (_ct, _ca, _ck, cs) = c in cs.pl + cs.pr + cs.bl + cs.br in
+      let (_ct, _ca, _ck, cs) = c in
+      cs.pl + cs.pr + (if cs.bl + cs.br == 0 then 2 * cellb else cs.bl + cs.br) in
     let rec col_widths = fn (gs: (str * attr list * node list * sty) list) -> fn (acc: int list) ->
       match gs with
       | Nil -> acc
@@ -1228,16 +1294,16 @@ module Layout {
     let table_w = if st.w >= 0 then st.w else if inner > avail then avail else inner in
     // Document order, built forwards. A table's boxes are a group, then its rows, and each row's cells
     // straight after it — an accumulator that is reversed at the end puts the cells before their row.
-    let rec lay = fn (gs: (str * attr list * node list * sty) list) -> fn (y: int) ->
-                  fn (acc: box list) ->
+    let rec lay = fn (rowex: int) -> fn (gs: (str * attr list * node list * sty) list) -> fn (y: int) ->
+                  fn (rem: int) -> fn (acc: box list) ->
       match gs with
-      | Nil -> (acc, y)
+      | Nil -> (acc, y, rem)
       | Cons (g, more) ->
         let (gt, _ga, _gk, _gs) = g in
         let rec lay_rows = fn (rs: (str * attr list * node list * sty) list) -> fn (ry: int) ->
-                           fn (a: box list) ->
+                           fn (rem2: int) -> fn (a: box list) ->
           match rs with
-          | Nil -> (a, ry)
+          | Nil -> (a, ry, rem2)
           | Cons (r, rest) ->
             let (rt, _ra, rk, _rs) = r in
             let cells = _kids_of f ua author anc rk in
@@ -1265,11 +1331,13 @@ module Layout {
             // most a pixel and only where the rounding went down.
             let rec lay_cells = fn (cs: (str * attr list * node list * sty) list) ->
                                 fn (ws: int list) -> fn (us: int list) ->
-                                fn (out: (box list * int) list) ->
+                                fn (out: (box list * int * str) list) ->
               match cs with
               | Nil -> list_rev out
               | Cons (c, more2) ->
-                let (ct, ca, ck, cst) = c in
+                let (ct, ca, ck, cst0) = c in
+                let cst = if cellb > 0 && cst0.bt + cst0.bb + cst0.bl + cst0.br == 0
+                          then _with_border cst0 cellb else cst0 in
                 let cw2 = match ws with Nil -> 0 | Cons (w, _r) -> w in
                 let cu = match us with Nil -> 0 | Cons (u, _r) -> u in
                 let up = (cu * tfs + f.upem - 1) / f.upem + pad0 in
@@ -1277,22 +1345,33 @@ module Layout {
                   _block f ua author anc ct ca ck (if up > cw2 then up else cw2) (0 - 1) cst in
                 lay_cells more2 (match ws with Nil -> Nil | Cons (_w, rr) -> rr)
                           (match us with Nil -> Nil | Cons (_u, rr2) -> rr2)
-                          (Cons ((cbs, ch), out)) in
+                          (Cons ((cbs, ch, cst.valign), out)) in
             let laid = lay_cells cells px_cols cols Nil in
             // Every cell in a row is as tall as the tallest, which is what makes a row a row.
-            let rh = let rec go = fn (ls: (box list * int) list) -> fn (best: int) ->
-                       match ls with
-                       | Nil -> best
-                       | Cons (l, more2) ->
-                         let (_b2, h2) = l in go more2 (if h2 > best then h2 else best) in
-                     go laid 0 in
-            let rec place = fn (ls: (box list * int) list) -> fn (ws: int list) ->
+            let rh0 = let rec go = fn (ls: (box list * int * str) list) -> fn (best: int) ->
+                        match ls with
+                        | Nil -> best
+                        | Cons (l, more2) ->
+                          let (_b2, h2, _v2) = l in go more2 (if h2 > best then h2 else best) in
+                      go laid 0 in
+            // A table with a stated height is TALLER than its rows want to be, and the difference is
+            // theirs: the rows share it out, and the first one takes what does not divide evenly. A row
+            // is as tall as its tallest cell OR as tall as the table needs it, whichever is more.
+            let rh = rh0 + rowex + rem2 in
+            let rec place = fn (ls: (box list * int * str) list) -> fn (ws: int list) ->
                             fn (x: int) -> fn (a2: box list) ->
               match ls with
               | Nil -> a2
               | Cons (l, more2) ->
-                let (cbs, _ch) = l in
+                let (cbs, ch2, cva) = l in
                 let cw2 = match ws with Nil -> 0 | Cons (w, _r) -> w in
+                // `vertical-align` on a cell moves its CONTENTS inside a box the row's height decided.
+                // It is the same property name as the one that puts an inline-block on a line and it is
+                // a different question — one asks where a box sits among others on a line, this asks
+                // where the contents sit in a box that is already taller than they are.
+                let vgap = if cva == "bottom" then rh - ch2
+                           else if cva == "middle" then (rh - ch2) / 2
+                           else 0 in
                 // The cell's own box takes the ROW's height and not the height it was laid out at —
                 // that is the whole of what a row is. Its contents keep theirs and move with it.
                 let cell_bs = match cbs with
@@ -1300,18 +1379,18 @@ module Layout {
                               | Cons (me, inside) ->
                                 Cons (box { tag = me.tag, x = x, y = ry, w = cw2, h = rh,
                                             pinned = false },
-                                      _shift inside x ry) in
+                                      _shift inside x (ry + vgap)) in
                 place more2 (match ws with Nil -> Nil | Cons (_w, rr) -> rr) (x + cw2 + sp)
                       (list_append a2 cell_bs) in
             let row_box = box { tag = to_lower rt, x = sp, y = ry, w = sum_cols, h = rh, pinned = false } in
-            lay_rows rest (ry + rh + sp)
+            lay_rows rest (ry + rh + sp) 0
                      (place laid px_cols sp (list_append a (Cons (row_box, Nil)))) in
         let gy = y + sp in
-        let (a2, gy2) = lay_rows (rows_of g) gy acc in
+        let (a2, gy2, rem3) = lay_rows (rows_of g) gy rem acc in
         // The group's own box is placed before its rows, so it is spliced in rather than appended: its
         // height is not known until the rows are laid out, and document order does not wait for that.
         let gbox = box { tag = to_lower gt, x = sp, y = gy, w = sum_cols, h = gy2 - sp - gy, pinned = false } in
-        lay more (gy2 - sp)
+        lay rowex more (gy2 - sp) rem3
             (list_append acc (Cons (gbox, _drop acc a2))) in
     // A `<tfoot>` is laid out after the bodies whatever order it was written in, and a `<thead>` before
     // them — but both are still REPORTED where the document put them. Two different orders over the same
@@ -1325,9 +1404,32 @@ module Layout {
                                       tag_of g == "tfoot") in
     let bodies = list_filter groups (fn (g: (str * attr list * node list * sty)) ->
                                        tag_of g != "thead" && tag_of g != "tfoot") in
-    let (hbs, y1) = lay heads 0 Nil in
-    let (bbs0, y2) = lay bodies y1 Nil in
-    let (fbs0, y3) = lay foots y2 Nil in
+    // Laid out twice when the table states a height, and once otherwise. The rows have to be placed
+    // before their natural total is known, and the share each of them gets of a stated height cannot be
+    // worked out until that total is. A table is small and states a height rarely; the guard is what
+    // keeps this from being a second layout of every table in the document.
+    let nrows =
+      let rec cg = fn (gs: (str * attr list * node list * sty) list) -> fn (n: int) ->
+        match gs with
+        | Nil -> n
+        | Cons (g, more) -> cg more (n + list_len (rows_of g)) in
+      cg groups 0 in
+    let natural =
+      if st.h < 0 then 0
+      else
+        let (_h0, n1, _r1) = lay 0 heads 0 0 Nil in
+        let (_b0, n2, _r2) = lay 0 bodies n1 0 Nil in
+        let (_f0, n3, _r3) = lay 0 foots n2 0 Nil in
+        n3 + sp in
+    // A table's stated height is its BORDER box, not its content box — which is what the browser
+    // reports for one and is why `height="200"` on a bordered table comes back as 200 and not 202.
+    let want_h = if st.h < 0 then 0 - 1 else st.h - st.bt - st.bb in
+    let slack = if want_h >= 0 && want_h > natural && nrows > 0 then want_h - natural else 0 in
+    let rowex = if nrows == 0 then 0 else slack / nrows in
+    let rem0 = slack - rowex * nrows in
+    let (hbs, y1, rr1) = lay rowex heads 0 rem0 Nil in
+    let (bbs0, y2, rr2) = lay rowex bodies y1 rr1 Nil in
+    let (fbs0, y3, _rr3) = lay rowex foots y2 rr2 Nil in
     let bbs = bbs0 in
     let fbs = fbs0 in
     // Written before the bodies means reported before them, which is the only thing left to decide.
@@ -1359,11 +1461,15 @@ module Layout {
     // of the stated number rather than being added to it. It is one property that changes what two
     // others mean, and a `width: 3em` box with 2em borders on both sides is 64px wide under one reading
     // and 112 under the other — which is the whole of the difference the corpus reports.
+    // A TABLE's stated width and height are its border box, whatever `box-sizing` says: that is what
+    // the standard means by "the height of the table box" in the separated-borders model, and it is
+    // what the browser reports. `height="200"` on a table with a 1px border comes back as 200, not 202.
+    let bsz_eff = if st.display == "table" then "border-box" else st.bsz in
     let h_edges = st.bl + st.br + st.pl + st.pr in
     let stated_w = if pct >= 0 then pct else if st.w >= 0 then st.w else 0 - 1 in
     let content_w =
       if stated_w >= 0 then
-        (if st.bsz == "border-box" then
+        (if bsz_eff == "border-box" then
            (let c = stated_w - h_edges in if c < 0 then 0 else c)
          else stated_w)
       else cbw - st.ml - st.mr - h_edges in
@@ -1373,8 +1479,11 @@ module Layout {
     // A table's width is decided by its own contents rather than handed down from the containing block,
     // so the table is laid out before the box is sized and not after.
     let is_table = st.display == "table" in
-    let (tbs, tw, th) = if is_table then _table f ua author inner_ancestors kids st cw0
-                        else (Nil, 0, 0) in
+    let (tbs, tw, th) =
+      if is_table then
+        _table f ua author inner_ancestors kids st cw0
+               (if _has_attr attrs "border" && st.bt > 0 then 1 else 0)
+      else (Nil, 0, 0) in
     let cw = if is_table then tw else cw0 in
     // A parent's margin collapses with its first or last child's when nothing separates them —
     // no border and no padding on that side, and for the bottom, no stated height either. When
@@ -1462,7 +1571,7 @@ module Layout {
     let v_edges = st.bt + st.bb + st.pt + st.pb in
     let stated_h = if pct_h >= 0 then pct_h else if st.h >= 0 then st.h else 0 - 1 in
     let content_h = if stated_h >= 0 then
-                      (if st.bsz == "border-box" then
+                      (if bsz_eff == "border-box" then
                          (let c = stated_h - v_edges in if c < 0 then 0 else c)
                        else stated_h)
                     else if (makes_bfc || is_root) && fbot > in_flow_h then fbot
