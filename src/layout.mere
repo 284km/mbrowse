@@ -408,6 +408,13 @@ module Layout {
         let st = style_of ua author e anc (_attr attrs "style") pst in
         let edges = st.ml + st.mr + st.pl + st.pr + st.bl + st.br in
         if st.display == "none" then _mc_acc f ua author pst anc rest best run trail
+        // `<br>` ends the run here too. Max content is the width at which nothing WRAPS, and a break
+        // that the source asked for is not wrapping — a box holding three lines of art separated by
+        // `<br>` wanted 370 pixels, which is all three laid end to end, where the browser asks for the
+        // longest of the three.
+        else if to_lower tag == "br" then
+          let fl = flush run trail in
+          _mc_acc f ua author pst anc rest (if fl > best then fl else best) 0 0
         else if _is_block_level st.display then
           // A block child ends the run of inline content beside it and contributes its own outer width.
           let inner = if st.w >= 0 then st.w
@@ -1038,8 +1045,16 @@ module Layout {
             // the end of a line, and a line's trailing white space is removed.
             if to_lower tag == "br" then
               walk rest 0 (line + 1) false saw false false fcur (if x > maxx then x else maxx) nw wst hc
-                (Cons (box { tag = "br", x = (x + f.upem / 2) / f.upem, y = ltop hs line, w = 0,
-                             h = hline hs line, pinned = false, pinx = false }, acc))
+                // Its box is a content area like any other inline box's — the font's ascent and descent
+                // about the LINE's baseline — and not the height of the line. They are the same number
+                // until `line-height` differs from the font, and then a `<br>` on a 16px line reported
+                // 16 tall at the line's top where the browser says 22, three pixels above it.
+                (Cons (box { tag = "br", x = (x + f.upem / 2) / f.upem,
+                             y = ltop hs line + hbase hs line
+                                 - (Font.line_height f est.fs
+                                    - Font.scale f (0 - f.descender) est.fs),
+                             w = 0, h = Font.line_height f est.fs,
+                             pinned = false, pinx = false }, acc))
             else
             if est.float_ == "left" || est.float_ == "right" then
               // Beside the line, not on it: it does not move the cursor, does not make the line exist, and
