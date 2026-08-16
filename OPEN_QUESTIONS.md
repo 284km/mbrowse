@@ -83,20 +83,47 @@ another font will use it.
 **What would settle it:** a second font that uses the construction, or a synthesised one. Neither is
 vendored, and vendoring a font for one branch is a real cost that has not been paid.
 
-## Q-5. Painting
+## Q-5. Ligatures, and the 116 characters in the wrong place
+
+**116 documents** — `glyphpos_check.sh` passes 112 of 228 where the box gate passes 218. That gap is
+the finding: 106 documents have every element box exactly where the browser puts it and at least one
+character somewhere else.
+
+Two causes, from the diffs:
+
+  - **Ligatures.** The browser substitutes `fi` with a single glyph through GSUB, so its two
+    characters share one rect and divide it differently. Nothing here does GSUB. This is a missing
+    feature rather than a wrong number — the pair occupies the same total width either way — and
+    implementing it means reading GSUB the way GPOS is already read for kerning.
+  - **Single-pixel drift** along a long line, which is [Q-3](#q-3-sub-pixel-accumulation-along-a-line-of-inline-blocks)
+    seen one character at a time instead of once at the end of a span.
+
+**What would settle it:** GSUB for the first; a decision about fractional box widths for the second.
+They are independent.
+
+## Q-6. Painting
 
 Layout produces boxes. The font machinery produces ink. Nothing puts the second inside the first, so
 there is no picture, no window, and no reftest.
 
-The first piece is that layout has to say WHERE each glyph goes — it computes that and does not
-return it. That is a change to what `_inline` hands back, and everything above it.
+**The first piece is done.** Layout says where each glyph goes: a glyph's box is in the same list as
+an element's, told apart by a code point, and `render_glyphs` is the other half of the list `render`
+already prints. `glyphpos_check.sh` measures it against a browser's `Range` rects.
+
+What is left is the picture itself, and the shape of it is not yet decided:
+
+  - **colour**, which `sty` does not carry at all. Without it a reftest cannot tell a green square
+    from a red one, which is what half of the WPT reftests are about.
+  - **what to compare.** A page is 800 pixels wide and can be 800 tall; a character grid of that is
+    half a million cells per document, and there are reftest pairs in the dozens. Comparing hashes
+    makes a failure undebuggable. This needs a decision before code.
 
 **What it would unlock:** reftests, which are worth running now for exactly the reason they were the
 wrong gate to start with. An engine that draws nothing passes every reftest, so they could not come
 first; the geometry is independently checked now, so they can come next, and they check what geometry
 cannot — colour, stacking, and where the ink actually lands.
 
-## Q-6. How long the layout gate takes
+## Q-7. How long the layout gate takes
 
 The engine is superlinear in the number of sibling inline elements: 40 spans in a paragraph take 1.5
 seconds and 80 take 17. `inlines-004` has 130 of them.

@@ -44,6 +44,7 @@ sh scripts/check.sh
 | CSS, six levels        | its own corpus, level by level | 126 of 126 |
 | layout geometry        | a browser's own rects          | 218 of 228 |
 | layout box sequence    | the same                       | 228 of 228 |
+| character positions    | a browser's `Range` rects      | 112 of 228 |
 | font metrics           | a browser's `measureText`      | 29 of 29   |
 | glyph outlines, 5 ways | fontTools                      | exact      |
 
@@ -51,8 +52,14 @@ The HTML **tokenizer** is not in this table and not in this repository: it is a 
 against html5lib-tests where it lives. The line has to be drawn somewhere and it is drawn at what
 this repo can break.
 
-What is NOT here: painting. Layout produces boxes and the font machinery produces ink, and nothing
-yet puts the second inside the first — so there is no window, no picture, and no reftest.
+Character positions are 112 where the boxes are 218, and that gap is information rather than a
+shortfall: **106 documents have every element box exactly where the browser puts it and at least one
+character somewhere else.** No box gate can see that. The causes are ligatures — the browser
+substitutes `fi` with one glyph through GSUB and nothing here does — and single-pixel drift along a
+line.
+
+What is NOT here: painting. Layout says where every box and every glyph goes, and nothing yet turns
+that into pixels — so there is no window, no picture, and no reftest.
 
 [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md) is what this repository knows it does not know, with the
 repairs that have already been tried and measured and rejected. Several of the remaining failures
