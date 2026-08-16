@@ -24,10 +24,27 @@ type sty = {
   // Whether `width` and `height` state the CONTENT box or the BORDER box. One property that changes
   // what two others mean, which is why it is a field and not a special case at the one call site.
   bsz: str,
-  // `white-space`, as this element itself states it. It INHERITS, and what is here is the own value —
-  // the inline walk carries the inherited one down as it descends, which is the same walk that would
-  // have to be done to ask for it.
+  // ---- the INHERITED properties, as computed values -------------------------------------------
+  //
+  // Inheritance is a property of the tree walk and not of an element, so these are resolved by
+  // handing each element its PARENT's computed style. Every one of them used to be asked for by name
+  // instead, one property at a time, by walking back up the ancestor chain and matching selectors at
+  // every level of it — which answered correctly and cost the depth of the tree per question.
+  //
+  // `line-height` and `text-indent` each inherit in TWO forms, and which one it is has to survive the
+  // inheriting. A bare number inherits as the number and is multiplied by each element's own font
+  // size; a length inherits as the length it computed to in the element that declared it. Same for a
+  // percentage text-indent against a length one. Collapsing either pair to a single number loses the
+  // distinction exactly where a child has a different font size from its parent, which is the only
+  // case where anyone would notice.
+  fs: int,                             // font-size in px
+  // Both -1 means `normal`. NEGATIVE is the absent marker for each, and it has to be: zero is a legal
+  // line height and using it to mean "not set" made `line-height: 0` read as `normal`. A sentinel
+  // inside its value's own range is not a sentinel — met twice now, once here and once in `px_of`.
+  lh_px: int, lh_num: float,
+  dir: str,
   ws: str,
+  ti_px: int, ti_pct: int,             // ti_pct is -1 unless the value was a percentage
   left: int, top: int,                 // -1 when the property said nothing
   w: int, h: int,                      // -1 for auto
   w_pct: int, h_pct: int,              // -1 when not a percentage
@@ -153,6 +170,22 @@ module Style {
 
   // The root size, for the callers that have no element to ask about.
   let px_of = fn (s: str) -> px_at (fn (_z: int) -> root_em) s;
+
+  // The `font` shorthand's size and line-height, as `size/line-height`. Both of the properties below
+  // can be written only there — `font: 2em/2 sans-serif` names neither of them — so the shorthand is
+  // picked apart at the two places that ask. Expanding it properly means a shorthand table, which is
+  // the right shape and is not what one declaration is worth yet.
+  let _font_parts = fn (v: str) ->
+    let rec go = fn (ps: str list) ->
+      match ps with
+      | Nil -> ("", "")
+      | Cons (t, rest) ->
+        let i = str_index_of t "/" in
+        if i >= 0 then (substring t 0 i, substring t (i + 1) (str_len t))
+        else if str_len t > 0 && (_is_digit (char_at t 0) || char_at t 0 == ".")
+        then (t, "")
+        else go rest in
+    go (str_split v " ");
 
   // The percentage in a value, or -1. Layout resolves these against the containing block.
   let pct_of = fn (s: str) ->
@@ -490,56 +523,98 @@ module Style {
   // The computed value of an INHERITED property. Walked up the ancestor chain rather than threaded down
   // as a computed value, because every call site already has the chain and none has the parent's style —
   // the chain is by far the smaller change, and its cost is the depth of the tree rather than its size.
-  // What an element itself says about a property, without looking up. Split out of `inherited` because
-  // resolving a font size needs exactly this: `font-size: 2em` on a child is two of the PARENT's size,
-  // and asking the inherited value back would answer with the child's own declaration and multiply it
-  // by itself.
-  let own = fn (ua: prepared list) -> fn (author: prepared list) -> fn (prop: str) ->
-            fn (e: elem) -> fn (anc: elem list) ->
-    let hs = list_append (hits_for ua 0 e anc 0)
-               (list_append (pres_hits e.pres)
-                  (list_append (hits_for author 1 e anc 0) (inline_hits e.sty_attr))) in
-    let v = winner hs prop in
-    if v == "" then "" else to_lower v;
+  // **Inheritance is here now, and it is the tree walk.** It used to be a hole with a note in it: a
+  // declaration reached an element only through a selector that matched it, and a property whose value
+  // comes from an ancestor because the property INHERITS was not modelled at all. What stood in for it
+  // was `inherited`, one property at a time, asked for by name and answered by walking back up the
+  // ancestor chain and matching every selector at every level of it. That answered correctly and cost
+  // the depth of the tree per question, and it could not express the two-form properties at all —
+  // a unitless `line-height` has to inherit as the NUMBER and a length as the length, and a function
+  // returning one string cannot say which it had.
+  //
+  // Now `resolve` takes the parent's computed style. Every caller in layout is already standing at a
+  // parent-child edge, so handing it over costs nothing. The inherited set is `font-size`,
+  // `line-height`, `direction`, `white-space` and `text-indent` — the ones geometry reads. Colour and
+  // the rest of the painting properties will join them when there is something to paint.
+  //
+  // What is still missing: the `inherit` keyword, and `initial` / `unset`. No document in the corpus
+  // writes one.
 
-  let rec inherited = fn (ua: prepared list) -> fn (author: prepared list) -> fn (prop: str) ->
-                      fn (dflt: str) -> fn (e: elem) -> fn (anc: elem list) ->
-    let hs = list_append (hits_for ua 0 e anc 0)
-               (list_append (pres_hits e.pres)
-                  (list_append (hits_for author 1 e anc 0) (inline_hits e.sty_attr))) in
-    let own = winner hs prop in
-    if own != "" then to_lower own
-    else
-      match anc with
-      | Nil -> dflt
-      | Cons (p, rest) -> inherited ua author prop dflt p rest;
+  // The style an element with no parent inherits from: the initial value of every inherited property.
+  // The other fields are never read of it — it is not an element and does not generate a box — and are
+  // filled with the values that make it harmless if one ever is.
+  let root_style =
+    sty { display = "block", position = "static", float_ = "none", spacing = 0,
+          overflow = "visible", valign = "baseline", bsz = "content-box",
+          fs = root_em, lh_px = 0 - 1, lh_num = 0.0 - 1.0, dir = "ltr", ws = "normal",
+          ti_px = 0, ti_pct = 0 - 1,
+          left = 0 - 1, top = 0 - 1, w = 0 - 1, h = 0 - 1, w_pct = 0 - 1, h_pct = 0 - 1,
+          mt = 0, mr = 0, mb = 0, ml = 0, pt = 0, pr = 0, pb = 0, pl = 0,
+          bt = 0, br = 0, bb = 0, bl = 0 };
 
-  // **The rest of the cascade still has no inheritance, and that is a hole rather than a simplification.**
-  // `inherited` above is one property's worth of it, asked for by name where a caller knows it needs one. A declaration
-  // reaches an element only through a selector that matches it; a property whose value comes from an
-  // ancestor because the property INHERITS is not modelled at all.
-  //
-  // It has not cost much yet because the properties block geometry needs — display, width, height, the
-  // margins, paddings and borders — do not inherit. The ones that do are the next layer's: `direction`,
-  // `font-size`, `line-height`, `color`. The corpus already has a document that turns on it —
-  // `block-in-inline-empty-002` is `empty-001` with `direction: rtl` on the `<body>`, and the span two
-  // levels down is laid out right to left because of it, which puts the inline's edge fragment BEFORE
-  // the block instead of after.
-  //
-  // Adding it means resolving styles top-down with the parent's computed values in hand, rather than
-  // per element from the hit list. That is a change of shape, which is why it is written down here
-  // instead of being bolted on: `resolve` takes a list of declarations and knows nothing about where
-  // the element is.
-  //
-  // And inheritance is only half of what those documents need. `direction: rtl` also has to reach
-  // LAYOUT: a block in a right-to-left containing block is placed from the right edge, so its x is
-  // `containing width - margin-right - border width` and not `margin-left`. `block-in-inline-margins-002a`
-  // wants a block at x = 9 where this puts it at 19, and both numbers follow from the same 10px margin
-  // read from opposite ends. So the two remaining groups in the layout gate are one feature with two
-  // halves, and the halves are in different files.
-  let resolve = fn (hs: hit list) -> fn (tag: str) -> fn (emf: (int -> int)) ->
-    let px_of = px_at emf in
+  // `pst` is the PARENT's computed style, and it is what makes this inheritance rather than a lookup.
+  let resolve = fn (hs: hit list) -> fn (tag: str) -> fn (pst: sty) ->
     let get = fn (p: str) -> winner hs p in
+    // The font size comes first because every other length may be written in `em` — and it is itself
+    // measured in the PARENT's em, since a font size cannot be measured in itself. The absolute-size
+    // keywords are a table in the standard and there is nothing to derive: `xx-large` is 32 because
+    // that is what it is.
+    let fs =
+      let v0 = get "font-size" in
+      let v = to_lower (if v0 != "" then v0 else let (sz, _l) = _font_parts (get "font") in sz) in
+      if v == "" then pst.fs
+      else if v == "xx-small" then 9
+      else if v == "x-small" then 10
+      else if v == "small" then 13
+      else if v == "medium" then root_em
+      else if v == "large" then 18
+      else if v == "x-large" then 24
+      else if v == "xx-large" then 32
+      else if v == "smaller" then (pst.fs * 5) / 6
+      else if v == "larger" then (pst.fs * 6) / 5
+      else if str_index_of v "%" >= 0 then
+        (let q = pct_of v in if q < 0 then pst.fs else (pst.fs * q) / 100)
+      else
+        let n = str_len v in
+        let rec num_end = fn (i: int) ->
+          if i < n && (_is_digit (char_at v i) || char_at v i == "."
+                       || char_at v i == "-" || char_at v i == "+")
+          then num_end (i + 1) else i in
+        let ne = num_end 0 in
+        if ne == 0 then pst.fs
+        else
+          let mag = float_of_str (substring v 0 ne) in
+          let unit = substring v ne n in
+          if unit == "em" then int_of_float (mag * float_of_int pst.fs + 0.5)
+          else if unit == "ex" then int_of_float (mag * float_of_int pst.fs * 0.5 + 0.5)
+          else let q = px_at (fn (_z: int) -> pst.fs) v in if q <= 0 then pst.fs else q in
+    // Every length below is measured in this element's OWN em, which is what `em` means everywhere
+    // except in the declaration that set it.
+    let px_of = px_at (fn (_z: int) -> fs) in
+    // `line-height`, which inherits in two forms. A bare NUMBER inherits as the number and is
+    // multiplied by each element's own font size; a length inherits as the length it computed to.
+    let (lh_px, lh_num) =
+      let v1 = get "line-height" in
+      let v = to_lower (if v1 != "" then v1 else let (_s, l) = _font_parts (get "font") in l) in
+      if v == "" then (pst.lh_px, pst.lh_num)
+      else if v == "normal" then (0 - 1, 0.0 - 1.0)
+      else if str_index_of v "%" >= 0 then
+        (let q = pct_of v in
+         if q < 0 then (0 - 1, 0.0 - 1.0) else ((fs * q) / 100, 0.0 - 1.0))
+      else
+        let n2 = str_len v in
+        let rec bare = fn (i: int) ->
+          if i >= n2 then n2 > 0
+          else if _is_digit (char_at v i) || char_at v i == "." then bare (i + 1)
+          else false in
+        if bare 0 then (0 - 1, float_of_str v)
+        else (let q = px_of v in if q < 0 then (0 - 1, 0.0 - 1.0) else (q, 0.0 - 1.0)) in
+    let (ti_px, ti_pct) =
+      let v = get "text-indent" in
+      if v == "" then (pst.ti_px, pst.ti_pct)
+      else if str_index_of v "%" >= 0 then
+        (let q = pct_of v in if q < 0 then (0, 0 - 1) else (0, q))
+      else (let q = px_of v in if q == 0 - 1 || q == 0 - 2 then (0, 0 - 1) else (q, 0 - 1)) in
     // A longhand beats the shorthand it belongs to when both are present, which is only right
     // because `winner` already picked the winning shorthand and the winning longhand separately.
     // Which of the two DECLARATIONS wins, decided by the cascade's own rule rather than by "a longhand
@@ -614,7 +689,11 @@ module Style {
       // yet, which is a separate gap the corpus also names.
       valign = let v = to_lower (get "vertical-align") in if v == "" then "baseline" else v,
       bsz = let v = to_lower (get "box-sizing") in if v == "" then "content-box" else v,
-      ws = to_lower (get "white-space"),
+      // The rest of the inherited set: keywords, so they inherit as themselves.
+      fs = fs, lh_px = lh_px, lh_num = lh_num,
+      dir = let v = to_lower (get "direction") in if v == "" then pst.dir else v,
+      ws = let v = to_lower (get "white-space") in if v == "" then pst.ws else v,
+      ti_px = ti_px, ti_pct = ti_pct,
       // `auto` and absent are the same answer here — both mean "the box goes where it would have gone",
       // which is the static position, and only a length says otherwise.
       left = let v = get "left" in if v == "" || to_lower v == "auto" then 0 - 1 else px_of v,

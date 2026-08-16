@@ -73,7 +73,8 @@ module Layout {
           overflow = st.overflow, valign = st.valign, left = st.left, top = st.top,
           // A shrink-to-fit width is a CONTENT width by construction — it was measured from the
           // contents — so the box it is put into has to be told to read it as one.
-          bsz = "content-box", ws = st.ws,
+          bsz = "content-box", fs = st.fs, lh_px = st.lh_px, lh_num = st.lh_num, dir = st.dir,
+          ws = st.ws, ti_px = st.ti_px, ti_pct = st.ti_pct,
           w = w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
           mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = st.pr, pb = st.pb, pl = st.pl,
@@ -86,7 +87,9 @@ module Layout {
   let _with_border = fn (st: sty) -> fn (w: int) ->
     sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
           overflow = st.overflow, valign = st.valign, left = st.left, top = st.top,
-          bsz = st.bsz, ws = st.ws, w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
+          bsz = st.bsz, fs = st.fs, lh_px = st.lh_px, lh_num = st.lh_num, dir = st.dir,
+          ws = st.ws, ti_px = st.ti_px, ti_pct = st.ti_pct,
+          w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
           mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = st.pr, pb = st.pb, pl = st.pl,
           bt = w, br = w, bb = w, bl = w };
@@ -94,107 +97,20 @@ module Layout {
   let _no_h_edges = fn (st: sty) ->
     sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing,
           overflow = st.overflow, valign = st.valign, left = st.left, top = st.top,
-          bsz = st.bsz, ws = st.ws, w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
+          bsz = st.bsz, fs = st.fs, lh_px = st.lh_px, lh_num = st.lh_num, dir = st.dir,
+          ws = st.ws, ti_px = st.ti_px, ti_pct = st.ti_pct,
+          w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
           mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = 0, pb = st.pb, pl = 0,
           bt = st.bt, br = 0, bb = st.bb, bl = 0 };
 
-  // The `font` shorthand's size and line-height, as `size/line-height`. Both of the properties this
-  // file resolves by name can be written only here — `font: 2em/2 sans-serif` names neither of them —
-  // so the shorthand is picked apart at the two places that ask rather than expanded in the cascade.
-  // Expanding it properly means a shorthand table, which is the right shape and is not what one
-  // declaration is worth.
-  let _font_parts = fn (v: str) ->
-    let rec go = fn (ps: str list) ->
-      match ps with
-      | Nil -> ("", "")
-      | Cons (t, rest) ->
-        let i = str_index_of t "/" in
-        if i >= 0 then (substring t 0 i, substring t (i + 1) (str_len t))
-        // A size with no line-height beside it is still a size, and it is the token before the family.
-        else if str_len t > 0 && ((char_at t 0 >= "0" && char_at t 0 <= "9") || char_at t 0 == ".")
-        then (t, "")
-        else go rest in
-    go (str_split v " ");
-
-  // The font size in pixels. Resolved up the chain rather than inherited by name, because the value is
-  // relative to the thing it is being resolved from: `font-size: 2em` is two of the PARENT's size, and
-  // asking for the inherited value would hand back the element's own declaration and multiply it by
-  // itself. So this asks each element only what it says about ITSELF, and applies it to what the chain
-  // above it worked out.
-  //
-  // The absolute-size keywords are a table in the standard and there is no deriving them; `xx-large` is
-  // 32px because that is what it is. They are not lengths, so a length parser answers 0 for them, and
-  // `font-size: xx-large` silently meant 16.
-  let rec _font_size = fn (ua: prepared list) -> fn (author: prepared list) -> fn (anc: elem list) ->
-    match anc with
-    | Nil -> font_size
-    | Cons (e0, up) ->
-      let parent = _font_size ua author up in
-      let v0 = Style.own ua author "font-size" e0 up in
-      let v = if v0 != "" then v0
-              else let (sz, _l) = _font_parts (Style.own ua author "font" e0 up) in sz in
-      if v == "" then parent
-      else if v == "xx-small" then 9
-      else if v == "x-small" then 10
-      else if v == "small" then 13
-      else if v == "medium" then font_size
-      else if v == "large" then 18
-      else if v == "x-large" then 24
-      else if v == "xx-large" then 32
-      // The two RELATIVE keywords, which are the parent's size scaled and not a number of their own.
-      else if v == "smaller" then (parent * 5) / 6
-      else if v == "larger" then (parent * 6) / 5
-      else if str_index_of v "%" >= 0 then
-        (let q = Style.pct_of v in if q < 0 then parent else (parent * q) / 100)
-      // `em` and `ex` are the parent's size here and not this element's: a font size cannot be
-      // measured in itself.
-      else
-        let n = str_len v in
-        let rec num_end = fn (i: int) ->
-          if i < n && ((char_at v i >= "0" && char_at v i <= "9") || char_at v i == "."
-                       || char_at v i == "-" || char_at v i == "+")
-          then num_end (i + 1) else i in
-        let ne = num_end 0 in
-        if ne == 0 then parent
-        else
-          let mag = float_of_str (substring v 0 ne) in
-          let unit = substring v ne n in
-          if unit == "em" then int_of_float (mag * float_of_int parent + 0.5)
-          else if unit == "ex" then int_of_float (mag * float_of_int parent * 0.5 + 0.5)
-          else let q = Style.px_of v in if q <= 0 then parent else q;
-
-  // `line-height`, which is inherited and is not always a length.
-  //
-  // A BARE NUMBER is a multiplier of the element's own font size, and it inherits as the number rather
-  // than as the length it works out to — which is the whole reason it can be written that way. `normal`
-  // is whatever the font says, and that is the only value everything here used to have.
-  //
-  // It reaches an element through `Style.inherited`, the one-property-at-a-time inheritance that
-  // `direction` already uses. That is still a hole where a real cascade should be, but the hole is the
-  // same size as it was and this does not make it bigger.
-  let _line_h = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
-                fn (anc: elem list) -> fn (size: int) ->
-    let natural = Font.line_height f size in
-    match anc with
-    | Nil -> natural
-    | Cons (e0, up) ->
-      let v1 = Style.inherited ua author "line-height" "" e0 up in
-      let v = if v1 != "" then v1
-              else let (_sz, l) = _font_parts (Style.inherited ua author "font" "" e0 up) in
-                   if l == "" then "normal" else l in
-      if v == "normal" || v == "" then natural
-      else if str_index_of v "%" >= 0 then
-        (let q = Style.pct_of v in if q < 0 then natural else (q * size) / 100)
-      else
-        let n = str_len v in
-        let rec bare = fn (i: int) ->
-          if i >= n then n > 0
-          else
-            let c = char_at v i in
-            if (c >= "0" && c <= "9") || c == "." then bare (i + 1) else false in
-        if bare 0 then int_of_float (float_of_str v * float_of_int size + 0.5)
-        else let q = Style.px_of v in if q < 0 then natural else q;
+  // The line height a box's own style asks for, in pixels: a bare number times its own font size, a
+  // length as it computed, and the font's own when it said `normal`. The number and the length are
+  // kept apart all the way from the cascade to here because only the number is re-multiplied.
+  let _lh_of = fn (f: font) -> fn (st: sty) ->
+    if st.lh_px >= 0 then st.lh_px
+    else if st.lh_num >= 0.0 then int_of_float (st.lh_num * float_of_int st.fs + 0.5)
+    else Font.line_height f st.fs;
 
   let _shift = fn (bs: box list) -> fn (dx: int) -> fn (dy: int) ->
     list_map bs (fn (b: box) ->
@@ -253,8 +169,11 @@ module Layout {
   // One element's resolved style. The three origins in the order the cascade wants them: the UA
   // sheet loses to the author's sheet whatever the selectors say, and an inline `style=` beats
   // both. Encoded in the specificity, so `winner` needs to know nothing about origins.
+  // `pst` is the PARENT's computed style. Inheritance is a property of the tree WALK — a value travels
+  // from a parent to a child once — and every caller here is already standing at that edge, so handing
+  // it over costs nothing and asking for it costs the depth of the tree per property.
   let style_of = fn (ua: prepared list) -> fn (author: prepared list) ->
-                 fn (e: elem) -> fn (ancestors: elem list) -> fn (inline: str) ->
+                 fn (e: elem) -> fn (ancestors: elem list) -> fn (inline: str) -> fn (pst: sty) ->
     let h1 = Style.hits_for ua 0 e ancestors 0 in
     let h2 = Style.hits_for author 1 e ancestors 0 in
     let h3 =
@@ -268,12 +187,8 @@ module Layout {
                     hit { prop = to_lower name, value = Style.value_text value,
                           spec = 2 * 100000, order = 0 }
                   | _ -> hit { prop = "", value = "", spec = 0, order = 0 }) in
-    // The `em` this element's own values are measured in is its own font size, which is the one thing
-    // in a stylesheet that has to be resolved before anything else can be. Passed as a thunk so that
-    // the chain walk happens only for a value that is actually written in `em`.
     let hp = Style.pres_hits e.pres in
-    Style.resolve (list_append h1 (list_append hp (list_append h2 h3))) e.tag
-      (fn (_z: int) -> _font_size ua author (Cons (e, ancestors)));
+    Style.resolve (list_append h1 (list_append hp (list_append h2 h3))) e.tag pst;
 
   // The presentational attributes, written as the CSS that HTML says they mean. This is a LAYER that
   // was missing rather than a bug: the cascade never saw `height="200"` or `valign="bottom"` at all,
@@ -420,6 +335,7 @@ module Layout {
   // block is made per run, which is what the standard says and also why the runs have to be maximal:
   // two anonymous blocks where there should be one puts a line break in the middle of a sentence.
   let rec _inline_run = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
+                        fn (pst: sty) ->
                         fn (anc: elem list) -> fn (ns: node list) ->
     let rec go = fn (xs: node list) -> fn (acc: node list) ->
       match xs with
@@ -427,7 +343,7 @@ module Layout {
       | Cons (n, rest) ->
         match n with
         | Element (tag, attrs, _k) ->
-          let st = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") in
+          let st = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") pst in
           if st.display == "none" then go rest acc
           else if _is_block_level st.display || st.position == "absolute"
                   || st.position == "fixed" then (list_rev acc, xs)
@@ -440,7 +356,7 @@ module Layout {
   // The children of an element split at its first block-level box: what came before, that box, and what
   // came after. The block is returned as a one-element list because this language's option needs an
   // annotation the surrounding inference will not supply here, and a list of one says the same thing.
-  let _split_at_block = fn (ua: prepared list) -> fn (author: prepared list) ->
+  let _split_at_block = fn (ua: prepared list) -> fn (author: prepared list) -> fn (pst: sty) ->
                         fn (anc: elem list) -> fn (ns: node list) ->
     let rec go = fn (xs: node list) -> fn (before: node list) ->
       match xs with
@@ -448,7 +364,7 @@ module Layout {
       | Cons (n, rest) ->
         match n with
         | Element (tag, attrs, _k) ->
-          let st = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") in
+          let st = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") pst in
           // Out of flow is not a split point. A float's display is blockified — it has to be, or its
           // width and height would have nothing to apply to — and that made the splitter cut at it and
           // lay it out as a block in the sequence, which is a line taller than a float ever is.
@@ -463,11 +379,12 @@ module Layout {
   // as wide as this and no wider, where an ordinary block is as wide as it is given. Text contributes its
   // whole length on one line, because "max content" means the width at which nothing wraps.
   let rec _max_content = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
+                         fn (pst: sty) ->
                          fn (anc: elem list) -> fn (ns: node list) ->
     // Once, not once per node. Resolving a font size walks the ancestor chain and matches selectors at
     // every level of it, and `anc` does not change inside this walk — asking it per node made this the
     // slowest thing in the engine and the answer was the same every time.
-    let mfs = _font_size ua author anc in
+    let mfs = pst.fs in
     let rec go = fn (xs: node list) -> fn (best: int) -> fn (run: str) ->
       match xs with
       | Nil ->
@@ -477,12 +394,12 @@ module Layout {
         match n with
         | Element (tag, attrs, kids) ->
           let e = _elem_of tag attrs in
-          let st = style_of ua author e anc (_attr attrs "style") in
+          let st = style_of ua author e anc (_attr attrs "style") pst in
           if st.display == "none" then go rest best run
           else if _is_block_level st.display then
             // A block child ends the run of inline content beside it and contributes its own outer width.
             let inner = if st.w >= 0 then st.w
-                        else _max_content f ua author (Cons (e, anc)) kids in
+                        else _max_content f ua author pst (Cons (e, anc)) kids in
             let outer = inner + st.ml + st.mr + st.pl + st.pr + st.bl + st.br in
             let w0 = Font.text_width f (_collapse_ws run) mfs in
             go rest (if outer > best then (if outer > w0 then outer else w0)
@@ -500,6 +417,7 @@ module Layout {
   // Four things come back, and the fourth is the reason this is not a fold: the first child's
   // escaped top margin, which the parent needs to know its own.
   let rec _stack = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
+                   fn (pst: sty) ->
                    fn (ancestors: elem list) -> fn (ns: node list) -> fn (cbw: int) ->
                    // The containing block's CONTENT height, or -1 when it has none that is definite. A
                    // percentage height resolves against it, and against nothing when it is indefinite —
@@ -524,7 +442,7 @@ module Layout {
       match n with
       | Element (tag, attrs, kids) ->
         let e = _elem_of tag attrs in
-        let st = style_of ua author e ancestors (_attr attrs "style") in
+        let st = style_of ua author e ancestors (_attr attrs "style") pst in
         if not (_is_block_level st.display) && st.position != "absolute"
            && st.position != "fixed" then
           // An inline child of a block container: it and everything inline after it are one ANONYMOUS
@@ -532,15 +450,8 @@ module Layout {
           // between two block-level children is dropped, and with it the two spans in
           // `<div><span style="display:table-cell">…</span><span>…</span></div>` land on two lines,
           // which is what the browser does.
-          let (run, after) = _inline_run f ua author ancestors ns in
-          let ctx_rtl = match ancestors with
-                        | Nil -> false
-                        | Cons (c, up) -> Style.inherited ua author "direction" "ltr" c up == "rtl" in
-          // Resolved once for this branch and used five times below. Each call walks the ancestor
-          // chain matching selectors at every level, and the answer cannot change between the uses.
-          let cfs = _font_size ua author ancestors in
-          let efs = _font_size ua author (Cons (e, ancestors)) in
-          let (ibs, ilines, ih, saw) = _inline f ua author ancestors run cbw cfs ctx_rtl in
+          let (run, after) = _inline_run f ua author pst ancestors ns in
+          let (ibs, ilines, ih, saw) = _inline f ua author pst ancestors run cbw in
           // An inline element with a block inside it is SPLIT by the standard. This does not split it;
           // it lays that element out as a block instead, which puts the boxes in the right order at the
           // right width and is the closer of the two wrong answers.
@@ -554,7 +465,7 @@ module Layout {
           // is then `before + block + a line + the bottom border` — the after piece's top border
           // overlaps the block, which is why it is not a plain sum. Anything with real content on
           // either side falls through to laying the element out as a block, below.
-          let (spl_before, spl_blk, spl_after) = _split_at_block ua author ancestors kids in
+          let (spl_before, spl_blk, spl_after) = _split_at_block ua author pst ancestors kids in
           // The pieces no longer have to be empty. A piece with content is a line box like any other;
           // a piece with none is still a fragment when the element has an edge on that side, and is
           // nothing at all when it does not. `max(its lines, one if there is an edge)` says both.
@@ -564,11 +475,9 @@ module Layout {
           // remaining blocks laid out as inline content by the piece that holds them. The pieces are
           // laid out here rather than inside the branch precisely so that they can be asked: `_inline`
           // already reports whether it met a block, which is the same question in the same words.
-          let piece_rtl = Style.inherited ua author "direction" "ltr" e ancestors == "rtl" in
-          let (pbs, plines, _pih, ps_blk) = _inline f ua author (Cons (e, ancestors)) spl_before cbw
-                                                    efs piece_rtl in
-          let (abs_, alines, _aih, as_blk) = _inline f ua author (Cons (e, ancestors)) spl_after cbw
-                                                     efs piece_rtl in
+          let piece_rtl = st.dir == "rtl" in
+          let (pbs, plines, _pih, ps_blk) = _inline f ua author st (Cons (e, ancestors)) spl_before cbw in
+          let (abs_, alines, _aih, as_blk) = _inline f ua author st (Cons (e, ancestors)) spl_after cbw in
           // The general split. An inline element with block-level boxes in it becomes a sequence of
           // pieces and blocks: fragment, block, fragment, block, ..., fragment. Each fragment is a line
           // box carrying the element's edge on the side it is on — the FIRST fragment has the start edge
@@ -584,24 +493,22 @@ module Layout {
           if has_any_block then
             let start_edge = if piece_rtl then st.br + st.pr else st.bl + st.pl in
             let end_edge = if piece_rtl then st.bl + st.pl else st.br + st.pr in
-            let lh = _line_h f ua author (Cons (e, ancestors))
-                       efs in
+            let lh = _lh_of f st in
             let top = y + _collapse open_mb 0 in
             let rec pieces = fn (ns2: node list) -> fn (yy: int) -> fn (isfirst: bool) ->
                              fn (acc2: box list) -> fn (uy0: int) -> fn (lastb: int) ->
-              let (bef, blk, aft) = _split_at_block ua author (Cons (e, ancestors)) ns2 in
+              let (bef, blk, aft) = _split_at_block ua author st (Cons (e, ancestors)) ns2 in
               // A piece can itself contain a block, inside an inline element further down. When it does
               // it is not inline content at all — it is a block container's content — so it goes through
               // the stack, which already knows how to split what is inside it. The inline pass reports
               // that as it goes, so the question costs nothing to ask.
               let (pbs2a, plines2a, _pih2, pblk) =
-                _inline f ua author (Cons (e, ancestors)) bef cbw
-                        efs piece_rtl in
+                _inline f ua author st (Cons (e, ancestors)) bef cbw in
               let (pbs2, plines2) =
                 if not pblk then (pbs2a, plines2a)
                 else
                   let (sbs, _sy, _smb, _sfm, sbot, _sfb) =
-                    _stack f ua author (Cons (e, ancestors)) bef cbw cbh 0 0 false 0 false 0 (0, 0)
+                    _stack f ua author st (Cons (e, ancestors)) bef cbw cbh 0 0 false 0 false 0 (0, 0)
                            Nil in
                   // Its height is already in pixels, so it is turned back into a count of lines for the
                   // arithmetic below to divide out again. Not elegant; the alternative is threading a
@@ -626,9 +533,9 @@ module Layout {
                 match bn with
                 | Element (btag, battrs, bkids) ->
                   let bst = style_of ua author (_elem_of btag battrs) (Cons (e, ancestors))
-                              (_attr battrs "style") in
+                              (_attr battrs "style") st in
                   let (bbs2, bh2, bmt2, bmb2, _be2) =
-                    _block f ua author ancestors btag battrs bkids cbw cbh bst in
+                    _block f ua author pst ancestors btag battrs bkids cbw cbh bst in
                   let bt3 = if bmt2 > 0 then bmt2 else 0 in
                   let bb3 = if bmb2 > 0 then bmb2 else 0 in
                   let uy2 = if isfirst && ph == 0 then yy + bt3 else uy1 in
@@ -639,7 +546,7 @@ module Layout {
             let sdx = if st.position == "relative" && st.left >= 0 then st.left else 0 in
             let sdy = if st.position == "relative" && st.top >= 0 then st.top else 0 in
             let me = box { tag = to_lower tag, x = sdx, y = uy + sdy, w = cbw, h = ubot - uy, pinned = false } in
-            _stack f ua author ancestors rest cbw cbh yend 0 swallow_first
+            _stack f ua author pst ancestors rest cbw cbh yend 0 swallow_first
                    (if not seen then 0 else first_mt) true yend fs
                    (list_append (list_rev (_shift allbs sdx sdy)) (Cons (me, acc)))
           else if saw then
@@ -663,23 +570,23 @@ module Layout {
             // out as a block keeps those edges and takes ten pixels off the block inside it, which is
             // the one part of the substitution that can be corrected without doing the split.
             let (fbs, fh, fmt2, fmb2, _fesc) =
-              _block f ua author ancestors tag attrs kids cbw cbh (_no_h_edges st) in
+              _block f ua author pst ancestors tag attrs kids cbw cbh (_no_h_edges st) in
             let top = y + _collapse open_mb fmt2 in
             // Relative positioning applies here as it does everywhere else. This branch is the one an
             // inline with SEVERAL blocks in it takes, and it had been missed while the split beside it
             // was given the offset — the same property, two branches, one of them updated.
             let sdx2 = if st.position == "relative" && st.left >= 0 then st.left else 0 in
             let sdy2 = if st.position == "relative" && st.top >= 0 then st.top else 0 in
-            _stack f ua author ancestors rest cbw cbh (top + fh) fmb2 swallow_first
+            _stack f ua author pst ancestors rest cbw cbh (top + fh) fmb2 swallow_first
                    (if not seen then fmt2 else first_mt) true (top + fh) fs
                    (list_append (list_rev (_shift fbs sdx2 (top + sdy2))) acc)
           else
             let top = y + _collapse open_mb 0 in
             let h = ih in
-            _stack f ua author ancestors after cbw cbh (top + h) 0 swallow_first first_mt true (top + h)
+            _stack f ua author pst ancestors after cbw cbh (top + h) 0 swallow_first first_mt true (top + h)
                    fs (list_append (list_rev (_shift ibs 0 top)) acc)
         else if st.display == "none" then
-          _stack f ua author ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom fs acc
+          _stack f ua author pst ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom fs acc
         // Out of flow: the box is laid out where it would have been — its static position, which is
         // what `top` and `left` of `auto` mean — and then the cursor does not move and the height does
         // not grow. `<div style="position:absolute">` inside a page made the page as tall as if it were
@@ -694,9 +601,9 @@ module Layout {
             if st.w >= 0 || st.w_pct >= 0 then st
             else
               let avail = cbw - st.ml - st.mr - st.bl - st.br - st.pl - st.pr in
-              let mc = _max_content f ua author (Cons (_elem_of tag attrs, ancestors)) kids in
+              let mc = _max_content f ua author pst (Cons (_elem_of tag attrs, ancestors)) kids in
               _with_width st (if mc > avail then (if avail < 0 then 0 else avail) else mc) in
-          let (fbs, _fh, _fmt, _fmb, _fesc2) = _block f ua author ancestors tag attrs kids cbw cbh ast in
+          let (fbs, _fh, _fmt, _fmb, _fesc2) = _block f ua author pst ancestors tag attrs kids cbw cbh ast in
           // `left` and `top` are measured from the containing block, which for an absolutely positioned
           // box is the nearest POSITIONED ancestor. Here that is taken to be the parent, whose content
           // origin is where these coordinates already start from — true whenever the parent is the
@@ -706,12 +613,12 @@ module Layout {
           // when there is none. The second is what `pinned` is for — the box is placed at the page
           // coordinates it asked for and opts out of every shift above it, which is the only way to
           // express an absolute origin in a file that has none.
+          // The parent's style is in hand now — it is what this box inherited from — so asking whether
+          // the parent is positioned is a field access and not a second resolution of it.
           let anc_positioned =
             match ancestors with
             | Nil -> false
-            | Cons (par, up) ->
-              let pst = style_of ua author par up par.sty_attr in
-              pst.position != "static" in
+            | Cons (_par, _up) -> pst.position != "static" in
           let pin = st.top >= 0 && not anc_positioned in
           let bs0 = _shift fbs (if st.left >= 0 then st.left else 0)
                       (if st.top >= 0 then st.top else y + _collapse open_mb 0) in
@@ -719,7 +626,7 @@ module Layout {
                    else list_map bs0 (fn (b: box) ->
                           box { tag = b.tag, x = b.x, y = b.y, w = b.w, h = b.h,
                                 pinned = true }) in
-          _stack f ua author ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom fs
+          _stack f ua author pst ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom fs
                  (list_append (list_rev bs) acc)
         // A float is out of flow too, but not in the same way: it is placed at the containing block's
         // left edge below whatever floats came before it, the cursor does not move past it, and the
@@ -736,13 +643,13 @@ module Layout {
           let fst = if st.w >= 0 || st.w_pct >= 0 then st
                     else _with_width st
                            (Font.text_width f (_collapse_ws (_inline_text kids ""))
-                              (_font_size ua author (Cons (e, ancestors)))) in
+                              st.fs) in
           let (fbs, fh, fmt2, fmb2, _fesc) =
-            _block f ua author ancestors tag attrs kids cbw cbh fst in
+            _block f ua author pst ancestors tag attrs kids cbw cbh fst in
           let (_fr0, fbot) = fs in
           let top = if fbot > y then fbot else y + _collapse 0 fmt2 in
           let fw = match fbs with Nil -> 0 | Cons (b0, _r) -> b0.w + st.ml + st.mr in
-          _stack f ua author ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom
+          _stack f ua author pst ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom
                  // A formatting context contains a float's MARGIN box, not its border box: the 48px
                  // below a float is inside the box that holds it.
                  (fw, top + fh + (if fmb2 > 0 then fmb2 else 0))
@@ -766,9 +673,9 @@ module Layout {
           // right and matches the browser, the placement is a box on its own line where it should share
           // one.
           let ist = if st.display != "inline-block" || st.w >= 0 || st.w_pct >= 0 then st
-                    else _with_width st (_max_content f ua author (Cons (e, ancestors)) kids) in
+                    else _with_width st (_max_content f ua author pst (Cons (e, ancestors)) kids) in
           let (fbs, fh, fmt, fmb, fesc) =
-            _block f ua author ancestors tag attrs kids (cbw - dodge) cbh ist in
+            _block f ua author pst ancestors tag attrs kids (cbw - dodge) cbh ist in
           let is_first = not seen in
           // The gap above this box is the two margins collapsed into one, not their sum. When the
           // parent has claimed the first child's margin there is no gap at all here.
@@ -797,7 +704,7 @@ module Layout {
           // and keeps escaping until a box contains it.
           let (fr0, fb0) = fs in
           let fs2 = if fesc > 0 && top + fesc > fb0 then (fr0, top + fesc) else fs in
-          _stack f ua author ancestors rest cbw cbh
+          _stack f ua author pst ancestors rest cbw cbh
                  (if through then y else top + fh)
                  (if through then _collapse open_mb (_collapse fmt fmb) else fmb)
                  swallow_first (if is_first then fmt else first_mt) true
@@ -807,12 +714,9 @@ module Layout {
         // Whitespace between two block-level children is discarded; anything else starts an anonymous
         // block, exactly as an inline element does.
         if _collapse_ws t == "" then
-          _stack f ua author ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom fs acc
+          _stack f ua author pst ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom fs acc
         else
-          let (run, after) = _inline_run f ua author ancestors ns in
-          let ctx_rtl = match ancestors with
-                        | Nil -> false
-                        | Cons (c, up) -> Style.inherited ua author "direction" "ltr" c up == "rtl" in
+          let (run, after) = _inline_run f ua author pst ancestors ns in
           // A run that begins with text can hold a block too, inside an inline element two levels down —
           // `<span>First <span>line <span display:block>` is one of the corpus's. This branch does NOT
           // retry the way the element branch does, and the reason is worth recording rather than
@@ -822,16 +726,17 @@ module Layout {
           // fragment of the inline beside it. That is the recursive split, and nothing short of it gets
           // those two words onto the same line.
           let (ibs, _ilines, ih2, _saw2) =
-            _inline f ua author ancestors run cbw (_font_size ua author ancestors) ctx_rtl in
+            _inline f ua author pst ancestors run cbw in
           let top = y + _collapse open_mb 0 in
           let h = ih2 in
-          _stack f ua author ancestors after cbw cbh (top + h) 0 swallow_first first_mt true (top + h)
+          _stack f ua author pst ancestors after cbw cbh (top + h) 0 swallow_first first_mt true (top + h)
                  fs (list_append (list_rev (_shift ibs 0 top)) acc)
-      | _ -> _stack f ua author ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom fs acc
+      | _ -> _stack f ua author pst ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom fs acc
 
   // The element children of a node, with their resolved styles. Tables ask this three times — for row
   // groups, rows and cells — and the white space between them is not a row.
   and _kids_of = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
+                 fn (pst: sty) ->
                  fn (anc: elem list) -> fn (ns: node list) ->
     let rec go = fn (xs: node list) -> fn (acc: (str * attr list * node list * sty) list) ->
       match xs with
@@ -840,7 +745,7 @@ module Layout {
         match n with
         | Element (tag, attrs, kids) ->
           let e = _elem_of tag attrs in
-          let st = style_of ua author e anc (_attr attrs "style") in
+          let st = style_of ua author e anc (_attr attrs "style") pst in
           if st.display == "none" then go rest acc
           else go rest (Cons ((tag, attrs, kids, st), acc))
         | Text _t -> go rest acc
@@ -864,9 +769,13 @@ module Layout {
   // Everything is carried in font units until the end. `x` is how far along the current line the
   // cursor is, `line` counts from zero, and `gap` says a space is owed before the next word — a space
   // between two text nodes belongs to neither of them, so it cannot be part of either string.
+  // `bst` is the style of the box whose content this is — the element at the head of `anc`. Its font
+  // size, line height, direction, white space and text indent all come from it, and they used to be
+  // five separate walks back up the chain asking for one property each.
   and _inline = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
-                fn (anc: elem list) -> fn (kids: node list) -> fn (cw: int) -> fn (size: int) ->
-                fn (rtl: bool) ->
+                fn (bst: sty) -> fn (anc: elem list) -> fn (kids: node list) -> fn (cw: int) ->
+    let size = bst.fs in
+    let rtl = bst.dir == "rtl" in
     // Half a pixel wider than the box, and that is not a fudge. `cw` is a width that was ROUNDED to a
     // whole pixel, so the box it names is somewhere within half a pixel of it — and the commonest way
     // for a width to be produced is by measuring the very text that has to fit in it. A table column is
@@ -879,7 +788,7 @@ module Layout {
     // Round where the answer is read — and the answer read here is "does it fit", not "how wide is it".
     let cap = if cw <= 0 then 0 else ((cw * 2 + 1) * f.upem) / (2 * size) in
     let space = Font.text_units f " " in
-    let lh = _line_h f ua author anc size in
+    let lh = _lh_of f bst in
     // A line is not a fixed height. It is as tall as the tallest thing above the baseline plus the
     // deepest below it, and the STRUT — the invisible box the containing element's own font puts on
     // every line whether anything is written there or not — sets the floor for both. Text alone gives
@@ -896,25 +805,16 @@ module Layout {
     // `white-space: nowrap` for the box whose content this is. It inherits, so the walk below carries
     // it DOWN as it descends into elements — which is the same descent that asking for the inherited
     // value would have to make, done once instead of once per element.
-    let nw0 = match anc with
-              | Nil -> false
-              | Cons (e0, up) ->
-                let v = Style.inherited ua author "white-space" "normal" e0 up in
-                v == "nowrap" || v == "pre" in
+    let nw0 = bst.ws == "nowrap" || bst.ws == "pre" in
     // `text-indent` moves the FIRST line only, which is why it belongs here and not in the box model:
     // it is not padding, it does not move the box, and every line after the first starts where it always
     // did. It inherits, so an inline-block inside an indented paragraph is indented too unless it says
     // otherwise — which is exactly what the two documents that use it are checking.
-    let tiu =
-      match anc with
-      | Nil -> 0
-      | Cons (e0, up) ->
-        let v = Style.inherited ua author "text-indent" "" e0 up in
-        if v == "" then 0
-        else if str_index_of v "%" >= 0 then
-          (let q = Style.pct_of v in if q < 0 then 0 else Font.text_units_of_px f ((cw * q) / 100) size)
-        // Measured in the element's OWN font size, like every other length it owns.
-        else Font.text_units_of_px f (Style.px_at (fn (_z: int) -> size) v) size in
+    // A percentage is against the CONTAINING BLOCK and so cannot be resolved in the cascade; a length
+    // already was, in the font size of whichever element declared it. Both survive the inheriting as
+    // themselves, which is why they are two fields and not one.
+    let tiu = if bst.ti_pct >= 0 then Font.text_units_of_px f ((cw * bst.ti_pct) / 100) size
+              else Font.text_units_of_px f bst.ti_px size in
     let natural = Font.line_height f size in
     let dnat = Font.scale f (0 - f.descender) size in
     // Floored, not truncated. Integer division rounds toward ZERO here, and the half-leading is
@@ -990,27 +890,27 @@ module Layout {
     // is beside it — so it takes room at the line's left edge, everything else starts after it, and a run
     // holding nothing but a float makes no line at all. Hoisting them first is what lets the element that
     // contained one report a zero-width box at the line's new start, which is what the browser does.
-    let rec floats = fn (ns: node list) -> fn (fx: int) -> fn (acc: box list) ->
+    let rec floats = fn (ns: node list) -> fn (fx: int) -> fn (wst: sty) -> fn (acc: box list) ->
       match ns with
       | Nil -> (fx, acc)
       | Cons (n, rest) ->
         match n with
         | Element (tag, attrs, ks) ->
-          let est = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") in
+          let est = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") wst in
           if est.float_ == "left" || est.float_ == "right" then
             let w = Font.text_units f (_collapse_ws (_inline_text ks "")) + est.bl + est.pl
                     + est.pr + est.br in
-            floats rest (fx + w) acc
+            floats rest (fx + w) wst acc
           else
             // A fresh accumulator, so the shift below touches only what this element contained.
-            let (fx2, a2) = floats ks fx Nil in
+            let (fx2, a2) = floats ks fx est Nil in
             // A float inside a relatively positioned inline moves with it, because relative positioning
             // moves everything the element contains and a float is still contained by it.
             let rdx = if est.position == "relative" && est.left >= 0 then est.left else 0 in
             let rdy = if est.position == "relative" && est.top >= 0 then est.top else 0 in
-            floats rest fx2 (list_append acc (_shift a2 rdx rdy))
-        | _ -> floats rest fx acc in
-    let (float_w, _fbs) = floats kids 0 Nil in
+            floats rest fx2 wst (list_append acc (_shift a2 rdx rdy))
+        | _ -> floats rest fx wst acc in
+    let (float_w, _fbs) = floats kids 0 bst Nil in
     // Laid out once for the line heights and, only if something on a line was not text, once more with
     // them known. The second pass is what places the boxes: a box's y is the top of its line, and the
     // top of a line is the sum of the heights of the lines above it, so nothing can be placed until
@@ -1038,8 +938,9 @@ module Layout {
                      fn (maxx: int) ->
                      // `white-space: nowrap`, carried DOWN rather than asked for: it inherits, and the
                      // walk is already descending through exactly the elements whose values would have
-                     // to be consulted.
-                     fn (nw: bool) ->
+                     // to be consulted — which is the same reason `wst`, the style of the element whose
+                     // children these are, comes down with it.
+                     fn (nw: bool) -> fn (wst: sty) ->
                      // What has been found out about the lines so far, threaded rather than returned
                      // from a second traversal: the walk already visits everything exactly once.
                      fn (hc: (int * int * int * int) list) -> fn (acc: box list) ->
@@ -1051,7 +952,7 @@ module Layout {
             // Split on the collapsed text so an empty piece marks where a space was.
             let (x2, l2, g2, p2, wmx) =
               words (str_split (_collapse_runs t) " ") x line gap true placed nw maxx in
-            walk rest x2 l2 g2 saw p2 (online || p2) fcur wmx nw hc acc
+            walk rest x2 l2 g2 saw p2 (online || p2) fcur wmx nw wst hc acc
           | Element (tag, attrs, ks) ->
             // An element's box starts at its first GLYPH, not at the cursor. A space owed from before it
             // belongs to the text outside, so counting the cursor made every inline element four pixels
@@ -1073,7 +974,7 @@ module Layout {
             // in front of them afterwards. Consing it onto the same accumulator put a nested inline
             // element after its own children in document order, which the box-sequence number sees.
             // An inline element's own padding and borders take room ON the line.
-            let est = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") in
+            let est = style_of ua author (_elem_of tag attrs) anc (_attr attrs "style") wst in
             // `<br>` ends the line. It is the one element whose whole effect is on line breaking, so it
             // cannot come out of the cascade — there is no property that says "break here" — and it was
             // missing entirely: `Test<br/>Test` came out one line of two words rather than two lines.
@@ -1082,7 +983,7 @@ module Layout {
             // reports for it. At the CURSOR and not past a pending space: a space before a break is at
             // the end of a line, and a line's trailing white space is removed.
             if to_lower tag == "br" then
-              walk rest 0 (line + 1) false saw false false fcur (if x > maxx then x else maxx) nw hc
+              walk rest 0 (line + 1) false saw false false fcur (if x > maxx then x else maxx) nw wst hc
                 (Cons (box { tag = "br", x = Font.scale f x size, y = ltop hs line, w = 0,
                              h = hline hs line, pinned = false }, acc))
             else
@@ -1091,7 +992,7 @@ module Layout {
               // its own box goes down here so that it lands in document order.
               let fw = Font.text_units f (_collapse_ws (_inline_text ks "")) + est.bl + est.pl
                        + est.pr + est.br in
-              walk rest x line gap saw placed online (fcur + fw) maxx nw hc
+              walk rest x line gap saw placed online (fcur + fw) maxx nw wst hc
                 (list_append acc
                    (Cons (box { tag = to_lower tag, x = Font.scale f fcur size, y = 0,
                                 w = Font.scale f fw size, h = lh, pinned = false }, Nil)))
@@ -1104,8 +1005,8 @@ module Layout {
               // wide enough to price it.
               let ae = _elem_of tag attrs in
               let ist = if est.w >= 0 || est.w_pct >= 0 then est
-                        else _with_width est (_max_content f ua author (Cons (ae, anc)) ks) in
-              let (abs0, ah, _am1, _am2, _afe) = _block f ua author anc tag attrs ks cw (0 - 1) ist in
+                        else _with_width est (_max_content f ua author wst (Cons (ae, anc)) ks) in
+              let (abs0, ah, _am1, _am2, _afe) = _block f ua author wst anc tag attrs ks cw (0 - 1) ist in
               let abw = match abs0 with Nil -> 0 | Cons (m0, _r0) -> m0.w in
               // The MARGIN box is what takes room on the line; `_block` reports the border box.
               let advu = Font.text_units_of_px f (ist.ml + abw + ist.mr) size in
@@ -1130,7 +1031,7 @@ module Layout {
                   match k2 with
                   | Element (kt, ka, _kk) ->
                     if _is_block_level (style_of ua author (_elem_of kt ka) (Cons (ae, anc))
-                                          (_attr ka "style")).display
+                                          (_attr ka "style") est).display
                     then true else kid_block more3
                   | _ -> kid_block more3 in
               let has_lines = not (kid_block ks) && _collapse_ws (_inline_text ks "") != "" in
@@ -1146,7 +1047,7 @@ module Layout {
               let ay = if top_aligned then ltop hs al
                        else ltop hs al + hbase hs al - a_above in
               walk rest (ax + advu) al false saw true true fcur
-                   (if ax + advu > maxx then ax + advu else maxx) nw
+                   (if ax + advu > maxx then ax + advu else maxx) nw wst
                    (Cons ((al, (if top_aligned then 0 else a_above),
                            (if top_aligned then 0 else a_below),
                            (if top_aligned then mh else 0)), hc))
@@ -1165,7 +1066,7 @@ module Layout {
               // element reports is of ITS fragments, and inheriting the widest anything before it
               // reached made a span as wide as whatever preceded it on the line.
               walk ks (sx + lead) line false saw placed (online || lead + trail > 0) fcur 0
-                   (nw || est.ws == "nowrap" || est.ws == "pre") hc Nil in
+                   (nw || est.ws == "nowrap" || est.ws == "pre") est hc Nil in
             let g2 = if x2u == sx + lead then gap else g2a in
             // Still not right for `block-in-inline-nested-002-ref`, and the residue is one space: the
             // browser puts an inline element four pixels to the left of where this does, once, at the
@@ -1227,7 +1128,7 @@ module Layout {
             // have been run is worth more here than another guess: the obvious repair is a net loss and
             // will look obvious again next time.
             walk rest x2 l2 g2 (saw2 || _is_block_level est.display) (placed || x2 > sx)
-                 (online || lead + trail > 0 || x2 > sx) fcur2 (if mx2 > maxx then mx2 else maxx) nw hc2
+                 (online || lead + trail > 0 || x2 > sx) fcur2 (if mx2 > maxx then mx2 else maxx) nw wst hc2
                  (list_append (_shift inner rdx rdy)
                     (Cons (box { tag = to_lower tag, x = bx + rdx, y = fy + rdy,
                                  w = if bw < 0 then 0 else bw,
@@ -1239,10 +1140,10 @@ module Layout {
                                      else fbot2 + est.pb + est.bb - fy,
                                  pinned = false }, acc)))
           | Comment _c ->
-            walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) nw hc acc
+            walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) nw wst hc acc
           | Doctype (_p, _q, _r) ->
-            walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) nw hc acc in
-      walk kids (float_w + tiu) 0 false false false false 0 0 nw0 Nil Nil in
+            walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) nw wst hc acc in
+      walk kids (float_w + tiu) 0 false false false false 0 0 nw0 bst Nil Nil in
     let (bs0, x0, line0, _g0, saw0, _fc0, _mx0, hc0) = onepass Nil in
     // Nothing but text on any line means the first pass already placed everything against the right
     // tops, and the second is skipped. This is the common case by a long way.
@@ -1269,11 +1170,11 @@ module Layout {
                // One pixel on every cell when the table itself carries `border`, and zero otherwise.
                fn (cellb: int) ->
     let sp = st.spacing in
-    let tfs = _font_size ua author anc in
+    let tfs = st.fs in
     let lh = Font.line_height f tfs in
-    let groups = _kids_of f ua author anc kids in
+    let groups = _kids_of f ua author st anc kids in
     let rows_of = fn (g: (str * attr list * node list * sty)) ->
-      let (_gt, _ga, gk, _gs) = g in _kids_of f ua author anc gk in
+      let (_gt, _ga, gk, _gs) = g in _kids_of f ua author st anc gk in
     // A column is measured in FONT UNITS, not pixels. Rounding the width first and then asking whether
     // the text fits in it wraps a line whose text is 71.2 wide into a column of 71 — the column was
     // sized from that very text, so it has to be compared against it at the same precision.
@@ -1301,7 +1202,7 @@ module Layout {
                 match old with
                 | Nil -> merge more2 Nil (Cons (w, out))
                 | Cons (o, orest) -> merge more2 orest (Cons ((if w > o then w else o), out)) in
-            per_row rest (merge (_kids_of f ua author anc rk) a Nil) in
+            per_row rest (merge (_kids_of f ua author st anc rk) a Nil) in
         col_widths more (per_row (rows_of g) acc) in
     let cols = col_widths groups Nil in
     let ncols = list_len cols in
@@ -1316,7 +1217,7 @@ module Layout {
         | Nil -> 0
         | Cons (r, _mm) ->
           let (_rt, _ra, rk, _rs) = r in
-          match _kids_of f ua author anc rk with
+          match _kids_of f ua author st anc rk with
           | Nil -> 0
           | Cons (c, _m2) -> extra c in
     let px_cols = list_map cols (fn (u: int) -> Font.scale f u tfs + pad0) in
@@ -1329,7 +1230,7 @@ module Layout {
     // no rows at all, which is the table shrinking to fit what it holds. The anonymous boxes themselves
     // are still missing, so the contents generate no boxes and only the table's own width is right.
     // The corpus has one document that asks and it asks only for the width.
-    let inner = if ncols == 0 then _max_content f ua author anc kids
+    let inner = if ncols == 0 then _max_content f ua author st anc kids
                 else sum_cols + sp * (ncols + 1) in
     // A row reaches from the first cell's left edge to the last one's right, and the gaps BETWEEN the
     // columns are inside that. `sum_cols` is the columns alone; a two-column row was reported four
@@ -1347,8 +1248,8 @@ module Layout {
       else
         let rtl0 = match anc with
                    | Nil -> false
-                   | Cons (a0, up0) -> Style.inherited ua author "direction" "ltr" a0 up0 == "rtl" in
-        let (ibs0, _in0, ih0, _isaw0) = _inline f ua author anc kids table_w tfs rtl0 in
+                   | Cons (_a0, _up0) -> st.dir == "rtl" in
+        let (ibs0, _in0, ih0, _isaw0) = _inline f ua author st anc kids table_w in
         (ibs0, ih0) in
     // Document order, built forwards. A table's boxes are a group, then its rows, and each row's cells
     // straight after it — an accumulator that is reversed at the end puts the cells before their row.
@@ -1364,7 +1265,7 @@ module Layout {
           | Nil -> (a, ry, rem2)
           | Cons (r, rest) ->
             let (rt, _ra, rk, _rs) = r in
-            let cells = _kids_of f ua author anc rk in
+            let cells = _kids_of f ua author st anc rk in
             // A cell is a block container and its contents are LAID OUT, not estimated. They used to be
             // estimated — a line count over the cell's text — which gave a plausible height for a cell
             // holding one paragraph and no boxes at all for whatever was inside it. Eight documents in
@@ -1396,7 +1297,7 @@ module Layout {
                 let cst = if cellb > 0 && cst0.bt + cst0.bb + cst0.bl + cst0.br == 0
                           then _with_border cst0 cellb else cst0 in
                 let cw2 = match ws with Nil -> 0 | Cons (w, _r) -> w in
-                let (cbs, ch, _m1, _m2, _fe) = _block f ua author anc ct ca ck cw2 (0 - 1) cst in
+                let (cbs, ch, _m1, _m2, _fe) = _block f ua author st anc ct ca ck cw2 (0 - 1) cst in
                 lay_cells more2 (match ws with Nil -> Nil | Cons (_w, rr) -> rr)
                           (Cons ((cbs, ch, cst.valign), out)) in
             let laid = lay_cells cells px_cols Nil in
@@ -1506,6 +1407,7 @@ module Layout {
 
   // One block box and everything under it, at coordinates relative to its own border box.
   and _block = fn (f: font) -> fn (ua: prepared list) -> fn (author: prepared list) ->
+               fn (pst: sty) ->
                fn (ancestors: elem list) -> fn (tag: str) -> fn (attrs: attr list) ->
                fn (kids: node list) -> fn (cbw: int) -> fn (cbh: int) -> fn (st: sty) ->
     // A block box fills its containing block unless it says otherwise. `width` is the CONTENT
@@ -1575,7 +1477,7 @@ module Layout {
         match k with
         | Element (ktag, kattrs, _kk) ->
           let ke = _elem_of ktag kattrs in
-          let kst = style_of ua author ke inner_ancestors (_attr kattrs "style") in
+          let kst = style_of ua author ke inner_ancestors (_attr kattrs "style") st in
           // Block-LEVEL, which is not the same as `display: block`. A `display: table-cell` with no
           // table around it is wrapped by the standard in an anonymous table, row group and row, and
           // the result sits in its parent's flow as a block does: it takes a line of its own.
@@ -1589,8 +1491,7 @@ module Layout {
                       && _collapse_ws (_inline_text kids "") != "" in
     let (ibs, _ilines, ih3, _sawb) =
       if inline_only then
-        _inline f ua author inner_ancestors kids cw (_font_size ua author inner_ancestors)
-          (Style.inherited ua author "direction" "ltr" e ancestors == "rtl")
+        _inline f ua author st inner_ancestors kids cw
       else (Nil, 0, 0, false) in
     let (bs, used, open_mb, first_mt, bottom, fbot) =
       if is_table then (tbs, th, 0, 0, th, 0)
@@ -1599,7 +1500,7 @@ module Layout {
       // between laying a document out as one paragraph and laying it out at all.
       else if inline_only && not _sawb then
         let h = ih3 in (ibs, h, 0, 0, h, 0)
-      else _stack f ua author inner_ancestors kids cw (if st.h >= 0 then st.h else 0 - 1) 0 0 (not sep_top) 0 false 0 (0, 0) Nil in
+      else _stack f ua author st inner_ancestors kids cw (if st.h >= 0 then st.h else 0 - 1) 0 0 (not sep_top) 0 false 0 (0, 0) Nil in
     // The fragment's origin is (the containing block's content left, this border box's top): x is
     // measured from outside the margin because a horizontal margin is an offset, y from the border
     // box because a vertical one collapsed into the gap above. So a child clears this box's own
@@ -1611,7 +1512,7 @@ module Layout {
     // are placed from the right. Reading it off the element itself moved the div to x = 690.
     let rtl = match ancestors with
               | Nil -> false
-              | Cons (par, up) -> Style.inherited ua author "direction" "ltr" par up == "rtl" in
+              | Cons (_par, _up) -> pst.dir == "rtl" in
     let bx0 = if rtl then cbw - st.mr - bw_total else st.ml in
     // The children clear the same edge the box was placed from, which in a right-to-left containing
     // block is not the left margin. Using `st.ml` here while the box itself was placed from the right
@@ -1658,7 +1559,7 @@ module Layout {
     // The initial containing block is the viewport. Its own margin does not collapse out of the
     // document, so the root's top margin starts the stack rather than escaping it.
     let (bs, _y, _mb, _fm, _bot, _fb) =
-      _stack f ua author Nil roots viewport_w (0 - 1) 0 0 false 0 false 0 (0, 0) Nil in
+      _stack f ua author Style.root_style Nil roots viewport_w (0 - 1) 0 0 false 0 false 0 (0, 0) Nil in
     bs;
 
   // The canonical form the gate compares, one line per box in document order.
