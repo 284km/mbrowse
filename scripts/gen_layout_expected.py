@@ -71,7 +71,10 @@ FLAGS = ["--headless", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
          "--virtual-time-budget=6000", "--dump-dom"]
 
 
-def boxes_for(path, tmp, font):
+def boxes_for(path, tmp, font, probe=None):
+    """`probe` overrides the measuring script. The layout corpus passes nothing and gets PROBE; the
+    image corpus needs one that also waits for the images, because a probe that fires first measures
+    the broken-image placeholder and returns a number that looks exactly like an answer."""
     text = open(path, encoding="utf-8", errors="replace").read()
     # Appended after the document, so it cannot change what it measures. Measuring happens
     # before the element is inserted in any case, but a probe that is also part of the input
@@ -82,7 +85,7 @@ def boxes_for(path, tmp, font):
     # to do with fonts — the first attempt did that and the paragraph margins stopped collapsing.
     # Where a stylesheet sits does not change which elements it applies to.
     open(wrapped, "w", encoding="utf-8").write(
-        text + "\n" + (FONT_CSS % font) + "\n" + PROBE + "\n")
+        text + "\n" + (FONT_CSS % font) + "\n" + (probe or PROBE) + "\n")
     got = subprocess.run([CHROME] + FLAGS + ["file://" + wrapped],
                          capture_output=True, text=True, timeout=120).stdout
     marker = '<pre id="__mbrowse_boxes">'
