@@ -694,7 +694,12 @@ module Layout {
                   | Nil -> m
                   | Cons (fb, fr) -> widest fr (if fb.x + fb.w > m then fb.x + fb.w else m) in
                 let cw2 = widest pbs2 0 in
-                if cw2 > 0 then cw2 else edge in
+                // PLUS the edge, not "or" the edge. The inline pass is given the piece's children and
+                // not the element, so it lays the content out from zero — the element's own border and
+                // padding are not in those numbers and have to be added. Choosing between them instead
+                // made the fragment two pixels narrower than the border the browser draws, which was
+                // the whole of the remaining disagreement in one pair: 31 where a browser says 33.
+                cw2 + edge in
               let frag =
                 if ph <= 0 && edge <= 0 then Nil
                 else Cons (box { tag = "", x = 0, y = yy - st.bt, w = fx1, h = ph + st.bt + st.bb,

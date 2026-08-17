@@ -40,14 +40,15 @@
 # cross-reference is `scripts/reftest_why.py` and it needs `REFTEST_LIST=path` from this gate and
 # `LAYOUT_LIST=path` from the layout gate; both write a list instead of a number.
 #
-# **61 of 76 pass.**
+# **65 of 76 pass.**
 #
 # The history is worth keeping because it is the same lesson three times over. 61 once the denominator
 # was corrected. 66 once the painter walked the box list in CSS 2.1 Appendix E's order instead of
 # document order. Then 57, when inline boxes were given the background and border they had never had —
 # not a step backwards: an inline box SPLIT by a block child is several fragments and its border belongs
 # to them severally, so drawing it correctly in the simple case is what made the split case visible.
-# Then 61 again, with a box per fragment carrying its own share of the border.
+# Then 61 with a box per fragment carrying its own share of the border, and 65 once that fragment was
+# as wide as its content PLUS the element's edge rather than one or the other.
 #
 # The four numbers are the same lesson from four sides. **Two pages that both omit something agree about
 # it perfectly**, so every correct addition to the painter costs pairs before it gains them.
@@ -61,7 +62,7 @@
 #         because the inline box was built with no background, no border and the block-level layer. A
 #         missing feature that looked exactly like a wrong order, because only one of the two
 #         overlapping boxes was ever drawn.
-#    10   are BORDER FRAGMENTS, still. `block-in-inline-empty-*` and `block-in-inline-insert-012` to `-016`
+#     6   are BORDER FRAGMENTS, still. `block-in-inline-empty-*` and `block-in-inline-insert-012` to `-016`
 #         compare two references that say
 #         the same rendering two ways: one `display: inline` box containing block children, and the
 #         same thing written out already split, with `border-right: none` on the first piece and
@@ -127,7 +128,7 @@ while IFS='	' read -r a b; do
 done < "$T/pairs.txt"
 
 echo "reftests: $pass passed, $fail failed, of $total pairs"
-EXPECT_PASS=${EXPECT_PASS:-61}
+EXPECT_PASS=${EXPECT_PASS:-65}
 if [ "$pass" -ne "$EXPECT_PASS" ]; then
   echo "reftests: expected exactly $EXPECT_PASS passing, got $pass — raise EXPECT_PASS if this is the painter growing"
   exit 1

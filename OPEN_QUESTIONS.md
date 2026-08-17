@@ -259,10 +259,16 @@ y, as tall as its line plus both horizontal edges, carrying the start edge only 
 and the end edge only on the last. That recovered four pairs and cost none. The element's own box is
 still the union and still carries no border, so nothing is drawn twice.
 
-What the remaining ten disagree about is a width, not a structure: for one pair the split side paints a
-31-pixel border band and the hand-written side 33. Chrome says 29 for both, but that measurement was
-taken WITHOUT the vendored font injected and so cannot settle it — the same mistake as the first `<img>`
-corpus, made again. The next step is that comparison done properly.
+That width disagreement is settled and fixed. With the vendored font injected, the browser paints 33 for
+both sides; the hand-written side was right all along and the split side was two pixels narrow. The
+earlier reading of 29 came from a screenshot taken WITHOUT injecting the font, and it was not merely
+inconclusive — it was wrong, and it pointed at the wrong side. **A measurement that skips the setup the
+real gate does can produce a confident wrong answer, not just no answer.**
+
+The cause was one expression asking two questions: the fragment's width was `content OR edge` where it
+is `content PLUS edge`. The inline pass is handed the piece's children, not the element, so it lays the
+content out from zero and the element's own border and padding are simply not in those numbers. With
+`or`, an empty fragment got its edge right and a full one lost it. Four more pairs, 61 to 65.
 
 It was fourteen of the nineteen, up from four: `block-in-inline-empty-*` and `block-in-inline-insert-012`
 through `-016`. It went from four to fourteen the moment inline boxes started drawing borders at all,
