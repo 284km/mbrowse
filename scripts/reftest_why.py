@@ -12,7 +12,10 @@ browser's geometry and the pages still do not look the same. That can only be co
 ink landing outside the box it was measured for — the three things geometry cannot see.
 
 Writing this down was prompted by a commit message that claimed the 48 failures were "accounted for"
-by layout failures when three had been looked at. This is the cheap way to actually settle it.
+by layout failures when three had been looked at. This is the cheap way to actually settle it, and it
+did: of 15 failures, 5 are layout seen from the other side and 10 are not. The 10 turned out to be
+painting order (Q-14) and border fragments (Q-15) — read, not guessed, and both named by the documents
+themselves.
 
   MERE=... REFTEST_LIST=/tmp/rf.txt sh scripts/reftest_check.sh     # ~90 minutes
   MERE=... LAYOUT_LIST=/tmp/lf.txt sh scripts/layout_check.sh

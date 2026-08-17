@@ -245,6 +245,37 @@ module Style {
     else dflt;
 
   // The percentage in a value, or -1. Layout resolves these against the containing block.
+
+  // A colour hiding inside a declaration that is not only a colour.
+  //
+  // `border: 3px solid blue` carries three things and `color_of` recognises none of them, because the
+  // whole string is not a colour. Offering it whole returns the fallback — and the fallback is the
+  // element's own text colour, so every bordered box in the corpus was drawn BLACK. Thirty-three
+  // documents say `border: 3px solid blue`.
+  //
+  // Which word wins depends on which property is being read, and they disagree. In `border` and
+  // `border-<side>` the colour comes after the width and the style, so the LAST word that is a colour
+  // is it. In `border-color` every word is a colour and they are the four sides, so the FIRST is the
+  // top. One function, one flag, because the alternative is two functions that drift.
+  let color_in = fn (v0: str) -> fn (first: bool) -> fn (dflt: int) ->
+    let sent = 0 - 999 in
+    // Whole-string first: a colour can contain spaces — `rgb(1, 2, 3)` does — and splitting one into
+    // words finds nothing in any of the pieces.
+    let whole = color_of v0 sent in
+    if whole != sent then whole
+    else
+      let rec go = fn (ws: str list) -> fn (best: int) ->
+        match ws with
+        | Nil -> best
+        | Cons (w, rest) ->
+          if w == "" then go rest best
+          else
+            let c = color_of w sent in
+            if c == sent then go rest best
+            else if first && best != dflt then best
+            else go rest c in
+      go (str_split v0 " ") dflt;
+
   let pct_of = fn (s: str) ->
     if str_index_of s "%" < 0 then 0 - 1
     else
@@ -822,11 +853,12 @@ module Style {
       // fallback for anything it does not recognise — a width and a style are exactly that.
       bc =
         let one = fn (prop: str) -> to_lower (get prop) in
-        let c4 = one "border-top-color" in
-        let c3 = one "border-color" in
-        let c2 = one "border-top" in
-        let c1 = one "border" in
-        let pickc = fn (v: str) -> fn (d: int) -> if v == "" then d else color_of v d in
-        pickc c4 (pickc c3 (pickc c2 (pickc c1 (color_of (get "color") pst.color))))
+        let base = color_of (get "color") pst.color in
+        let step = fn (v: str) -> fn (first: bool) -> fn (d: int) ->
+          if v == "" then d else color_in v first d in
+        step (one "border-top-color") true
+          (step (one "border-color") true
+            (step (one "border-top") false
+              (step (one "border") false base)))
     };
 }

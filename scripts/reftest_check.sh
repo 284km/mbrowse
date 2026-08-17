@@ -1,7 +1,7 @@
 #!/bin/sh
 # scripts/reftest_check.sh — a test document and its reference, painted, compared.
 #
-# 109 pairs, taken from the `<link rel="match">` the WPT documents carry: the suite's authors said
+# 76 pairs, taken from the `<link rel="match">` the WPT documents carry: the suite's authors said
 # which two files must look the same, and both of each pair are already vendored here.
 #
 # **This gate has no oracle and does not need one.** Every other gate here asks "is this right" and
@@ -24,17 +24,43 @@
 # PPM of decimal triples is two megabytes where this is a few kilobytes, and a failing line names the
 # row and the run, which is where to look.
 #
-# **61 of 109 pass.** A reftest cannot say WHICH of two pages is wrong — that is what the other gates
-# are for — only that they disagree.
+# **The denominator is 76, not 109, and finding that out was the whole of settling what the failures
+# were.** A reftest needs no oracle for what a page should look like. It does need one for something
+# else, and that had been assumed: whether the two files are a PAIR. `test/data/layout/reftest.browser`
+# is the browser asked directly, and it renders 33 of the 109 differently itself.
 #
-# **What the 48 failures are has NOT been established.** Three were looked at and all three were a
-# test and its reference laying out to different heights, which is a layout failure seen from the
-# other side; whether that accounts for the other 45 is a guess until someone checks, and a guess
-# written down as a finding is worse than an open question. `REFTEST_LIST=path` writes every failing
-# pair to a file, which is what makes the check a few minutes of comparing lists rather than another
-# run of this gate.
+# The reason is measured, not guessed: 25 of those 33 contain `<![CDATA[` and none of the 76 that match
+# do. The originals are XHTML and were vendored as `.html`. In XHTML a CDATA section inside `<style>`
+# is markup and vanishes; in HTML it is stylesheet text, so the first rule of the reference's
+# stylesheet is eaten and the reference stops being a reference. **A file renamed is not a file
+# converted.** The other 8 have some other cause and are not guessed at.
 #
-# **It is slow: about ninety minutes for the 109 pairs**, because painting asks the outline whether it
+# So the earlier note here — that the failures were probably layout failures seen from the other side —
+# was wrong, and it was wrong in the way a guess is: three had been looked at and 45 had not. The
+# cross-reference is `scripts/reftest_why.py` and it needs `REFTEST_LIST=path` from this gate and
+# `LAYOUT_LIST=path` from the layout gate; both write a list instead of a number.
+#
+# **61 of 76 pass, and the 15 that fail have now been read rather than guessed at.**
+#
+#     5   have a side that already fails the layout gate — a layout failure seen from the other side,
+#         and nothing more to say about them here.
+#     6   are PAINTING ORDER. `inline-block-zorder-*` and `inline-table-zorder-*`, and the specification
+#         section they link to is called `#painting-order`. An inline-block with a green background sits
+#         in a box that a later block with a red background overlaps by a negative margin, and the
+#         browser shows GREEN: CSS 2.1 Appendix E paints all block-level backgrounds first and
+#         inline-level in-flow content afterwards, so document order is not paint order. This painter
+#         walks the box list once, in document order, and the red wins.
+#     4   are BORDER FRAGMENTS. `block-in-inline-insert-012` and `-016` compare two references that say
+#         the same rendering two ways: one `display: inline` box containing block children, and the
+#         same thing written out already split, with `border-right: none` on the first piece and
+#         `border-left: none` on the last. An inline box broken by a block child becomes several
+#         fragments and the border is divided among them — the left edge on the first, the right on the
+#         last, none in between. This draws one border around one box.
+#
+# **Both of those only became visible because borders started being drawn.** Two pages that both omit
+# a border agree about it perfectly. See Q-14 and Q-15.
+#
+# **It is slow: about an hour for the 76 pairs**, because painting asks the outline whether it
 # covers each pixel of each glyph's box and there are 218 pages of them. That is the honest cost of
 # the only gate here that draws, and it is not in the quick path — `check.sh` runs it last and it is
 # the one to skip when iterating.
@@ -50,7 +76,9 @@ DATA="$ROOT/test/data/layout"
 T="${TMPDIR:-/tmp}/mbrowse_reftest.$$"; mkdir -p "$T"; trap 'rm -rf "$T"' EXIT
 cd "$ROOT"
 
-python3 "$ROOT/scripts/reftest_pairs.py" "$DATA" > "$T/pairs.txt"
+# Only the pairs the BROWSER renders identically. See `test/data/layout/reftest.browser` and the
+# note above: 33 of the 109 are not pairs at all.
+grep '^SAME' "$DATA/reftest.browser" | cut -f2,3 > "$T/pairs.txt"
 
 total=0; pass=0; fail=0; shown=0
 while IFS='	' read -r a b; do
@@ -59,6 +87,14 @@ while IFS='	' read -r a b; do
   "$MERE" "$ROOT/test/paint_cases.mere" "$DATA/$a" > "$T/a.txt" 2>/dev/null || true
   "$MERE" "$ROOT/test/paint_cases.mere" "$DATA/$b" > "$T/b.txt" 2>/dev/null || true
   sed '$d' "$T/a.txt" > "$T/a2.txt"; sed '$d' "$T/b.txt" > "$T/b2.txt"
+  # A reftest compares a VIEWPORT, not a document. Two pages a suite calls identical can lay out to
+  # different total heights — the browser reports 216 and 136 for one of these pairs and still renders
+  # them the same — so the shorter list is padded with white rows rather than the taller one truncated.
+  # Painting the taller height directly was tried and is six times the work for the same answer.
+  ra=$(grep -c '' "$T/a2.txt"); rb=$(grep -c '' "$T/b2.txt")
+  n=$ra; [ "$rb" -gt "$n" ] && n=$rb
+  i=$ra; while [ "$i" -lt "$n" ]; do echo "800xffffff" >> "$T/a2.txt"; i=$((i + 1)); done
+  i=$rb; while [ "$i" -lt "$n" ]; do echo "800xffffff" >> "$T/b2.txt"; i=$((i + 1)); done
   if cmp -s "$T/a2.txt" "$T/b2.txt"; then
     pass=$((pass + 1))
   else

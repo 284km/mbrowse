@@ -228,3 +228,36 @@ version of this note said: nothing in this engine drew a border, and nothing had
 other thing that looks at ink is a reftest, and a reftest comparing two pages that both omit the border
 agrees with itself. Attributing the 48 reftest failures to layout while this was true would have been
 attributing them to the wrong thing.
+
+## Q-14 — document order is not painting order
+
+Six of the fifteen failing reftest pairs are this, and they name themselves: `inline-block-zorder-*`
+and `inline-table-zorder-*` link to the specification section called `#painting-order`.
+
+The shape is one document: an inline-block with a green background, and a following block with a red
+background pulled up over it by a negative margin. The browser shows GREEN. CSS 2.1 Appendix E paints
+all block-level backgrounds first and inline-level in-flow content afterwards, so a later block cannot
+cover an earlier inline-block. `src/paint.mere` walks the box list once, in document order, and the
+red wins.
+
+What it needs is the painter walking the list in passes rather than once — block backgrounds, then
+floats, then inline-level content, then text — which is what Appendix E is a list of. The box list
+already carries what is needed to tell them apart, since layout knows each box's `display`; the box
+does not carry it yet.
+
+None of this was visible until borders were drawn. Two pages that both omit a border agree about it.
+
+## Q-15 — an inline box split by a block gets its border split too
+
+Four of the fifteen are `block-in-inline-insert-012` and `-016`, and both compare two references that
+say the same rendering two different ways: one `display: inline` element containing block children,
+and the same thing written out already split, with `border-right: none` on the first piece and
+`border-left: none` on the last.
+
+That is what a browser does with it. An inline box broken by a block-level child becomes several
+FRAGMENTS, and the border is divided among them: the left edge on the first fragment, the right edge
+on the last, and neither in between. The engine already splits these boxes for layout — the geometry
+gate passes on them — and paints one border around one box.
+
+Same note as Q-14: invisible until borders were drawn.
+

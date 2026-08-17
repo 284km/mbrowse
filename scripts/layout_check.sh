@@ -96,6 +96,10 @@ for f in "$DATA"/*.html; do
     pass=$((pass + 1))
   else
     fail=$((fail + 1))
+    # `LAYOUT_LIST=path` writes every failing document to a file. A reftest can say two pages disagree
+    # and cannot say which is wrong; this list is what lets `scripts/reftest_why.py` answer that
+    # without a second ninety-minute run.
+    [ -n "$LAYOUT_LIST" ] && echo "$(basename "$f")" >> "$LAYOUT_LIST"
     if [ "$shown" -lt 3 ]; then
       shown=$((shown + 1))
       echo "  FAIL $(basename "$f")"

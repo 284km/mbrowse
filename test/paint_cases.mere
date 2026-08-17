@@ -10,8 +10,12 @@ let dir =
   let ps = str_split path "/" in
   if list_len ps <= 1 then "" else str_join "/" (list_take ps (list_len ps - 1));
 let bs = Layout.boxes_in dir "test/data/font/NotoSans-Regular.ttf" (Tree.build (Html.tokenize src));
-// The page is as tall as the root box and as wide as the viewport, so two documents that lay out to
-// different heights are different pictures rather than one being cropped to the other.
+// The page is as tall as the root box and as wide as the viewport.
+//
+// A fixed viewport height was tried instead, for the reftests, and reverted: painting 600 rows where
+// the page is 97 is six times the work and put a single document over a five-minute CPU limit. The
+// reftest harness pads the shorter of two row lists with white instead, which is the same comparison
+// and costs nothing.
 let h = match bs with Cons (b, _) -> (if b.h < 1 then 1 else b.h) | Nil -> 1;
 let _ = print (Paint.render (Paint.paint f bs 800 h) 800 h);
 0
