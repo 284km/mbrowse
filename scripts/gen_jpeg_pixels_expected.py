@@ -48,7 +48,10 @@ def rows(im):
 
 def main(d):
     from PIL import Image
-    names = [l.strip() for l in open(os.path.join(d, "pixels.cases")) if l.strip()]
+    raw = [l.strip() for l in open(os.path.join(d, "pixels.cases")) if l.strip()]
+    # `name` or `name ac`; the flat files say 0 and the detailed ones say how many they have.
+    names = [l.split()[0] for l in raw]
+    acs = {l.split()[0]: (l.split()[1] if len(l.split()) > 1 else "0") for l in raw}
     lines = []
     for n in names:
         im = Image.open(os.path.join(d, n))
@@ -56,7 +59,9 @@ def main(d):
         # ac=0 is a claim this generator cannot check and the Mere side reports; it is in the line so
         # that the day a corpus image stops being flat, the gate says so instead of the picture
         # quietly changing.
-        lines.append("--- %s %d %d ac=0" % (n, im.size[0], im.size[1]))
+        # The AC count is a claim the Mere side makes and this generator cannot check, so it is
+        # carried through from the cases file rather than asserted here.
+        lines.append("--- %s %d %d ac=%s" % (n, im.size[0], im.size[1], acs[n]))
         lines += rows(im)
     open(os.path.join(d, "pixels.expected"), "w").write("\n".join(lines) + "\n")
     print("gen_jpeg_pixels_expected: %d files, %d lines" % (len(names), len(lines)))

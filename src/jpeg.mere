@@ -288,6 +288,16 @@ module Jpeg {
       match r with Nil -> _zeros 1 | Cons (v, rest) -> if k == 0 then v else go rest (k - 1) in
     go l i;
 
+  let _qvec = fn (l: int list) ->
+    let v = vec_new () in
+    let rec go = fn (r: int list) ->
+      match r with Nil -> v | Cons (x, rest) -> let _ = vec_push v x in go rest in
+    let w = go l in
+    // A missing table would index out of range later; 64 zeroes is a black block, which is wrong in a
+    // way that shows, unlike a crash inside the transform.
+    let rec pad = fn (i: int) -> if i >= 64 then w else let _ = vec_push w 0 in pad (i + 1) in
+    pad (list_len l);
+
   let _find_comp = fn (cs: jcomp list) -> fn (id: int) ->
     let rec go = fn (l: jcomp list) ->
       match l with
@@ -315,28 +325,94 @@ module Jpeg {
   // occurs is EOB — the count is returned so the gate can SAY that rather than assume it, and so the
   // day it stops being true is a number changing and not a picture changing.
   let _block = fn (d: bytes) -> fn (st: int Vec) -> fn (dct: htab) -> fn (act: htab) ->
-                  fn (q: int list) -> fn (pred: int Vec) -> fn (ci: int) ->
+                  fn (co: int Vec) -> fn (zz: int Vec) -> fn (pred: int Vec) -> fn (ci: int) ->
+    let rec clear = fn (i: int) -> if i >= 64 then 0 else let _ = vec_set co i 0 in clear (i + 1) in
+    let _ = clear 0 in
     let t = _dec_huff d st dct in
     let dc = vec_get pred ci + _extend (_receive d st t) t in
     let _ = vec_set pred ci dc in
+    let _ = vec_set co 0 dc in
+    // The coefficients arrive along the diagonals and are stored where they belong, so the transform
+    // never has to know about the zigzag and the quantisation table can be indexed the same way.
     let rec ac = fn (k: int) -> fn (nz: int) ->
       if k > 63 then nz
       else
         let rs = _dec_huff d st act in
         let r = rs / 16 in
         let sz = rs - r * 16 in
+        // A zero size means end-of-block, unless the run is fifteen — that is the escape that says
+        // "sixteen zeroes and keep going", and it is the one AC symbol a flat image never produces.
         if sz == 0 then (if r == 15 then ac (k + 16) nz else nz)
         else
+          let k2 = k + r in
           let v = _extend (_receive d st sz) sz in
-          ac (k + r + 1) (if v != 0 then nz + 1 else nz) in
-    (dc * _nth q 0, ac 1 0);
+          let _ = if k2 <= 63 then (let _ = vec_set co (vec_get zz k2) v in 0) else 0 in
+          ac (k2 + 1) (if v != 0 then nz + 1 else nz) in
+    ac 1 0;
 
-  // The inverse DCT of a block with only a DC coefficient is that coefficient spread flat, and the
-  // eighth is the two one-over-root-two normalisation factors meeting. libjpeg takes exactly this
-  // shortcut, rounding half up and then shifting the level back from signed to unsigned — so on a flat
-  // block the two agree to the bit and the comparison needs no tolerance. A block with any AC in it is
-  // a different matter and is not decoded here; see OPEN_QUESTIONS Q-10.
-  let _dc_sample = fn (dcq: int) -> _clamp (_fdiv (dcq + 4) 8 + 128);
+  let _descale = fn (x: int) -> fn (n: int) -> _fdiv (x + _pow2 (n - 1)) (_pow2 n);
+
+  // The inverse DCT, as libjpeg's `jpeg_idct_islow` computes it: separable, integer, thirteen bits of
+  // fraction, and the constants below are cosines rounded to that many bits.
+  //
+  // **Matching an implementation is the only way to be exact here.** The transform is real-valued and
+  // every decoder rounds it somewhere; the standard requires two decoders to agree within one, not to
+  // agree. So "correct to the bit" is a claim that only means something against a named
+  // implementation — and having one makes any image at all an exact test, instead of only the images
+  // whose blocks are flat.
+  //
+  // Both passes are written in full, without libjpeg's all-AC-zero shortcuts. Those shortcuts produce
+  // the same numbers as the general path — a DC-only column reduces to `dc << 2` either way — so
+  // leaving them out costs time and removes two branches that would need their own poison.
+  let _idct = fn (co: int Vec) -> fn (qv: int Vec) -> fn (px: int Vec) -> fn (stride: int) ->
+                 fn (ox: int) -> fn (oy: int) ->
+    let ws = _zeros 64 in
+    // The odd part of the butterfly, shared by both passes: four inputs in, four out.
+    let odd = fn (t0: int) -> fn (t1: int) -> fn (t2: int) -> fn (t3: int) ->
+      let y1 = t0 + t3 in let y2 = t1 + t2 in let y3 = t0 + t2 in let y4 = t1 + t3 in
+      let z5 = (y3 + y4) * 9633 in
+      let w1 = y1 * (0 - 7373) in
+      let w2 = y2 * (0 - 20995) in
+      let w3 = y3 * (0 - 16069) + z5 in
+      let w4 = y4 * (0 - 3196) + z5 in
+      (t0 * 2446 + w1 + w3, t1 * 16819 + w2 + w4, t2 * 25172 + w2 + w3, t3 * 12299 + w1 + w4) in
+    // The even part, likewise.
+    let even = fn (e0: int) -> fn (e2: int) -> fn (e4: int) -> fn (e6: int) ->
+      let z1 = (e2 + e6) * 4433 in
+      let tmp2 = z1 + e6 * (0 - 15137) in
+      let tmp3 = z1 + e2 * 6270 in
+      let tmp0 = (e0 + e4) * 8192 in
+      let tmp1 = (e0 - e4) * 8192 in
+      (tmp0 + tmp3, tmp1 + tmp2, tmp1 - tmp2, tmp0 - tmp3) in
+    let rec col = fn (c: int) ->
+      if c >= 8 then 0
+      else
+        let dq = fn (k: int) -> vec_get co (k * 8 + c) * vec_get qv (k * 8 + c) in
+        let (t10, t11, t12, t13) = even (dq 0) (dq 2) (dq 4) (dq 6) in
+        let (v0, v1, v2, v3) = odd (dq 7) (dq 5) (dq 3) (dq 1) in
+        let put = fn (k: int) -> fn (v: int) -> vec_set ws (k * 8 + c) (_descale v 11) in
+        let _ = put 0 (t10 + v3) in let _ = put 7 (t10 - v3) in
+        let _ = put 1 (t11 + v2) in let _ = put 6 (t11 - v2) in
+        let _ = put 2 (t12 + v1) in let _ = put 5 (t12 - v1) in
+        let _ = put 3 (t13 + v0) in let _ = put 4 (t13 - v0) in
+        col (c + 1) in
+    let _ = col 0 in
+    let rec row = fn (r: int) ->
+      if r >= 8 then 0
+      else
+        let g = fn (k: int) -> vec_get ws (r * 8 + k) in
+        let (t10, t11, t12, t13) = even (g 0) (g 2) (g 4) (g 6) in
+        let (v0, v1, v2, v3) = odd (g 7) (g 5) (g 3) (g 1) in
+        // Eighteen bits back out: thirteen of constant, two carried between the passes, and three for
+        // the transform's own eighth. Then the level shift from signed back to unsigned.
+        let put = fn (k: int) -> fn (v: int) ->
+          vec_set px ((oy + r) * stride + ox + k) (_clamp (_descale v 18 + 128)) in
+        let _ = put 0 (t10 + v3) in let _ = put 7 (t10 - v3) in
+        let _ = put 1 (t11 + v2) in let _ = put 6 (t11 - v2) in
+        let _ = put 2 (t12 + v1) in let _ = put 5 (t12 - v1) in
+        let _ = put 3 (t13 + v0) in let _ = put 4 (t13 - v0) in
+        row (r + 1) in
+    row 0;
 
   let decode = fn (h: jhead) -> fn (d: bytes) ->
     let cdiv = fn (a: int) -> fn (b: int) -> (a + b - 1) / b in
@@ -360,6 +436,8 @@ module Jpeg {
     let scs = build h.sos 0 Nil in
     let st = _zeros 3 in
     let _ = vec_set st 0 h.scan in
+    let co = _zeros 64 in
+    let zz = _qvec zigzag in
     let pred = _zeros (if ns == 0 then 1 else ns) in
     let nzs = _zeros 1 in
     let rec mcu = fn (my: int) -> fn (mx: int) -> fn (seen: int) ->
@@ -378,22 +456,14 @@ module Jpeg {
             let fc = _find_comp h.comps cs in
             let dct = _find_htab h.hts 0 td in
             let act = _find_htab h.hts 1 ta in
-            let q = _find_qt h.qt fc.tq in
+            let qv = _qvec (_find_qt h.qt fc.tq) in
             let rec blk = fn (bv: int) -> fn (bh: int) ->
               if bv >= c.vs then 0
               else if bh >= c.hs then blk (bv + 1) 0
               else
-                let (dcq, nz) = _block d st dct act q pred c.ci in
+                let nz = _block d st dct act co zz pred c.ci in
                 let _ = vec_set nzs 0 (vec_get nzs 0 + nz) in
-                let sample = _dc_sample dcq in
-                let px = (mx * c.hs + bh) * 8 in
-                let py = (my * c.vs + bv) * 8 in
-                let stride = c.bw * 8 in
-                let rec fill = fn (y: int) -> fn (x: int) ->
-                  if y >= 8 then 0
-                  else if x >= 8 then fill (y + 1) 0
-                  else let _ = vec_set c.plane ((py + y) * stride + px + x) sample in fill y (x + 1) in
-                let _ = fill 0 0 in
+                let _ = _idct co qv c.plane (c.bw * 8) ((mx * c.hs + bh) * 8) ((my * c.vs + bv) * 8) in
                 blk bv (bh + 1) in
             let _ = blk 0 0 in
             each r (si + 1) in

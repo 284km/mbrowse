@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The seven test JPEGs, made of flat 16x16 blocks.
+"""The test JPEGs: seven of flat 16x16 blocks, and two with detail in them.
 
 Flat because a block of one colour has only a DC coefficient, and a flat block comes out identical in
 every correct decoder — so these can be compared with no tolerance while a general image cannot. See
@@ -36,6 +36,16 @@ of the six were added AFTER the gate was poisoned and let the poison through:
               Pillow does not expose it — but everything after it is, so a mishandled DRI shows up as
               the whole rest of the header being read from the wrong offset.
 
+The last two are not flat and are not there for the same reason. Once the inverse transform is
+libjpeg's own integer one rather than a transform, ANY image compares exactly — and only an image with
+detail in it ever produces a non-zero AC coefficient, so only an image with detail runs the half of
+the entropy decoder that reads run-length pairs and the sixteen-zeroes escape. The pattern is
+arithmetic rather than a photograph so that it is reproducible, and it is deliberately full of
+high-frequency content, which is what fills the upper coefficients that a flat block leaves empty.
+
+    detail    detail at 4:4:4
+    detail420 the same at 4:2:0, where the chroma the upsampler has to invent is not constant either
+
 Needs Pillow. Run once; the files are committed.
 
   python3 scripts/gen_jpeg_images.py test/data/jpeg
@@ -71,7 +81,16 @@ def main(d):
             exif=b"Exif\x00\x00" + thumb.getvalue())
     im.save(os.path.join(d, "flatdri.jpg"), quality=95, subsampling=0, restart_marker_blocks=2)
     im.save(os.path.join(d, "flatq1.jpg"), quality=1, subsampling=0)
-    print("gen_jpeg_images: 7 written")
+
+    det = Image.new("RGB", (48, 32))
+    for y in range(32):
+        for x in range(48):
+            det.putpixel((x, y), (((x * x + y * 7) % 256),
+                                  ((x * 5) ^ (y * 11)) % 256,
+                                  ((x + y) * 3 + (x * y) % 29) % 256))
+    det.save(os.path.join(d, "detail.jpg"), quality=90, subsampling=0)
+    det.save(os.path.join(d, "detail420.jpg"), quality=90, subsampling=2)
+    print("gen_jpeg_images: 9 written")
     return 0
 
 

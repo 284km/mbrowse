@@ -33,7 +33,8 @@ Needs Pillow. Maintenance command, not a gate — the answers are committed.
 import os, sys
 
 FILES = ["flat444.jpg", "flat422.jpg", "flat420.jpg", "flatgray.jpg",
-         "flatexif.jpg", "flatdri.jpg", "flatq1.jpg"]
+         "flatexif.jpg", "flatdri.jpg", "flatq1.jpg",
+         "detail.jpg", "detail420.jpg"]
 
 
 def main(d):
