@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""The six test JPEGs, made of flat 8x8 blocks.
+
+Flat because a block of one colour has only a DC coefficient, and a flat block comes out identical in
+every correct decoder — so these can be compared with no tolerance while a general image cannot. See
+`gen_jpeg_expected.py` for why that matters.
+
+The colours are chosen to move both chroma channels in both directions and to include the two ends of
+the luma range, so a colour conversion with a sign or a coefficient wrong cannot pass by symmetry.
+
+Each file is here because it is the only one that punishes a particular way of being wrong, and three
+of the six were added AFTER the gate was poisoned and let the poison through:
+
+    flat444   three components, no subsampling — the ordinary shape
+    flat422   chroma halved HORIZONTALLY ONLY, so the luma factors are 2,1 and not 2,2. With only 444
+              and 420 in the corpus every sampling factor is symmetric, and a reader that swaps the
+              two nibbles of that byte passes everything. It did.
+    flat420   chroma halved both ways
+    flatgray  one component, the path with no colour conversion at all
+    flatexif  an APP1 with a whole JPEG inside it, which is what a camera's EXIF thumbnail is. Two
+              things had to be true before this file bit. The JFIF APP0 is exactly sixteen bytes, so a
+              reader that steps over every APPn by a hard-coded sixteen passes a corpus that has only
+              JFIF in it — but a long APP1 of ZEROES did not catch it either, because a walker that
+              looks for the next FF simply resynchronises on the next real marker. It is only when the
+              payload contains markers of its own that landing inside it is fatal: the reader then
+              answers with the THUMBNAIL's size and tables, confidently and completely wrongly.
+    flatdri   a restart interval, so there is a DRI segment to step over. Its VALUE is not compared —
+              Pillow does not expose it — but everything after it is, so a mishandled DRI shows up as
+              the whole rest of the header being read from the wrong offset.
+
+Needs Pillow. Run once; the files are committed.
+
+  python3 scripts/gen_jpeg_images.py test/data/jpeg
+"""
+import io, os, sys
+
+COLS = [(255, 0, 0), (0, 128, 0), (0, 0, 255), (255, 255, 255),
+        (0, 0, 0), (192, 192, 192), (255, 165, 0), (128, 128, 128)]
+
+
+def main(d):
+    from PIL import Image
+    os.makedirs(d, exist_ok=True)
+    im = Image.new("RGB", (32, 16))
+    for by in range(2):
+        for bx in range(4):
+            c = COLS[by * 4 + bx]
+            for y in range(8):
+                for x in range(8):
+                    im.putpixel((bx * 8 + x, by * 8 + y), c)
+    im.save(os.path.join(d, "flat444.jpg"), quality=95, subsampling=0)
+    im.save(os.path.join(d, "flat422.jpg"), quality=95, subsampling=1)
+    im.save(os.path.join(d, "flat420.jpg"), quality=95, subsampling=2)
+    im.convert("L").save(os.path.join(d, "flatgray.jpg"), quality=95)
+    thumb = io.BytesIO()
+    im.resize((8, 8)).save(thumb, "JPEG", quality=40, subsampling=0)
+    im.save(os.path.join(d, "flatexif.jpg"), quality=95, subsampling=0,
+            exif=b"Exif\x00\x00" + thumb.getvalue())
+    im.save(os.path.join(d, "flatdri.jpg"), quality=95, subsampling=0, restart_marker_blocks=2)
+    print("gen_jpeg_images: 6 written")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1]))

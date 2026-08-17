@@ -48,6 +48,7 @@ sh scripts/check.sh
 | reftests               | no oracle — two of our own     | 61 of 109  |
 | font metrics           | a browser's `measureText`      | 29 of 29   |
 | glyph outlines, 5 ways | fontTools                      | exact      |
+| JPEG headers           | libjpeg, through Pillow        | 6 of 6     |
 
 The HTML **tokenizer** is not in this table and not in this repository: it is a Mere package, gated
 against html5lib-tests where it lives. The line has to be drawn somewhere and it is drawn at what

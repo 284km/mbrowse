@@ -140,3 +140,33 @@ the recent work introduced, and it has not been chased.
 **A warning about measuring it:** a wall-clock number from `layout_check.sh` is not evidence on its
 own. The same code on the same corpus has taken 9 minutes and 2.5 hours in one sitting, at load
 averages of 1 and of 21.
+
+
+## Q-8 — two JPEG header readings this oracle cannot tell apart
+
+`scripts/jpeg_check.sh` was poisoned eight ways and bites on six. The other two are not gaps in the
+corpus, they are inputs that do not exist here:
+
+- **The DQT precision bit.** A 16-bit quantisation table needs 12-bit samples, and this libjpeg was
+  not built with them. A reader that assumes every table is 8-bit is indistinguishable from a correct
+  one on every file Pillow can write.
+- **Stopping at the scan.** Baseline entropy data is byte-stuffed, so the only `FF` pairs after SOS are
+  `FF 00` and the restart markers. No well-formed baseline file contains anything a header walker could
+  mistake for a header, so "stop at SOS" and "keep walking" agree on all of them. It matters for
+  damaged input and for progressive JPEG.
+
+Also unreached: several quantisation tables inside ONE DQT segment. Legal, and libjpeg does not do it.
+
+**What would settle it** is a hand-written JPEG — bytes assembled directly rather than through an
+encoder — but a file this repository writes is not an oracle for a reader this repository wrote, so it
+would have to come with something independent that agrees it is what it claims to be. Until then the
+honest form is this note and not a passing test.
+
+## Q-9 — the JPEG scan is not read at all
+
+`src/jpeg.mere` stops at SOS. Huffman decode, dequantisation, the DC predictor, the IDCT, chroma
+upsampling and colour conversion are all still to come, and the images in `test/data/jpeg` are already
+flat-blocked so that gate can be exact when it is written: a block of one colour has only a DC
+coefficient and decodes bit-identically everywhere, while a general image cannot be compared exactly
+because no two IDCTs round alike and a tolerance would hide a real error behind a difference of method.
+

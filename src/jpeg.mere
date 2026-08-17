@@ -1,0 +1,138 @@
+// Baseline JPEG: the headers first, and the pixels after.
+//
+// The order is the font's order and for the same reason. A wrong header produces a PLAUSIBLE picture
+// — the right size in the wrong colours, or the right colours at half the resolution — and a gate
+// that only compares pixels cannot say which of the two halves is wrong. Everything a header holds
+// has exactly one answer, so it can be compared exactly, and it is worth knowing that it is right
+// before anything harder is attempted.
+//
+//   SOI  the file starts
+//   APPn a chunk to step over, and stepping over it correctly is most of reading a JPEG
+//   DQT  the quantisation tables, stored in ZIGZAG order
+//   SOF0 the frame: size, and each component's sampling factors and which table it uses
+//   DHT  the Huffman tables
+//   DRI  the restart interval
+//   SOS  the scan, after which the bytes are entropy-coded and no longer markers
+//   EOI  the file ends
+
+// A frame's shape, which is all of SOF0 plus what DQT said.
+type jcomp = { id: int, hs: int, vs: int, tq: int };
+
+type jhead = {
+  w: int, h: int, ncomp: int,
+  comps: jcomp list,
+  // Index and 64 values, in NATURAL order — de-zigzagged on the way in, because that is the order
+  // every later step wants and because doing it here makes the zigzag table something the header gate
+  // can see. A zigzag read backwards produces a picture, which is the kind of wrong that survives.
+  qt: (int * int list) list,
+  // Parsed but NOT compared by the gate: Pillow does not expose the restart interval, and a second
+  // reading of the same bytes written here would be this repository agreeing with itself. The file
+  // that carries one still earns its place — everything AFTER the DRI is compared, so a segment
+  // stepped over wrongly shows up as the rest of the header being read from the wrong offset.
+  restart: int
+};
+
+module Jpeg {
+  let u8 = fn (d: bytes) -> fn (i: int) ->
+    if i < 0 || i >= bytes_len d then 0 else bytes_get d i;
+
+  let u16 = fn (d: bytes) -> fn (i: int) -> u8 d i * 256 + u8 d (i + 1);
+
+  // Where each of the 64 coefficients belongs. The file stores a block along the diagonals, because
+  // that puts the coefficients that are usually zero at the end where a run-length can eat them; the
+  // decoder wants them in rows.
+  let zigzag =
+    Cons (0, Cons (1, Cons (8, Cons (16, Cons (9, Cons (2, Cons (3, Cons (10,
+    Cons (17, Cons (24, Cons (32, Cons (25, Cons (18, Cons (11, Cons (4, Cons (5,
+    Cons (12, Cons (19, Cons (26, Cons (33, Cons (40, Cons (48, Cons (41, Cons (34,
+    Cons (27, Cons (20, Cons (13, Cons (6, Cons (7, Cons (14, Cons (21, Cons (28,
+    Cons (35, Cons (42, Cons (49, Cons (56, Cons (57, Cons (50, Cons (43, Cons (36,
+    Cons (29, Cons (22, Cons (15, Cons (23, Cons (30, Cons (37, Cons (44, Cons (51,
+    Cons (58, Cons (59, Cons (52, Cons (45, Cons (38, Cons (31, Cons (39, Cons (46,
+    Cons (53, Cons (60, Cons (61, Cons (54, Cons (47, Cons (55, Cons (62, Cons (63,
+    Nil))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
+
+  let _nth = fn (l: int list) -> fn (i: int) ->
+    let rec go = fn (r: int list) -> fn (k: int) ->
+      match r with Nil -> 0 | Cons (v, rest) -> if k == 0 then v else go rest (k - 1) in
+    go l i;
+
+  // The 64 values a DQT holds, put back into row order.
+  let _dezigzag = fn (d: bytes) -> fn (at: int) -> fn (wide: bool) ->
+    let v = fn (k: int) -> if wide then u16 d (at + k * 2) else u8 d (at + k) in
+    let rec go = fn (i: int) -> fn (acc: int list) ->
+      if i >= 64 then list_rev acc
+      else
+        // For each NATURAL position, which zigzag slot holds it. Walking the other way round — for
+        // each stored value, where it goes — needs a scatter, and a list has no scatter.
+        //
+        // `find 0`, and the 0 is the search's START and not the thing being searched for. Passing `i`
+        // there looks right and reads right and is a different function: it begins the walk at the
+        // answer's own index, so it finds nothing whose slot is behind it and quietly returns the
+        // fallback. Half the table came out as the value of slot zero.
+        let rec find = fn (k: int) -> if k >= 64 then 0
+                                      else if _nth zigzag k == i then k else find (k + 1) in
+        go (i + 1) (Cons (v (find 0), acc)) in
+    go 0 Nil;
+
+  // Walk the markers to the start of the scan. Everything before SOS is a header; after it the bytes
+  // are entropy-coded and a `FF` no longer begins a marker unless what follows is not zero.
+  let header = fn (d: bytes) ->
+    let n = bytes_len d in
+    let rec go = fn (i: int) -> fn (h: jhead) ->
+      if i + 1 >= n then h
+      else if u8 d i != 255 then go (i + 1) h
+      else
+        let m = u8 d (i + 1) in
+        // Padding between markers is any number of `FF`s, and a marker with no payload has no length.
+        if m == 255 then go (i + 1) h
+        else if m == 216 || m == 1 || (m >= 208 && m <= 215) then go (i + 2) h
+        else if m == 217 || m == 218 then h
+        else
+          let len = u16 d (i + 2) in
+          let body = i + 4 in
+          let after = i + 2 + len in
+          if m == 192 || m == 193 then
+            // SOF0 baseline, SOF1 extended sequential — the same layout, and the second is rare
+            // enough that refusing it would be a guess about what a file is rather than a reading.
+            let nc = u8 d (body + 5) in
+            let rec comps = fn (k: int) -> fn (acc: jcomp list) ->
+              if k >= nc then list_rev acc
+              else
+                let at = body + 6 + k * 3 in
+                let hv = u8 d (at + 1) in
+                comps (k + 1) (Cons (jcomp { id = u8 d at, hs = hv / 16,
+                                             vs = hv - (hv / 16) * 16, tq = u8 d (at + 2) }, acc)) in
+            go after (jhead { w = u16 d (body + 3), h = u16 d (body + 1), ncomp = nc,
+                              comps = comps 0 Nil, qt = h.qt, restart = h.restart })
+          else if m == 219 then
+            // One DQT segment can carry several tables, one after another, each with its own
+            // precision in the top half of the byte that names it.
+            let rec tabs = fn (at: int) -> fn (acc: (int * int list) list) ->
+              if at >= after then acc
+              else
+                let pq = u8 d at / 16 in
+                let tq = u8 d at - (u8 d at / 16) * 16 in
+                let vals = _dezigzag d (at + 1) (pq == 1) in
+                tabs (at + 1 + (if pq == 1 then 128 else 64))
+                     (list_append acc (Cons ((tq, vals), Nil))) in
+            go after (jhead { w = h.w, h = h.h, ncomp = h.ncomp, comps = h.comps,
+                              qt = tabs body h.qt, restart = h.restart })
+          else if m == 221 then
+            go after (jhead { w = h.w, h = h.h, ncomp = h.ncomp, comps = h.comps,
+                              qt = h.qt, restart = u16 d body })
+          else go after h in
+    go 0 (jhead { w = 0, h = 0, ncomp = 0, comps = Nil, qt = Nil, restart = 0 });
+
+  let render_head = fn (h: jhead) ->
+    let c1 = fn (c: jcomp) ->
+      str_of_int c.id ++ "," ++ str_of_int c.hs ++ "," ++ str_of_int c.vs ++ "," ++ str_of_int c.tq in
+    let q1 = fn (t: (int * int list)) ->
+      let (k, vs) = t in
+      str_of_int k ++ ": " ++ str_join " " (list_map vs str_of_int) in
+    str_of_int h.w ++ " " ++ str_of_int h.h ++ " " ++ str_of_int h.ncomp
+    ++ " | " ++ str_join " ; " (list_map h.comps c1)
+    ++ " | " ++ str_join " | " (list_map h.qt q1);
+
+  let load = fn (path: str) -> header (bytes_of_vec (read_file_bytes path));
+}
