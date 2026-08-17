@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The six test JPEGs, made of flat 8x8 blocks.
+"""The seven test JPEGs, made of flat 16x16 blocks.
 
 Flat because a block of one colour has only a DC coefficient, and a flat block comes out identical in
 every correct decoder — so these can be compared with no tolerance while a general image cannot. See
@@ -24,6 +24,14 @@ of the six were added AFTER the gate was poisoned and let the poison through:
               looks for the next FF simply resynchronises on the next real marker. It is only when the
               payload contains markers of its own that landing inside it is fatal: the reader then
               answers with the THUMBNAIL's size and tables, confidently and completely wrongly.
+    flatq1    the same eight colours at quality 1, which is here for one reason and it is a small one
+              worth stating. The inverse DCT of a DC-only block is that coefficient divided by eight
+              and libjpeg rounds that division rather than flooring it — and at quality 95 the two are
+              never different, because the quantised DC times its quantiser lands exactly on a
+              multiple of eight for every one of the 256 grey levels. It stays exact across all 100
+              quality settings until quality 1, where the quantiser is 255 and black comes out as
+              -1020: floor says 0, rounding says 1. One value in one file, and without it the gate
+              cannot tell a rounding decoder from a truncating one.
     flatdri   a restart interval, so there is a DRI segment to step over. Its VALUE is not compared —
               Pillow does not expose it — but everything after it is, so a mishandled DRI shows up as
               the whole rest of the header being read from the wrong offset.
@@ -41,23 +49,29 @@ COLS = [(255, 0, 0), (0, 128, 0), (0, 0, 255), (255, 255, 255),
 def main(d):
     from PIL import Image
     os.makedirs(d, exist_ok=True)
-    im = Image.new("RGB", (32, 16))
+    # 16x16 colour blocks, not 8x8, and the reason is subsampling. A DCT block is 8x8 of its OWN
+    # component's samples, so at 4:2:0 an 8x8 chroma block covers 16x16 image pixels — with 8x8
+    # colour blocks the chroma blocks would straddle four colours and stop being flat, which is the
+    # whole premise. At 16x16 every DCT block of every component, at every subsampling here, lies
+    # inside one colour.
+    im = Image.new("RGB", (64, 32))
     for by in range(2):
         for bx in range(4):
             c = COLS[by * 4 + bx]
-            for y in range(8):
-                for x in range(8):
-                    im.putpixel((bx * 8 + x, by * 8 + y), c)
+            for y in range(16):
+                for x in range(16):
+                    im.putpixel((bx * 16 + x, by * 16 + y), c)
     im.save(os.path.join(d, "flat444.jpg"), quality=95, subsampling=0)
     im.save(os.path.join(d, "flat422.jpg"), quality=95, subsampling=1)
     im.save(os.path.join(d, "flat420.jpg"), quality=95, subsampling=2)
     im.convert("L").save(os.path.join(d, "flatgray.jpg"), quality=95)
     thumb = io.BytesIO()
-    im.resize((8, 8)).save(thumb, "JPEG", quality=40, subsampling=0)
+    im.resize((16, 16)).save(thumb, "JPEG", quality=40, subsampling=0)
     im.save(os.path.join(d, "flatexif.jpg"), quality=95, subsampling=0,
             exif=b"Exif\x00\x00" + thumb.getvalue())
     im.save(os.path.join(d, "flatdri.jpg"), quality=95, subsampling=0, restart_marker_blocks=2)
-    print("gen_jpeg_images: 6 written")
+    im.save(os.path.join(d, "flatq1.jpg"), quality=1, subsampling=0)
+    print("gen_jpeg_images: 7 written")
     return 0
 
 

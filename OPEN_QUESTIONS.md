@@ -162,11 +162,28 @@ encoder — but a file this repository writes is not an oracle for a reader this
 would have to come with something independent that agrees it is what it claims to be. Until then the
 honest form is this note and not a passing test.
 
-## Q-9 — the JPEG scan is not read at all
+## Q-9 — the JPEG AC path and the inverse DCT
 
-`src/jpeg.mere` stops at SOS. Huffman decode, dequantisation, the DC predictor, the IDCT, chroma
-upsampling and colour conversion are all still to come, and the images in `test/data/jpeg` are already
-flat-blocked so that gate can be exact when it is written: a block of one colour has only a DC
-coefficient and decodes bit-identically everywhere, while a general image cannot be compared exactly
-because no two IDCTs round alike and a tolerance would hide a real error behind a difference of method.
+The scan is decoded and every pixel of all seven test images matches libjpeg exactly. What is NOT
+exercised is the half of the entropy decoder that only fires on a block with detail in it. Every image
+in `test/data/jpeg` is flat 16x16 blocks, so every AC coefficient is zero, so the only AC symbol that
+ever occurs is end-of-block: the run-length pairs and the ZRL escape are written and never run. The
+same goes for the inverse DCT — the DC-only shortcut is what runs, and the transform proper does not
+exist yet.
+
+That is deliberate, because it is what makes the comparison exact. A general image cannot be compared
+to another decoder bit for bit: the standard requires only that two inverse DCTs agree within one, and
+a tolerance would hide a real error behind a difference of method.
+
+**What would close it without giving up exactness** is implementing libjpeg's own integer transform
+rather than a transform. It is a specified algorithm with specified constants, so it has one answer,
+and matching it would turn any image at all into an exact test — including one with detail, which
+would exercise the AC path. That is a larger claim than the upsampler's ("the same as libjpeg") only
+in scope, not in kind.
+
+**A cheaper partial answer**: a wrong AC decode is not a small error. The coefficients are a bit
+stream with no framing, so mis-reading one run length shifts everything after it and the picture
+becomes noise, not a slightly different picture. So a general image compared with a tolerance of one
+would still be a strong test of the entropy decoder even though it is a weak test of the transform.
+That is worth having before the transform is worth writing.
 

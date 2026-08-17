@@ -16,7 +16,7 @@ That covers the markers, the Huffman decode, dequantisation, the DC predictor, c
 the colour conversion. It does NOT cover the AC path or the IDCT's accuracy, which need a different
 gate and a different claim.
 
-Six files. See `gen_jpeg_images.py` for what each one punishes; three of them exist only because the
+Seven files. See `gen_jpeg_images.py` for what each one punishes; three of them exist only because the
 gate was poisoned and let the poison through.
 
 The DRI value is NOT in the line, because Pillow does not expose the restart interval and inventing a
@@ -32,8 +32,8 @@ Needs Pillow. Maintenance command, not a gate — the answers are committed.
 """
 import os, sys
 
-FILES = ["flat444.jpg", "flat422.jpg", "flat420.jpg",
-         "flatgray.jpg", "flatexif.jpg", "flatdri.jpg"]
+FILES = ["flat444.jpg", "flat422.jpg", "flat420.jpg", "flatgray.jpg",
+         "flatexif.jpg", "flatdri.jpg", "flatq1.jpg"]
 
 
 def main(d):

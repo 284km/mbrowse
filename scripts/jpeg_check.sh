@@ -93,7 +93,7 @@ while IFS= read -r want; do
 done < "$DATA/headers.expected"
 
 echo "jpeg headers: $pass passed, $fail failed, of $total files"
-EXPECT_PASS=${EXPECT_PASS:-6}
+EXPECT_PASS=${EXPECT_PASS:-7}
 if [ "$pass" -ne "$EXPECT_PASS" ]; then
   echo "jpeg headers: expected exactly $EXPECT_PASS passing, got $pass"
   exit 1
