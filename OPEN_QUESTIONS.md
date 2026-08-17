@@ -270,6 +270,17 @@ is `content PLUS edge`. The inline pass is handed the piece's children, not the 
 content out from zero and the element's own border and padding are simply not in those numbers. With
 `or`, an empty fragment got its edge right and a full one lost it. Four more pairs, 61 to 65.
 
+Two more, 65 to 67: a fragment in a `direction: rtl` context belongs at the RIGHT. The edges already
+swapped — `start_edge` and `end_edge` consult the direction — but the fragment's own x did not, so a
+right-to-left fragment was painted at the left margin against a reference at the right. Swapping which
+side an edge is on and swapping which side the box is on are two changes, and only one had been made.
+
+**Four pairs left, and they are one shape**: `insert-012` and `insert-016`, each compared in both
+directions, both an inline element that ENDS with a block child. `<div style="display: inline; border:
+2px solid">One<div>Two</div></div>` against the same thing hand-split, where the hand-written version
+puts an empty `border-left: none` piece after the block. So the question is what a fragment that exists
+only to carry the end edge looks like, and it is not answered yet.
+
 It was fourteen of the nineteen, up from four: `block-in-inline-empty-*` and `block-in-inline-insert-012`
 through `-016`. It went from four to fourteen the moment inline boxes started drawing borders at all,
 which is the same shape as Q-13 — two pages that both omit a border agree about it perfectly, and

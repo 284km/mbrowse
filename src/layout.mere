@@ -702,7 +702,11 @@ module Layout {
                 cw2 + edge in
               let frag =
                 if ph <= 0 && edge <= 0 then Nil
-                else Cons (box { tag = "", x = 0, y = yy - st.bt, w = fx1, h = ph + st.bt + st.bb,
+                // At the right in a right-to-left context, which is where the line starts there. The
+                // edges already swap; the fragment's own position does too, and putting it at zero put
+                // a right-to-left fragment at the left margin with the reference at the right.
+                else Cons (box { tag = "", x = if piece_rtl then cbw - fx1 else 0,
+                                 y = yy - st.bt, w = fx1, h = ph + st.bt + st.bb,
                                  pinned = false, pinx = false, cp = 0, fg = 0, bg = st.bg, fs = 0,
                                  layer = st.layer, bc = st.bc,
                                  bt = st.bt, bb = st.bb,
