@@ -40,17 +40,28 @@
 # cross-reference is `scripts/reftest_why.py` and it needs `REFTEST_LIST=path` from this gate and
 # `LAYOUT_LIST=path` from the layout gate; both write a list instead of a number.
 #
-# **61 of 76 pass, and the 15 that fail have now been read rather than guessed at.**
+# **57 of 76 pass, and the number went DOWN from 66 for a reason with a name.**
+#
+# The history is worth keeping because it is the same lesson three times. 61 with the denominator
+# fixed. 66 once the painter walked the box list in CSS 2.1 Appendix E's order instead of document
+# order. Then 57, when inline boxes were given the background and border they had never had — because
+# an inline box SPLIT by a block child is several fragments and its border belongs to them severally,
+# and this draws one border around one box. Fourteen pairs now say so where four did before.
+#
+# Nothing about that is a step backwards. Two pages that both omit a border agree about it perfectly;
+# drawing it correctly in the simple case is what makes the split case visible. Q-15 owns those 14.
+#
+# **The 19 that fail:**
 #
 #     5   have a side that already fails the layout gate — a layout failure seen from the other side,
 #         and nothing more to say about them here.
-#     6   are PAINTING ORDER. `inline-block-zorder-*` and `inline-table-zorder-*`, and the specification
-#         section they link to is called `#painting-order`. An inline-block with a green background sits
-#         in a box that a later block with a red background overlaps by a negative margin, and the
-#         browser shows GREEN: CSS 2.1 Appendix E paints all block-level backgrounds first and
-#         inline-level in-flow content afterwards, so document order is not paint order. This painter
-#         walks the box list once, in document order, and the red wins.
-#     4   are BORDER FRAGMENTS. `block-in-inline-insert-012` and `-016` compare two references that say
+#     0   are painting order any more. That was six, and Appendix E's order fixed five of them; the
+#         sixth was not paint order at all — an inline box's `background: green` painted NOTHING,
+#         because the inline box was built with no background, no border and the block-level layer. A
+#         missing feature that looked exactly like a wrong order, because only one of the two
+#         overlapping boxes was ever drawn.
+#    14   are BORDER FRAGMENTS. `block-in-inline-empty-*` and `block-in-inline-insert-012` to `-016`
+#         compare two references that say
 #         the same rendering two ways: one `display: inline` box containing block children, and the
 #         same thing written out already split, with `border-right: none` on the first piece and
 #         `border-left: none` on the last. An inline box broken by a block child becomes several
@@ -84,8 +95,13 @@ total=0; pass=0; fail=0; shown=0
 while IFS='	' read -r a b; do
   [ -n "$a" ] || continue
   total=$((total + 1))
-  "$MERE" "$ROOT/test/paint_cases.mere" "$DATA/$a" > "$T/a.txt" 2>/dev/null || true
-  "$MERE" "$ROOT/test/paint_cases.mere" "$DATA/$b" > "$T/b.txt" 2>/dev/null || true
+  # Both at the SAME height — the taller of the two root boxes — because a page painted at its own
+  # height has already discarded any ink below it, and an inline box taller than its line puts ink
+  # there. Padding the shorter list with white afterwards cannot put back what was never drawn.
+  ha=$(head -1 "$DATA/${a%.html}.expected" 2>/dev/null | cut -f5); hb=$(head -1 "$DATA/${b%.html}.expected" 2>/dev/null | cut -f5)
+  ph=${ha:-1}; [ "${hb:-1}" -gt "$ph" ] 2>/dev/null && ph=$hb
+  "$MERE" "$ROOT/test/paint_cases.mere" "$DATA/$a" "$ph" > "$T/a.txt" 2>/dev/null || true
+  "$MERE" "$ROOT/test/paint_cases.mere" "$DATA/$b" "$ph" > "$T/b.txt" 2>/dev/null || true
   sed '$d' "$T/a.txt" > "$T/a2.txt"; sed '$d' "$T/b.txt" > "$T/b2.txt"
   # A reftest compares a VIEWPORT, not a document. Two pages a suite calls identical can lay out to
   # different total heights — the browser reports 216 and 136 for one of these pairs and still renders
@@ -110,7 +126,7 @@ while IFS='	' read -r a b; do
 done < "$T/pairs.txt"
 
 echo "reftests: $pass passed, $fail failed, of $total pairs"
-EXPECT_PASS=${EXPECT_PASS:-61}
+EXPECT_PASS=${EXPECT_PASS:-57}
 if [ "$pass" -ne "$EXPECT_PASS" ]; then
   echo "reftests: expected exactly $EXPECT_PASS passing, got $pass — raise EXPECT_PASS if this is the painter growing"
   exit 1

@@ -162,6 +162,12 @@ module Paint {
 
   let paint = fn (f: font) -> fn (bs: box list) -> fn (w: int) -> fn (h: int) ->
     let v = _blank (w * h) in
+    // One box's background and then its border, which have to stay together: a background belongs
+    // behind its own border and in front of nothing else.
+    let _fill_one = fn (b: box) ->
+      let _ = if b.cp == 0 && b.bg >= 0 then _fill v w h b.x b.y b.w b.h b.bg else 0 in
+      _border v w h b in
+
     let rec backs = fn (l: box list) ->
       match l with
       | Nil -> 0
@@ -185,9 +191,39 @@ module Paint {
       match l with
       | Nil -> 0
       | Cons (b, r) -> let _ = _border v w h b in borders r in
-    let _ = backs bs in
-    let _ = borders bs in
-    let _ = inks bs in
+    // CSS 2.1 Appendix E, which is a LIST and not document order.
+    //
+    // Steps 3 and 4 first: every block-level background and border, then every float's. Then steps
+    // 5 to 7 in ONE pass over the document — each inline-level box's background and border, and every
+    // box's ink, interleaved in tree order.
+    //
+    // The interleaving is the part that had to be measured rather than reasoned. Doing all inline-level
+    // backgrounds and then all the ink is a different picture: an inline-block's red text lands on top
+    // of the green background of an inline that comes after it, where the browser has the green
+    // covering both. Appendix E's step 7 is per box — its background, its border, its text — and not
+    // per kind of thing.
+    //
+    // Positioned boxes are NOT separated out. Appendix E puts them after all of this and this does not,
+    // because nothing has measured what that costs or gains, and moving something on a guess is how the
+    // last set of failures got misattributed.
+    let rec blocks = fn (l: box list) -> fn (n: int) ->
+      match l with
+      | Nil -> 0
+      | Cons (b, r) ->
+        let _ = if b.layer == n && b.cp == 0 then (let _ = _fill_one b in 0) else 0 in
+        blocks r n in
+    let rec inline_and_ink = fn (l: box list) ->
+      match l with
+      | Nil -> 0
+      | Cons (b, r) ->
+        let _ = if b.cp == 0 && b.layer == 5 then (let _ = _fill_one b in 0) else 0 in
+        let _ = if b.cp != 0 then _glyph v w h f b
+                else if b.src != "" then _image v w h b
+                else 0 in
+        inline_and_ink r in
+    let _ = blocks bs 3 in
+    let _ = blocks bs 4 in
+    let _ = inline_and_ink bs in
     v;
 
   // Run-length rows: `count×rrggbb`, space separated, one line per row.

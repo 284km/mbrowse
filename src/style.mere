@@ -58,6 +58,15 @@ type sty = {
   mt: int, mr: int, mb: int, ml: int,
   pt: int, pr: int, pb: int, pl: int,
   bt: int, br: int, bb: int, bl: int,
+  // Which pass of the painter this element's boxes belong to — CSS 2.1 Appendix E's own step numbers,
+  // 3 for block-level in flow, 4 for a float, 5 for inline-level in flow.
+  //
+  // **It INHERITS, and that is the whole reason it lives in the style rather than being read off the
+  // box.** Appendix E's step 7 is not "inline-level boxes", it is everything inside one: a `display:
+  // block` box inside an inline-block paints with the inline-level content, not with the blocks, so a
+  // later block cannot cover it. Computing it from the element's own display alone gets that backwards,
+  // and the corpus has a document that says so.
+  layer: int,
   // The colour the border is drawn in. ONE colour and not four: CSS allows a colour per side, no
   // document here uses one, and four fields that are always equal are four chances to set three of
   // them. Its initial value is `currentColor` — the element's own text colour — which is why it
@@ -638,7 +647,7 @@ module Style {
           ti_px = 0, ti_pct = 0 - 1, color = 0, bg = 0 - 1,
           left = 0 - 1, top = 0 - 1, w = 0 - 1, h = 0 - 1, w_pct = 0 - 1, h_pct = 0 - 1,
           mt = 0, mr = 0, mb = 0, ml = 0, pt = 0, pr = 0, pb = 0, pl = 0,
-          bt = 0, br = 0, bb = 0, bl = 0, bc = 0 };
+          bt = 0, br = 0, bb = 0, bl = 0, bc = 0, layer = 3 };
 
   // `pst` is the PARENT's computed style, and it is what makes this inheritance rather than a lookup.
   let resolve = fn (hs: hit list) -> fn (tag: str) -> fn (pst: sty) ->
@@ -851,6 +860,16 @@ module Style {
       // The strongest of the four ways to say it, then `currentColor`. The shorthands carry a colour
       // among their other words, so the whole declaration is offered to `color_of`, which returns the
       // fallback for anything it does not recognise — a width and a style are exactly that.
+      // Inherited when the parent is already inline-level, because everything inside an inline-level
+      // box paints with it. Otherwise from this element's own role.
+      layer = if pst.layer == 5 then 5
+              else if flo0 == "left" || flo0 == "right" then 4
+              // Block-LEVEL, which `inline-block` is not: it takes a place on a line. The same list as
+              // `Layout._is_block_level`, and the duplication is deliberate — this module cannot see
+              // that one, and a `layer` resolved in the cascade is what makes it inherit.
+              else if disp == "block" || disp == "table" || disp == "table-cell" || disp == "table-row"
+                      || disp == "table-row-group" || disp == "table-caption" then 3
+              else 5,
       bc =
         let one = fn (prop: str) -> to_lower (get prop) in
         let base = color_of (get "color") pst.color in

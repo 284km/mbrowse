@@ -229,27 +229,37 @@ other thing that looks at ink is a reftest, and a reftest comparing two pages th
 agrees with itself. Attributing the 48 reftest failures to layout while this was true would have been
 attributing them to the wrong thing.
 
-## Q-14 — document order is not painting order
+## Q-14 — document order is not painting order — CLOSED
 
-Six of the fifteen failing reftest pairs are this, and they name themselves: `inline-block-zorder-*`
-and `inline-table-zorder-*` link to the specification section called `#painting-order`.
+`src/paint.mere` walks the box list in CSS 2.1 Appendix E's order: every block-level background and
+border, then every float's, then one pass in tree order over the rest — each inline-level box's
+background and border, and every box's ink, interleaved.
 
-The shape is one document: an inline-block with a green background, and a following block with a red
-background pulled up over it by a negative margin. The browser shows GREEN. CSS 2.1 Appendix E paints
-all block-level backgrounds first and inline-level in-flow content afterwards, so a later block cannot
-cover an earlier inline-block. `src/paint.mere` walks the box list once, in document order, and the
-red wins.
+Two things had to be right and only one of them was obvious.
 
-What it needs is the painter walking the list in passes rather than once — block backgrounds, then
-floats, then inline-level content, then text — which is what Appendix E is a list of. The box list
-already carries what is needed to tell them apart, since layout knows each box's `display`; the box
-does not carry it yet.
+**The layer INHERITS.** Appendix E's step 7 is not "inline-level boxes", it is everything inside one: a
+`display: block` box inside an inline-block paints with the inline-level content, so a later block
+cannot cover it. Computing the layer from the element's own display gets that backwards, which is why
+it is resolved in the cascade — inheritance is the mechanism, and the cascade is where inheritance is.
 
-None of this was visible until borders were drawn. Two pages that both omit a border agree about it.
+**The backgrounds and the ink interleave.** All inline-level backgrounds and then all the ink is a
+different picture: an inline-block's red text lands on top of the green background of an inline that
+comes after it, where the browser has the green covering both. Step 7 is per box — its background, its
+border, its text — not per kind of thing. That one was found by measuring, not by reading.
+
+**And one of the six was not paint order at all.** An inline box's `background: green` painted nothing,
+because the inline box was constructed with no background, no border and the block-level layer. A
+missing feature can look exactly like a wrong order when only one of two overlapping boxes is ever
+drawn. Painting them cost 10 reftest pairs, all of them Q-15 — see below.
 
 ## Q-15 — an inline box split by a block gets its border split too
 
-Four of the fifteen are `block-in-inline-insert-012` and `-016`, and both compare two references that
+**Fourteen of the nineteen**, up from four: `block-in-inline-empty-*` and `block-in-inline-insert-012`
+through `-016`. It went from four to fourteen the moment inline boxes started drawing borders at all,
+which is the same shape as Q-13 — two pages that both omit a border agree about it perfectly, and
+getting the simple case right is what makes the split case visible.
+
+They compare two references that
 say the same rendering two different ways: one `display: inline` element containing block children,
 and the same thing written out already split, with `border-right: none` on the first piece and
 `border-left: none` on the last.
@@ -260,4 +270,19 @@ on the last, and neither in between. The engine already splits these boxes for l
 gate passes on them — and paints one border around one box.
 
 Same note as Q-14: invisible until borders were drawn.
+
+**Where the change goes**, read out of the code rather than guessed: the splitter in `src/layout.mere`
+already walks the fragments — `pieces` knows each one's `y`, its height `ph`, whether it is the first,
+and whether a block follows it, and it already computes `start_edge` and `end_edge` and gives middle
+fragments neither. What it does not do is emit a box for a fragment. The element's own box is the
+UNION and deliberately carries no border at all, which is why nothing is drawn twice today.
+
+So: for each fragment, an anonymous box at `y = yy` of height `ph`, with `bt` and `bb` always, `bl`
+only on the first and `br` only on the last. The one number not already in hand is the fragment's right
+edge, and it is derivable from what is: the largest `x + w` among the boxes `_inline` returned for that
+piece, plus the edge. An empty fragment that exists only because the element has an edge on that side
+is as wide as the edge, which is the case the inline path already produces a box for.
+
+Anonymous boxes are the same mechanism the image content box uses, so the box-sequence gate is
+unaffected: a box with no tag is not an element.
 

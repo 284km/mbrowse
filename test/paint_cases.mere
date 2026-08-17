@@ -16,6 +16,13 @@ let bs = Layout.boxes_in dir "test/data/font/NotoSans-Regular.ttf" (Tree.build (
 // the page is 97 is six times the work and put a single document over a five-minute CPU limit. The
 // reftest harness pads the shorter of two row lists with white instead, which is the same comparison
 // and costs nothing.
-let h = match bs with Cons (b, _) -> (if b.h < 1 then 1 else b.h) | Nil -> 1;
+// A second argument overrides it, and the reftests use that. Padding the shorter row list with white
+// instead is NOT equivalent: an inline box taller than its line hangs BELOW the root box, so a page
+// painted at its own root height has already thrown that ink away. One pair differs by exactly that —
+// root heights 32 and 38 with the ink reaching 34.
+let h =
+  match args () with
+  | Cons (_p, Cons (hs, _)) -> (let n = int_of_str hs in if n < 1 then 1 else n)
+  | _ -> match bs with Cons (b, _) -> (if b.h < 1 then 1 else b.h) | Nil -> 1;
 let _ = print (Paint.render (Paint.paint f bs 800 h) 800 h);
 0
