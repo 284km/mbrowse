@@ -177,3 +177,25 @@ What remains genuinely unimplemented and is NOT a gate hole: progressive JPEG (S
 coding, and 12-bit samples. None of them is baseline.
 That is worth having before the transform is worth writing.
 
+## Q-10 — `max-width` is not implemented
+
+`test/data/img/img-max-width.html` is the one document in `scripts/img_check.sh` that fails, and it
+fails because `max-width` does not exist in this engine rather than because images are wrong. The
+browser gives a 48-wide image with `max-width: 20px` a box of 20 by 13 — the 13 comes from the 20 by
+the intrinsic ratio, so the constraint is applied BEFORE the ratio, not after.
+
+It is not an image property. It applies to every box, so implementing it means a new property through
+the cascade and a new step in every width calculation, which is a change to the 228 documents next
+door and not to the 21 here. The document stays and the count is pinned at 20 so that implementing it
+makes this gate fail and say so.
+
+## Q-11 — a stated ratio under `border-box`
+
+When the page states one dimension of an image and `box-sizing: border-box`, the other dimension is
+derived from the intrinsic ratio — and CSS derives ratios against the CONTENT box, while the stated
+one is a border box. `src/layout.mere` treats both as being in the same terms, which is right in every
+document here and wrong in principle.
+
+No document in the corpus has that shape, so this is written down rather than guessed at. Adding one
+is cheap and is the right next step if anything in this area is touched.
+

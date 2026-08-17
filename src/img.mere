@@ -1,0 +1,69 @@
+// What an image contributes to layout, which is a width and a height and nothing else.
+//
+// A replaced element's box does not come from its content the way every other box does — there is no
+// text to measure and no children to stack. It comes from the file, and until the file has been read
+// the element has no size to give. That is why this is a separate question from styling: the cascade
+// can say `width: 24px` and win, but when it says nothing the answer is in the bytes.
+
+module Img {
+  // Chrome draws a placeholder for an image it could not load, and the placeholder has a size, and
+  // that size is in every layout the page produces. It is a user-agent decision and not a rule — the
+  // standard leaves it open, and other browsers show the alt text or nothing at all. It is here
+  // because the gate is Chrome, and it is named so that it reads as a borrowed number rather than a
+  // derived one.
+  let broken = 16;
+
+  // Joining a document-relative `src` onto the directory the document is in.
+  //
+  // This is path joining and NOT the URL parser in `contrib/url`, and the difference is worth stating
+  // rather than leaving to be discovered: a real browser resolves against a base URL, which handles
+  // schemes, authorities, query strings and percent-encoding. Every `src` in this corpus is a relative
+  // file path, so path joining answers all of them; the moment one is not, this is the wrong function
+  // and should say so by failing to find the file rather than by quietly finding the wrong one.
+  //
+  // `..` is NOT folded out, and it was, until poisoning showed that breaking the fold changed no
+  // answer: the filesystem resolves `a/../b` itself, and nothing here reports the joined path back to
+  // anyone. The fold was a second implementation of something already implemented, and it is gone.
+  let resolve = fn (base: str) -> fn (src: str) ->
+    if src == "" then ""
+    else if char_at src 0 == "/" || base == "" then src
+    else base ++ "/" ++ src;
+
+  // The intrinsic size, or nothing.
+  //
+  // Three outcomes and not two, because a browser distinguishes them and so does the box tree: an
+  // element with no `src` at all is not a broken image, it is an image that was never asked for, and
+  // it gets no box. Only a `src` that named something and failed gets the placeholder.
+  //
+  //   ("", _)          no src        -> 0 by 0
+  //   src, unreadable  broken        -> the placeholder
+  //   src, a JPEG      the frame's own width and height
+  let size = fn (base: str) -> fn (src: str) ->
+    if src == "" then (0, 0)
+    else
+      let p = resolve base src in
+      if not (file_exists p) then (broken, broken)
+      else
+        let d = Jpeg.load_bytes p in
+        // Only JPEG is read. Anything else is a file this cannot measure, which is the same situation
+        // as a file that is not there — an honest placeholder rather than a guessed size.
+        if bytes_len d < 4 || bytes_get d 0 != 255 || bytes_get d 1 != 216 then (broken, broken)
+        else
+          let h = Jpeg.header d in
+          if h.w <= 0 || h.h <= 0 then (broken, broken) else (h.w, h.h);
+
+  // The used content size, given what the file said and what the page said.
+  //
+  // The rule is the one place a replaced element differs from everything else in the box model, and it
+  // is worth writing as three cases rather than as a formula. When the page gives both, the file has
+  // no say. When it gives neither, the file decides both. When it gives exactly ONE, the other is not
+  // the intrinsic value — it is the given one scaled by the intrinsic RATIO, so an image asked to be
+  // twice as wide becomes twice as tall without being told to.
+  //
+  // `cw`/`ch` are what the cascade resolved, or -1 for "not stated".
+  let used = fn (iw: int) -> fn (ih: int) -> fn (cw: int) -> fn (ch: int) ->
+    if cw >= 0 && ch >= 0 then (cw, ch)
+    else if cw >= 0 then (cw, if iw <= 0 then 0 else (cw * ih + iw / 2) / iw)
+    else if ch >= 0 then ((if ih <= 0 then 0 else (ch * iw + ih / 2) / ih), ch)
+    else (iw, ih);
+}

@@ -50,11 +50,12 @@ def main(d):
         return 1
     tmp = tempfile.mkdtemp()
     # `../jpeg/x.jpg` from a document in `tmp` means `dirname(tmp)/jpeg/x.jpg`.
-    beside = os.path.join(os.path.dirname(tmp), "jpeg")
-    os.makedirs(beside, exist_ok=True)
-    for n in os.listdir(os.path.join(d, "..", "jpeg")):
-        if n.endswith(".jpg"):
-            shutil.copy(os.path.join(d, "..", "jpeg", n), os.path.join(beside, n))
+    for sub, ext in (("jpeg", ".jpg"), ("font", ".ttf")):
+        beside = os.path.join(os.path.dirname(tmp), sub)
+        os.makedirs(beside, exist_ok=True)
+        for n in os.listdir(os.path.join(d, "..", sub)):
+            if n.endswith(ext):
+                shutil.copy(os.path.join(d, "..", sub, n), os.path.join(beside, n))
     names = sorted(n for n in os.listdir(d) if n.endswith(".html"))
     wrote = failed = 0
     for n in names:

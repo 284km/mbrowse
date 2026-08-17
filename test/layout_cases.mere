@@ -8,5 +8,11 @@ import "../src/tree.mere";
 
 let path = match args () with Cons (p, _) -> p | Nil -> "";
 let src = str_join "\n" (read_lines path);
-let _ = print (Layout.render (Layout.boxes "test/data/font/NotoSans-Regular.ttf" (Tree.build (Html.tokenize src))));
+// The document's own directory, because a relative `src` is relative to the document and not to
+// wherever the harness was run from.
+let dir =
+  let ps = str_split path "/" in
+  if list_len ps <= 1 then "" else str_join "/" (list_take ps (list_len ps - 1));
+let _ = print (Layout.render (Layout.boxes_in dir "test/data/font/NotoSans-Regular.ttf"
+                                (Tree.build (Html.tokenize src))));
 0
