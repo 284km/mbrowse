@@ -278,8 +278,17 @@ side an edge is on and swapping which side the box is on are two changes, and on
 **Four pairs left, and they are one shape**: `insert-012` and `insert-016`, each compared in both
 directions, both an inline element that ENDS with a block child. `<div style="display: inline; border:
 2px solid">One<div>Two</div></div>` against the same thing hand-split, where the hand-written version
-puts an empty `border-left: none` piece after the block. So the question is what a fragment that exists
-only to carry the end edge looks like, and it is not answered yet.
+puts an empty `border-left: none` piece after the block. puts an empty `border-left: none` piece after the block.
+
+**And the disagreement is NOT the border**, which is worth knowing before anyone starts on it. Compared
+row by row, `insert-016` and its hand-split twin agree on every border row — the 33-pixel top band, the
+2-pixel vertical edge down the side, the 33-pixel bottom band, all identical. What differs is rows 14
+to 25, which are the GLYPH rows: the text inside the block child sits at different x in the two
+versions. So this is not "what does an end-edge fragment look like" after all; it is where a block child
+of a split inline puts its text, and the border work is done.
+
+Recorded from measurement and not carried forward as a guess, because the last time a taxonomy was
+carried forward without being re-derived it was wrong about 45 of 48 pairs.
 
 It was fourteen of the nineteen, up from four: `block-in-inline-empty-*` and `block-in-inline-insert-012`
 through `-016`. It went from four to fourteen the moment inline boxes started drawing borders at all,
