@@ -43,6 +43,10 @@ type box = { tag: str, x: int, y: int, w: int, h: int, pinned: bool, pinx: bool,
              // cannot be recovered from the box: the height is the font's line height at that size,
              // and rounding makes that a many-to-one map.
              fs: int,
+             // The border: one colour and the four widths, because a painter cannot get them from the
+             // geometry — the box it is given is the border box, and where the border ENDS is inside
+             // it by an amount only the style knows.
+             bc: int, bt: int, br: int, bb: int, bl: int,
              // The image to draw in it, already resolved against the document's directory, or "" for
              // a box that is not a replaced element. Resolved HERE and not in the painter because
              // resolving it needs to know where the document was, and the painter is given a list of
@@ -100,7 +104,7 @@ module Layout {
           w = w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
           mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = st.pr, pb = st.pb, pl = st.pl,
-          bt = st.bt, br = st.br, bb = st.bb, bl = st.bl };
+          bt = st.bt, br = st.br, bb = st.bb, bl = st.bl, bc = st.bc };
 
   // The same box list with an ANONYMOUS box added for the picture itself.
   //
@@ -118,8 +122,8 @@ module Layout {
       Cons (b, Cons (box { tag = "", x = b.x + st.bl + st.pl, y = b.y + st.bt + st.pt,
                            w = b.w - st.bl - st.br - st.pl - st.pr,
                            h = b.h - st.bt - st.bb - st.pt - st.pb,
-                           pinned = b.pinned, pinx = b.pinx, cp = 0, fg = 0, bg = 0 - 1,
-                           fs = 0, src = src }, rest));
+                           pinned = b.pinned, pinx = b.pinx, cp = 0, fg = 0, bg = 0 - 1, fs = 0,
+                           bc = 0, bt = 0, br = 0, bb = 0, bl = 0, src = src }, rest));
 
   // A replaced element's style with the size it actually took.
   //
@@ -136,7 +140,7 @@ module Layout {
           w = w, h = h, w_pct = st.w_pct, h_pct = st.h_pct,
           mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = st.pr, pb = st.pb, pl = st.pl,
-          bt = st.bt, br = st.br, bb = st.bb, bl = st.bl };
+          bt = st.bt, br = st.br, bb = st.bb, bl = st.bl, bc = st.bc };
 
   // The same style with a border on every side, for a cell in a table that carries `border`. HTML says
   // the attribute puts a border on the table AND one pixel on every cell in it, which is a statement
@@ -150,7 +154,7 @@ module Layout {
           w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
           mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = st.pr, pb = st.pb, pl = st.pl,
-          bt = w, br = w, bb = w, bl = w };
+          bt = w, br = w, bb = w, bl = w, bc = 0 };
 
   let _no_h_edges = fn (st: sty) ->
     sty { display = st.display, position = st.position, float_ = st.float_, spacing = st.spacing, spacing_v = st.spacing_v,
@@ -160,7 +164,7 @@ module Layout {
           w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
           mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = 0, pb = st.pb, pl = 0,
-          bt = st.bt, br = 0, bb = st.bb, bl = 0 };
+          bt = st.bt, br = 0, bb = st.bb, bl = 0, bc = 0 };
 
   // The line height a box's own style asks for, in pixels: a bare number times its own font size, a
   // length as it computed, and the font's own when it said `normal`. The number and the length are
@@ -180,7 +184,7 @@ module Layout {
       box { tag = b.tag, x = if b.pinx then b.x else b.x + dx,
             y = if b.pinned then b.y else b.y + dy,
             w = b.w, h = b.h, pinned = b.pinned, pinx = b.pinx, cp = b.cp,
-            fg = b.fg, bg = b.bg, fs = b.fs, src = b.src });
+            fg = b.fg, bg = b.bg, fs = b.fs, bc = b.bc, bt = b.bt, br = b.br, bb = b.bb, bl = b.bl, src = b.src });
 
   // Two adjoining margins collapse to one. Positive against positive is the larger; a negative
   // is added to the largest positive rather than compared with it, which is the standard's rule
@@ -693,7 +697,7 @@ module Layout {
             let (allbs, yend, ubot, uy) = pieces kids top true Nil top top in
             let sdx = if st.position == "relative" && st.left >= 0 then st.left else 0 in
             let sdy = if st.position == "relative" && st.top >= 0 then st.top else 0 in
-            let me = box { tag = to_lower tag, x = sdx, y = uy + sdy, w = cbw, h = ubot - uy, pinned = false, pinx = false, cp = 0, fg = 0, bg = 0 - 1, fs = 0, src = "" } in
+            let me = box { tag = to_lower tag, x = sdx, y = uy + sdy, w = cbw, h = ubot - uy, pinned = false, pinx = false, cp = 0, fg = 0, bg = 0 - 1, fs = 0, bc = 0, bt = 0, br = 0, bb = 0, bl = 0, src = "" } in
             _stack f docdir ua author pst ancestors rest cbw cbh yend 0 swallow_first
                    (if not seen then 0 else first_mt) true yend fs
                    (list_append (list_rev (_shift allbs sdx sdy)) (Cons (me, acc)))
@@ -775,7 +779,7 @@ module Layout {
                    else list_map bs0 (fn (b: box) ->
                           box { tag = b.tag, x = b.x, y = b.y, w = b.w, h = b.h,
                                 pinned = pin || b.pinned, pinx = pinx || b.pinx, cp = b.cp,
-                                fg = b.fg, bg = b.bg, fs = b.fs, src = b.src }) in
+                                fg = b.fg, bg = b.bg, fs = b.fs, bc = b.bc, bt = b.bt, br = b.br, bb = b.bb, bl = b.bl, src = b.src }) in
           _stack f docdir ua author pst ancestors rest cbw cbh y open_mb swallow_first first_mt seen bottom fs
                  (list_append (list_rev bs) acc)
         // A float is out of flow too, but not in the same way: it is placed at the containing block's
@@ -1071,7 +1075,7 @@ module Layout {
                           w = (u2 - u1 + f.upem / 2) / f.upem,
                           h = nat, pinned = false, pinx = false,
                           cp = Font.codepoint (nth_str cs i), fg = fgc, bg = 0 - 1,
-                          fs = fsz, src = "" }, acc)) in
+                          fs = fsz, bc = 0, bt = 0, br = 0, bb = 0, bl = 0, src = "" }, acc)) in
       go 0 Nil in
     let rec words = fn (ws: str list) -> fn (x: int) -> fn (line: int) -> fn (gap: bool) ->
                     fn (first: bool) -> fn (placed: bool) -> fn (nw: bool) -> fn (mx: int) ->
@@ -1221,7 +1225,7 @@ module Layout {
                                  - (Font.line_height f est.fs
                                     - Font.scale f (0 - f.descender) est.fs),
                              w = 0, h = Font.line_height f est.fs,
-                             pinned = false, pinx = false, cp = 0, fg = 0, bg = 0 - 1, fs = 0, src = "" }, acc))
+                             pinned = false, pinx = false, cp = 0, fg = 0, bg = 0 - 1, fs = 0, bc = 0, bt = 0, br = 0, bb = 0, bl = 0, src = "" }, acc))
             else
             if est.float_ == "left" || est.float_ == "right" then
               // Beside the line, not on it: it does not move the cursor, does not make the line exist, and
@@ -1232,7 +1236,7 @@ module Layout {
                 (list_append acc
                    (Cons (box { tag = to_lower tag, x = (fcur + f.upem / 2) / f.upem, y = 0,
                                 w = (fw + f.upem / 2) / f.upem, h = lh,
-                                pinned = false, pinx = false, cp = 0, fg = 0, bg = 0 - 1, fs = 0, src = "" }, Nil)))
+                                pinned = false, pinx = false, cp = 0, fg = 0, bg = 0 - 1, fs = 0, bc = 0, bt = 0, br = 0, bb = 0, bl = 0, src = "" }, Nil)))
             else
             if est.display == "inline-block" || est.display == "inline-table"
                || to_lower tag == "img" then
@@ -1407,7 +1411,7 @@ module Layout {
                                  h = if l2 == sl && x2 == sx && est.bt + est.bb == 0
                                         && not online && lead + trail == 0 then 0
                                      else fbot2 + est.pb + est.bb - fy,
-                                 pinned = false, pinx = false, cp = 0, fg = 0, bg = 0 - 1, fs = 0, src = "" }, acc)))
+                                 pinned = false, pinx = false, cp = 0, fg = 0, bg = 0 - 1, fs = 0, bc = 0, bt = 0, br = 0, bb = 0, bl = 0, src = "" }, acc)))
           | Comment _c ->
             walk rest x line gap saw placed online fcur (if x > maxx then x else maxx) nw wst hc acc
           | Doctype (_p, _q, _r) ->
@@ -1645,12 +1649,12 @@ module Layout {
                               | Cons (me, inside) ->
                                 Cons (box { tag = me.tag, x = x, y = ry, w = cw2, h = rh,
                                             pinned = false, pinx = false, cp = 0,
-                                            fg = me.fg, bg = me.bg, fs = me.fs, src = me.src },
+                                            fg = me.fg, bg = me.bg, fs = me.fs, bc = me.bc, bt = me.bt, br = me.br, bb = me.bb, bl = me.bl, src = me.src },
                                       _shift inside x (ry + vgap)) in
                 place more2 (match ws with Nil -> Nil | Cons (_w, rr) -> rr) (x + cw2 + sp)
                       (list_append a2 cell_bs) in
             let row_box = box { tag = to_lower rt, x = sp, y = ry, w = row_w, h = rh,
-                                pinned = false, pinx = false, cp = 0, fg = 0, bg = 0 - 1, fs = 0, src = "" } in
+                                pinned = false, pinx = false, cp = 0, fg = 0, bg = 0 - 1, fs = 0, bc = 0, bt = 0, br = 0, bb = 0, bl = 0, src = "" } in
             lay_rows rest (ry + rh + spv) 0
                      (place laid px_cols sp (list_append a (Cons (row_box, Nil)))) in
         let gy = y + spv in
@@ -1658,7 +1662,7 @@ module Layout {
         // The group's own box is placed before its rows, so it is spliced in rather than appended: its
         // height is not known until the rows are laid out, and document order does not wait for that.
         let gbox = box { tag = to_lower gt, x = sp, y = gy, w = row_w, h = gy2 - spv - gy,
-                         pinned = false, pinx = false, cp = 0, fg = 0, bg = 0 - 1, fs = 0, src = "" } in
+                         pinned = false, pinx = false, cp = 0, fg = 0, bg = 0 - 1, fs = 0, bc = 0, bt = 0, br = 0, bb = 0, bl = 0, src = "" } in
         lay rowex more (gy2 - spv) rem3
             (list_append acc (Cons (gbox, _drop acc a2))) in
     // A `<tfoot>` is laid out after the bodies whatever order it was written in, and a `<thead>` before
@@ -1870,7 +1874,8 @@ module Layout {
     // missing, a block with `margin: 10px` in a 100px RTL container sat at 10 where the browser puts it
     // at 0.
     let me = box { tag = to_lower tag, x = bx0, y = 0, w = bw_total, h = h, pinned = false,
-                   pinx = false, cp = 0, fg = st.color, bg = st.bg, fs = st.fs, src = "" } in
+                   pinx = false, cp = 0, fg = st.color, bg = st.bg, fs = st.fs,
+                   bc = st.bc, bt = st.bt, br = st.br, bb = st.bb, bl = st.bl, src = "" } in
     // A fifth answer: how far a float inside this box reached, when this box does NOT contain floats.
     // The float escapes upward until something does contain it — and the initial containing block always
     // does, which is why a page is as tall as a float that overflowed every box on the way out.

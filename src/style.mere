@@ -57,7 +57,12 @@ type sty = {
   w_pct: int, h_pct: int,              // -1 when not a percentage
   mt: int, mr: int, mb: int, ml: int,
   pt: int, pr: int, pb: int, pl: int,
-  bt: int, br: int, bb: int, bl: int
+  bt: int, br: int, bb: int, bl: int,
+  // The colour the border is drawn in. ONE colour and not four: CSS allows a colour per side, no
+  // document here uses one, and four fields that are always equal are four chances to set three of
+  // them. Its initial value is `currentColor` — the element's own text colour — which is why it
+  // falls back to `color` rather than to black.
+  bc: int
 };
 
 // A tag, an id and a class — and ONE type serves both a selector's compound and an element,
@@ -602,7 +607,7 @@ module Style {
           ti_px = 0, ti_pct = 0 - 1, color = 0, bg = 0 - 1,
           left = 0 - 1, top = 0 - 1, w = 0 - 1, h = 0 - 1, w_pct = 0 - 1, h_pct = 0 - 1,
           mt = 0, mr = 0, mb = 0, ml = 0, pt = 0, pr = 0, pb = 0, pl = 0,
-          bt = 0, br = 0, bb = 0, bl = 0 };
+          bt = 0, br = 0, bb = 0, bl = 0, bc = 0 };
 
   // `pst` is the PARENT's computed style, and it is what makes this inheritance rather than a lookup.
   let resolve = fn (hs: hit list) -> fn (tag: str) -> fn (pst: sty) ->
@@ -811,6 +816,17 @@ module Style {
       pr = plen (side "padding" "padding-right" 1),
       pb = plen (side "padding" "padding-bottom" 2),
       pl = plen (side "padding" "padding-left" 3),
-      bt = bw 0, br = bw 1, bb = bw 2, bl = bw 3
+      bt = bw 0, br = bw 1, bb = bw 2, bl = bw 3,
+      // The strongest of the four ways to say it, then `currentColor`. The shorthands carry a colour
+      // among their other words, so the whole declaration is offered to `color_of`, which returns the
+      // fallback for anything it does not recognise — a width and a style are exactly that.
+      bc =
+        let one = fn (prop: str) -> to_lower (get prop) in
+        let c4 = one "border-top-color" in
+        let c3 = one "border-color" in
+        let c2 = one "border-top" in
+        let c1 = one "border" in
+        let pickc = fn (v: str) -> fn (d: int) -> if v == "" then d else color_of v d in
+        pickc c4 (pickc c3 (pickc c2 (pickc c1 (color_of (get "color") pst.color))))
     };
 }

@@ -45,7 +45,7 @@ sh scripts/check.sh
 | layout geometry        | a browser's own rects          | 218 of 228 |
 | layout box sequence    | the same                       | 228 of 228 |
 | image boxes            | a browser's own rects          | 20 of 21   |
-| image ink              | a browser's own SCREENSHOT     | 8 of 12    |
+| image ink              | a browser's own SCREENSHOT     | 10 of 12   |
 | character positions    | a browser's `Range` rects      | 112 of 228 |
 | reftests               | no oracle — two of our own     | 61 of 109  |
 | font metrics           | a browser's `measureText`      | 29 of 29   |

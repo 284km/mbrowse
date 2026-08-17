@@ -18,19 +18,17 @@
 # with TEXT (glyph antialiasing has no unique answer) and documents that SCALE the image (resampling
 # has no unique answer either — see Q-12). What is left is placement and colour.
 #
-# **8 of the 12, and the four that fail are two known things, both pinned rather than excluded.**
+# **10 of the 12, and the two that fail are one deliberate difference, pinned rather than excluded.**
+# `img-missing` and `img-not-an-image`: the browser draws its broken-image icon and this does not. That
+# is a user-agent decoration, not a rule — the standard leaves it open and other browsers show alt text
+# or nothing. Its SIZE is taken, because the size moves everything else on the page; its picture is
+# not, because it moves nothing. They stay in the corpus and the count is pinned so that drawing an
+# icon makes this gate say so, rather than a quietly excluded document never being looked at again.
 #
-#   img-border, img-border-box-auto   borders are not painted at all. Not an image problem — no box in
-#                                     this engine draws a border — and fixing it changes what the 109
-#                                     reftests look like too. Q-13.
-#   img-missing, img-not-an-image     the browser draws its broken-image icon and this does not. That
-#                                     is a user-agent decoration, not a rule: the standard leaves it
-#                                     open and other browsers show alt text or nothing. Its SIZE is
-#                                     taken, because the size moves everything else on the page; its
-#                                     picture is not, because it moves nothing.
-#
-# They stay in the corpus and the count is pinned so that painting a border or an icon makes this gate
-# fail and say so, rather than a quietly excluded document never being looked at again.
+# This gate started at 8 and the two it gained are why it was worth building. Nothing in this engine
+# drew a BORDER — not for images, not for anything — and nothing had said so, because the only other
+# thing that looks at ink is a reftest, and a reftest comparing two pages that both omit the border
+# agrees with itself. It took an outside party to notice a ring of missing pixels.
 #
 # **The picture goes in the CONTENT box, not the box the gate reports.** `getBoundingClientRect` gives
 # the border box, so every expectation in `test/data/img/*.expected` is a border box — and the picture
@@ -65,7 +63,7 @@ for e in "$DATA"/*.ink; do
 done
 
 echo "image ink: $pass of $total documents"
-EXPECT=${EXPECT:-8}
+EXPECT=${EXPECT:-10}
 if [ "$pass" -ne "$EXPECT" ]; then
   echo "image ink: expected exactly $EXPECT"
   exit 1

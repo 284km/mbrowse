@@ -211,16 +211,20 @@ options are the ones taken elsewhere in this repository: match a named implement
 exactly, or ask a weaker question that has one answer. Neither has been done, so the documents that
 scale are not in that gate and the nearest-pixel code is not checked by anything.
 
-## Q-13 — no box draws a border
+## Q-13 — no box draws a border — CLOSED
 
-`src/paint.mere` fills backgrounds and draws glyphs and images. It does not draw borders, and nothing
-had said so out loud until a browser screenshot was there to compare against: `img-border` and
-`img-border-box-auto` fail on the ring of border pixels and nothing else.
+`src/paint.mere` now draws one, as four bands rather than as a filled border box with the padding box
+painted over it: the second version paints over the element's own background, which was put down first
+and is a different colour. Four bands and not one inset because the widths ARE four, and `border-bottom`
+alone already makes them differ.
 
-This is not about images. No box in this engine draws a border, so this also changes what the 109
-reftests look like — some of the 48 failures may be exactly this. Worth doing before that list is
-analysed, because analysing it first would attribute failures to layout that are really this.
+The border colour is new in the cascade. Its initial value is `currentColor`, so it falls back to the
+element's own `color` rather than to black — which is why `border: 3px solid` with no colour named
+comes out the colour of the text. ONE colour and not four: CSS allows a colour per side, no document
+here uses one, and four fields that are always equal are three chances to set the wrong one.
 
-The pieces missing are on the box: a border colour and the four widths. The style has them; the box
-does not, and painting is a walk over boxes.
-
+**Why this was worth finding before the reftest failures were analysed**, which is what the earlier
+version of this note said: nothing in this engine drew a border, and nothing had said so. The only
+other thing that looks at ink is a reftest, and a reftest comparing two pages that both omit the border
+agrees with itself. Attributing the 48 reftest failures to layout while this was true would have been
+attributing them to the wrong thing.
