@@ -678,7 +678,37 @@ module Layout {
               let pn = if plines2 > 0 then plines2 else (if edge > 0 then 1 else 0) in
               let ph = pn * lh in
               let uy1 = if isfirst then (if ph > 0 then yy - st.bt else yy) else uy0 in
-              let acc3 = list_append acc2 (_shift pbs2 0 yy) in
+              // The FRAGMENT's own box, anonymous, carrying the part of the border that belongs to it.
+              //
+              // An inline box broken by a block child is several fragments and the border is divided
+              // among them: the start edge on the first, the end edge on the last, and neither in
+              // between. The element's own box is the UNION of the fragments and deliberately carries
+              // no border, so there is nothing here to draw twice.
+              //
+              // Its border box top is `yy - st.bt`, which is the same number the union's top is taken
+              // from two lines above, and its height is the line plus both horizontal edges — a
+              // browser reports 32 for a 22-pixel line inside a 5-pixel border.
+              let fx1 =
+                let rec widest = fn (l: box list) -> fn (m: int) ->
+                  match l with
+                  | Nil -> m
+                  | Cons (fb, fr) -> widest fr (if fb.x + fb.w > m then fb.x + fb.w else m) in
+                let cw2 = widest pbs2 0 in
+                if cw2 > 0 then cw2 else edge in
+              let frag =
+                if ph <= 0 && edge <= 0 then Nil
+                else Cons (box { tag = "", x = 0, y = yy - st.bt, w = fx1, h = ph + st.bt + st.bb,
+                                 pinned = false, pinx = false, cp = 0, fg = 0, bg = st.bg, fs = 0,
+                                 layer = st.layer, bc = st.bc,
+                                 bt = st.bt, bb = st.bb,
+                                 // The start edge on the first fragment and the end edge on the last,
+                                 // which side that is depending on the direction.
+                                 bl = if piece_rtl then (if has_blk || isfirst then 0 else st.bl)
+                                      else (if isfirst then st.bl else 0),
+                                 br = if piece_rtl then (if isfirst then st.br else 0)
+                                      else (if has_blk || isfirst then 0 else st.br),
+                                 src = "" }, Nil) in
+              let acc3 = list_append (list_append acc2 frag) (_shift pbs2 0 yy) in
               let y1 = yy + ph in
               let lastb1 = if ph > 0 then y1 else lastb in
               match blk with

@@ -254,7 +254,17 @@ drawn. Painting them cost 10 reftest pairs, all of them Q-15 — see below.
 
 ## Q-15 — an inline box split by a block gets its border split too
 
-**Fourteen of the nineteen**, up from four: `block-in-inline-empty-*` and `block-in-inline-insert-012`
+**Ten of the fifteen**, and a box per fragment is now emitted — an anonymous box at the fragment's own
+y, as tall as its line plus both horizontal edges, carrying the start edge only on the first fragment
+and the end edge only on the last. That recovered four pairs and cost none. The element's own box is
+still the union and still carries no border, so nothing is drawn twice.
+
+What the remaining ten disagree about is a width, not a structure: for one pair the split side paints a
+31-pixel border band and the hand-written side 33. Chrome says 29 for both, but that measurement was
+taken WITHOUT the vendored font injected and so cannot settle it — the same mistake as the first `<img>`
+corpus, made again. The next step is that comparison done properly.
+
+It was fourteen of the nineteen, up from four: `block-in-inline-empty-*` and `block-in-inline-insert-012`
 through `-016`. It went from four to fourteen the moment inline boxes started drawing borders at all,
 which is the same shape as Q-13 — two pages that both omit a border agree about it perfectly, and
 getting the simple case right is what makes the split case visible.

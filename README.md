@@ -47,7 +47,7 @@ sh scripts/check.sh
 | image boxes            | a browser's own rects          | 20 of 21   |
 | image ink              | a browser's own SCREENSHOT     | 10 of 12   |
 | character positions    | a browser's `Range` rects      | 112 of 228 |
-| reftests               | two of our own; the PAIRING from a browser | 57 of 76 |
+| reftests               | two of our own; the PAIRING from a browser | 61 of 76 |
 | font metrics           | a browser's `measureText`      | 29 of 29   |
 | glyph outlines, 5 ways | fontTools                      | exact      |
 | JPEG headers           | libjpeg, through Pillow        | 9 of 9     |
