@@ -16,6 +16,7 @@
 // need more and they will say so.
 
 import "layout.mere";
+import "jpeg.mere";
 import "font.mere";
 
 module Paint {
@@ -95,6 +96,41 @@ module Paint {
   // The whole page. Backgrounds first in document order, then the ink — not because the standard says
   // so in those words, but because every glyph in this list belongs to a box that is already in it,
   // and painting them interleaved would let a later box's background cover text that is inside it.
+  // An image's own pixels, into its content box.
+  //
+  // The box the painter is given is the BORDER box; the picture goes inside the padding and the
+  // border, which is where the layout put it and not where the box begins. Getting that wrong is
+  // invisible until something has padding.
+  //
+  // Scaling is nearest-neighbour, and that is a placeholder rather than a decision. A browser
+  // resamples, every browser resamples differently, and there is no exact answer to compare against —
+  // so an image drawn at anything other than its natural size cannot be gated the way this is gated.
+  // The corpus draws at natural size and says so; see OPEN_QUESTIONS Q-12.
+  let _image = fn (v: int Vec) -> fn (pw: int) -> fn (ph: int) -> fn (b: box) ->
+    if b.src == "" || not (file_exists b.src) then 0
+    else
+      let d = Jpeg.load_bytes b.src in
+      if bytes_len d < 4 || bytes_get d 0 != 255 || bytes_get d 1 != 216 then 0
+      else
+        let jh = Jpeg.header d in
+        let (px, _nz) = Jpeg.pixels jh d in
+        if jh.w <= 0 || jh.h <= 0 then 0
+        else
+          let rec go = fn (y: int) -> fn (x: int) ->
+            if y >= b.h then 0
+            else if x >= b.w then go (y + 1) 0
+            else
+              let dx = b.x + x in
+              let dy = b.y + y in
+              let sx = if b.w == jh.w then x else x * jh.w / b.w in
+              let sy = if b.h == jh.h then y else y * jh.h / b.h in
+              let _ = if dx >= 0 && dx < pw && dy >= 0 && dy < ph
+                         && sx >= 0 && sx < jh.w && sy >= 0 && sy < jh.h
+                      then (let _ = vec_set v (dy * pw + dx) (vec_get px (sy * jh.w + sx)) in 0)
+                      else 0 in
+              go y (x + 1) in
+          go 0 0;
+
   let paint = fn (f: font) -> fn (bs: box list) -> fn (w: int) -> fn (h: int) ->
     let v = _blank (w * h) in
     let rec backs = fn (l: box list) ->
@@ -107,7 +143,12 @@ module Paint {
       match l with
       | Nil -> 0
       | Cons (b, r) ->
-        let _ = if b.cp != 0 then _glyph v w h f b else 0 in
+        // An image is ink, not background: it goes down after every background and before the text,
+        // so a caption over a picture is on top of it and the picture is on top of whatever fills the
+        // box behind it. Three layers, in the order a browser paints them.
+        let _ = if b.cp != 0 then _glyph v w h f b
+                else if b.src != "" then _image v w h b
+                else 0 in
         inks r in
     let _ = backs bs in
     let _ = inks bs in

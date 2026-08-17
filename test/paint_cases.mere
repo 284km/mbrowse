@@ -5,7 +5,11 @@ import "../src/tree.mere";
 let path = match args () with Cons (p, _) -> p | Nil -> "";
 let src = str_join "\n" (read_lines path);
 let f = Font.load "test/data/font/NotoSans-Regular.ttf";
-let bs = Layout.boxes "test/data/font/NotoSans-Regular.ttf" (Tree.build (Html.tokenize src));
+// The document's own directory, because a relative `src` is relative to the document.
+let dir =
+  let ps = str_split path "/" in
+  if list_len ps <= 1 then "" else str_join "/" (list_take ps (list_len ps - 1));
+let bs = Layout.boxes_in dir "test/data/font/NotoSans-Regular.ttf" (Tree.build (Html.tokenize src));
 // The page is as tall as the root box and as wide as the viewport, so two documents that lay out to
 // different heights are different pictures rather than one being cropped to the other.
 let h = match bs with Cons (b, _) -> (if b.h < 1 then 1 else b.h) | Nil -> 1;

@@ -1,0 +1,53 @@
+800xffffff
+800xffffff
+800xffffff
+800xffffff
+800xffffff
+800xffffff
+800xffffff
+800xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x4c4c4c 16x4b4b4b 16x1d1d1d 744xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+8xffffff 16x000000 16xc0c0c0 16xadadad 16x808080 728xffffff
+800xffffff
+800xffffff
+800xffffff
+800xffffff
+800xffffff
+800xffffff
+800xffffff
+800xffffff
+800xffffff
+800xffffff
+800xffffff
+800xffffff
+800xffffff

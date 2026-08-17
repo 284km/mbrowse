@@ -199,3 +199,28 @@ document here and wrong in principle.
 No document in the corpus has that shape, so this is written down rather than guessed at. Adding one
 is cheap and is the right next step if anything in this area is touched.
 
+## Q-12 — a scaled image has no exact answer
+
+`scripts/imgpaint_check.sh` compares painted pixels against a browser's screenshot exactly, and it can
+only do that for images drawn at their NATURAL size. An image drawn larger or smaller has to be
+resampled, every engine resamples differently, and the standard does not say how — the same shape as
+the JPEG upsampler and the inverse transform.
+
+`src/paint.mere` repeats the nearest pixel, which is the placeholder rather than the decision. The
+options are the ones taken elsewhere in this repository: match a named implementation and compare
+exactly, or ask a weaker question that has one answer. Neither has been done, so the documents that
+scale are not in that gate and the nearest-pixel code is not checked by anything.
+
+## Q-13 — no box draws a border
+
+`src/paint.mere` fills backgrounds and draws glyphs and images. It does not draw borders, and nothing
+had said so out loud until a browser screenshot was there to compare against: `img-border` and
+`img-border-box-auto` fail on the ring of border pixels and nothing else.
+
+This is not about images. No box in this engine draws a border, so this also changes what the 109
+reftests look like — some of the 48 failures may be exactly this. Worth doing before that list is
+analysed, because analysing it first would attribute failures to layout that are really this.
+
+The pieces missing are on the box: a border colour and the four widths. The style has them; the box
+does not, and painting is a walk over boxes.
+
