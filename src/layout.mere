@@ -717,7 +717,16 @@ module Layout {
                                  br = if piece_rtl then (if isfirst then st.br else 0)
                                       else (if has_blk || isfirst then 0 else st.br),
                                  src = "" }, Nil) in
-              let acc3 = list_append (list_append acc2 frag) (_shift pbs2 0 yy) in
+              // The content of the FIRST fragment starts AFTER the start edge, and this is the second
+              // consequence of the same fact as the width above: the inline pass is handed the piece's
+              // children and not the element, so it lays them out from zero. The width was corrected
+              // and the position was not — the browser puts the first glyph at 10 where this put it at
+              // 8, which is the element's own two pixels of border. One fact, two places.
+              //
+              // Left-to-right only. In a right-to-left context the content is right-aligned and the
+              // fragment box is placed from the right instead, which already agrees with the reference.
+              let cdx = if isfirst && not piece_rtl then start_edge else 0 in
+              let acc3 = list_append (list_append acc2 frag) (_shift pbs2 cdx yy) in
               let y1 = yy + ph in
               let lastb1 = if ph > 0 then y1 else lastb in
               match blk with

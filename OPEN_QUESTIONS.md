@@ -252,73 +252,28 @@ because the inline box was constructed with no background, no border and the blo
 missing feature can look exactly like a wrong order when only one of two overlapping boxes is ever
 drawn. Painting them cost 10 reftest pairs, all of them Q-15 — see below.
 
-## Q-15 — an inline box split by a block gets its border split too
+## Q-15 — an inline box split by a block gets its border split too — CLOSED
 
-**Ten of the fifteen**, and a box per fragment is now emitted — an anonymous box at the fragment's own
-y, as tall as its line plus both horizontal edges, carrying the start edge only on the first fragment
-and the end edge only on the last. That recovered four pairs and cost none. The element's own box is
-still the union and still carries no border, so nothing is drawn twice.
+A box per fragment: anonymous, at the fragment's own y, as tall as its line plus both horizontal edges,
+the start edge only on the first fragment and the end edge only on the last, placed from the right in a
+right-to-left context. All fourteen pairs pass. The element's own box is still the union and still
+carries no border, so nothing is drawn twice.
 
-That width disagreement is settled and fixed. With the vendored font injected, the browser paints 33 for
-both sides; the hand-written side was right all along and the split side was two pixels narrow. The
-earlier reading of 29 came from a screenshot taken WITHOUT injecting the font, and it was not merely
-inconclusive — it was wrong, and it pointed at the wrong side. **A measurement that skips the setup the
-real gate does can produce a confident wrong answer, not just no answer.**
+**It closed in four steps and three of them were the same mistake in different clothes.**
 
-The cause was one expression asking two questions: the fragment's width was `content OR edge` where it
-is `content PLUS edge`. The inline pass is handed the piece's children, not the element, so it lays the
-content out from zero and the element's own border and padding are simply not in those numbers. With
-`or`, an empty fragment got its edge right and a full one lost it. Four more pairs, 61 to 65.
+The fragment's width was `content OR edge` where it is `content PLUS edge`. Then the fragment's position
+ignored the direction while its edges already honoured it. Then the fragment's CONTENT needed moving
+right by the start edge too — the same fact as the width, with a second consequence that had not been
+acted on: the inline pass is handed the piece's children and not the element, so it lays them out from
+zero, and both the box's size and the content's position have to make that up.
 
-Two more, 65 to 67: a fragment in a `direction: rtl` context belongs at the RIGHT. The edges already
-swapped — `start_edge` and `end_edge` consult the direction — but the fragment's own x did not, so a
-right-to-left fragment was painted at the left margin against a reference at the right. Swapping which
-side an edge is on and swapping which side the box is on are two changes, and only one had been made.
+**And a reading taken by a shortcut was worse than no reading.** A browser screenshot said the border
+band was 29 pixels wide for both sides of a pair; taken with the vendored font injected it says 33, and
+the side the first number implicated had been right all along. The tell was available both times it
+happened in this arc — a value that should have differed did not.
 
-**Four pairs left, and they are one shape**: `insert-012` and `insert-016`, each compared in both
-directions, both an inline element that ENDS with a block child. `<div style="display: inline; border:
-2px solid">One<div>Two</div></div>` against the same thing hand-split, where the hand-written version
-puts an empty `border-left: none` piece after the block. puts an empty `border-left: none` piece after the block.
-
-**And the disagreement is NOT the border**, which is worth knowing before anyone starts on it. Compared
-row by row, `insert-016` and its hand-split twin agree on every border row — the 33-pixel top band, the
-2-pixel vertical edge down the side, the 33-pixel bottom band, all identical. What differs is rows 14
-to 25, which are the GLYPH rows: the text inside the block child sits at different x in the two
-versions. So this is not "what does an end-edge fragment look like" after all; it is where a block child
-of a split inline puts its text, and the border work is done.
-
-Recorded from measurement and not carried forward as a guess, because the last time a taxonomy was
-carried forward without being re-derived it was wrong about 45 of 48 pairs.
-
-It was fourteen of the nineteen, up from four: `block-in-inline-empty-*` and `block-in-inline-insert-012`
-through `-016`. It went from four to fourteen the moment inline boxes started drawing borders at all,
-which is the same shape as Q-13 — two pages that both omit a border agree about it perfectly, and
-getting the simple case right is what makes the split case visible.
-
-They compare two references that
-say the same rendering two different ways: one `display: inline` element containing block children,
-and the same thing written out already split, with `border-right: none` on the first piece and
-`border-left: none` on the last.
-
-That is what a browser does with it. An inline box broken by a block-level child becomes several
-FRAGMENTS, and the border is divided among them: the left edge on the first fragment, the right edge
-on the last, and neither in between. The engine already splits these boxes for layout — the geometry
-gate passes on them — and paints one border around one box.
-
-Same note as Q-14: invisible until borders were drawn.
-
-**Where the change goes**, read out of the code rather than guessed: the splitter in `src/layout.mere`
-already walks the fragments — `pieces` knows each one's `y`, its height `ph`, whether it is the first,
-and whether a block follows it, and it already computes `start_edge` and `end_edge` and gives middle
-fragments neither. What it does not do is emit a box for a fragment. The element's own box is the
-UNION and deliberately carries no border at all, which is why nothing is drawn twice today.
-
-So: for each fragment, an anonymous box at `y = yy` of height `ph`, with `bt` and `bb` always, `bl`
-only on the first and `br` only on the last. The one number not already in hand is the fragment's right
-edge, and it is derivable from what is: the largest `x + w` among the boxes `_inline` returned for that
-piece, plus the edge. An empty fragment that exists only because the element has an edge on that side
-is as wide as the edge, which is the case the inline path already produces a box for.
-
-Anonymous boxes are the same mechanism the image content box uses, so the box-sequence gate is
-unaffected: a box with no tag is not an element.
+**What settled which side was wrong** was not the reftest, which cannot say, and not a screenshot, which
+cannot be compared for glyphs. It was the character-position gate: the browser puts the first glyph at
+x=10 and this put it at 8. A reftest says two pages disagree; the gates with an outside oracle say which
+one is lying.
 
