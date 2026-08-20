@@ -1,0 +1,233 @@
+// src/fetch.mere — one HTTPS GET, and the whole of what came back.
+//
+// The pipeline below this file has always started from a path on disk. A9 starts it from a URL, and
+// the piece in between is this: connect, upgrade to TLS with the certificate verified, ask for one
+// resource, and hand back the bytes.
+//
+// **The bytes, not a string.** `mem_to_str` stops at the first zero byte and a page's images are
+// full of them, so the arena comes back through `mem_to_bytes` (mere v0.1.282) and stays `bytes`
+// until something that knows the encoding turns it into text. That is also the right shape for what
+// this feeds: `Sniff.of_bytes` wants bytes, because deciding the encoding is exactly the thing you
+// cannot do after decoding.
+//
+// **Reading once is a bug that passes.** `mhttps` reads a single 64 KB chunk, which is enough for a
+// status line and is what it says it does. A page is not, and neither is an image; TLS records
+// arrive when they arrive, so this loops until the peer says it is done. The loop distinguishes the
+// three negative codes `tcp_read` grew in v0.1.226 — `-1` is a deadline with nothing behind it and
+// is retried, `-2` and `-3` are the connection being gone and are not — because before those codes
+// existed the only way to tell a slow peer from a dead one was to time the call.
+//
+// TLS is an opt-in dependency of the C backend: declaring `tcp_starttls_verified` is what makes
+// `mere -c` emit the OpenSSL runtime, so anything importing this file links with `-lssl -lcrypto`
+// and anything that does not links with `-lm`. See `scripts/fetch_check.sh` for the build line.
+
+import "mere-url/host.mere";
+
+extern fn tcp_connect: str -> int -> int;
+extern fn tcp_starttls_verified: int -> str -> str -> int;
+extern fn tcp_set_timeout: int -> int -> int;
+extern fn tcp_write: int -> int -> int -> int;
+extern fn tcp_read: int -> int -> int -> int;
+extern fn tcp_close: int -> unit;
+extern fn mem_alloc: int -> int;
+extern fn mem_copy_str: int -> int -> str -> int;
+extern fn mem_copy_bytes: int -> int -> bytes -> int;
+extern fn mem_to_bytes: int -> int -> bytes;
+
+// `status` is 0 when nothing was answered at all, so a caller can tell "the server said 500" from
+// "there was no server" without a second channel. `err` says which, and is empty on success —
+// a failure has to be a value here for the same reason `Url.parse` returns an option: on Wasm a
+// `fail` sets a flag and returns a sentinel instead of unwinding, so the caller in between still
+// runs.
+type response = { status: int, headers: str, body: bytes, err: str };
+
+module Fetch {
+
+  let read_chunk = 65536;
+  let write_cap = 8192;
+
+  // There is no literal for it, and `bytes_of_str ""` would go through the string type on the way.
+  let empty = bytes_of_hex "";
+
+  // --- the response, once it is all here -----------------------------------
+
+  // CRLF CRLF, the one place in HTTP/1.1 where the framing changes hands. Scanned over bytes rather
+  // than over a decoded string, because the body after it may not be text in any encoding.
+  let _header_end = fn (b: bytes) ->
+    let n = bytes_len b in
+    let rec go = fn (i: int) ->
+      if i + 3 >= n then -1
+      else if bytes_get b i == 13 && bytes_get b (i + 1) == 10
+           && bytes_get b (i + 2) == 13 && bytes_get b (i + 3) == 10 then i + 4
+      else go (i + 1)
+    in go 0;
+
+  // Headers are ASCII by definition, so they can come out a byte at a time. The body cannot.
+  let _ascii = fn (b: bytes, from: int, upto: int) ->
+    let buf = strbuf_new () in
+    let rec go = fn (i: int) ->
+      if i >= upto then strbuf_to_str buf
+      else let _ = strbuf_push buf (chr (bytes_get b i)) in go (i + 1)
+    in go from;
+
+  // "HTTP/1.1 200 OK" -> 200. A response whose first line is not that shape gets 0, which is the
+  // same answer as no response at all — and that is right: a peer that answered something this
+  // cannot read is not a peer that answered.
+  let status_of = fn (head: str) ->
+    let parts = str_split head " " in
+    match parts with
+    | Cons (_v, Cons (code, _)) -> (let n = int_of_str code in if n < 100 then 0 else n)
+    | _ -> 0;
+
+  // Header lookup, case-insensitive because the standard says the name is. Returns "" for absent,
+  // which is distinguishable from a present-but-empty header only by a caller that cares; none here
+  // does, and that is written down rather than assumed.
+  let header = fn (headers: str, want: str) ->
+    let w = to_lower want in
+    let rec go = fn (ls) ->
+      match ls with
+      | Nil -> ""
+      | Cons (l, rest) ->
+        let i = str_index_of l ":" in
+        if i < 0 then go rest
+        else if str_eq (to_lower (str_trim (substring l 0 i))) w
+        // `substring` takes a start and an END, not a start and a length. Both readings are
+        // plausible and only one of them is checked by anything.
+        then str_trim (substring l (i + 1) (str_len l))
+        else go rest
+    in go (str_split (str_replace headers "\r\n" "\n") "\n");
+
+  // --- chunked ---------------------------------------------------------------
+  // `Transfer-Encoding: chunked` is not optional to support: it is what a server sends when it does
+  // not know the length in advance, which is most of them for anything generated. The size line is
+  // hex and may carry a `;ext` this ignores.
+  let _hex_val = fn (c: int) ->
+    if c >= 48 && c <= 57 then c - 48
+    else if c >= 97 && c <= 102 then c - 87
+    else if c >= 65 && c <= 70 then c - 55
+    else -1;
+
+  let rec _dechunk = fn (b: bytes, i: int, out: bytes) ->
+    let n = bytes_len b in
+    // the size, in hex, up to CR or `;`
+    let rec size = fn (j: int, acc: int, any: bool) ->
+      if j >= n then (-1, -1)
+      else
+        let c = bytes_get b j in
+        let v = _hex_val c in
+        if v >= 0 then size (j + 1) (acc * 16 + v) true
+        else if any && (c == 13 || c == 59) then (acc, j)
+        else (-1, -1)
+    in
+    // Destructured and then tested, rather than matched against `-1`: a negative literal is not a
+    // pattern here, and finding that out at the parser is cheaper than a pattern that never fires.
+    match size i 0 false with
+    | (len, j) ->
+      if len < 0 then out else
+      // skip to just past the CRLF that ends the size line
+      let rec eol = fn (k: int) ->
+        if k + 1 >= n then -1
+        else if bytes_get b k == 13 && bytes_get b (k + 1) == 10 then k + 2
+        else eol (k + 1)
+      in
+      let start = eol j in
+      if start < 0 then out
+      else if len == 0 then out
+      else if start + len > n then bytes_concat out (bytes_slice b start (n - start))
+      else _dechunk b (start + len + 2) (bytes_concat out (bytes_slice b start len));
+
+
+  // --- the socket ------------------------------------------------------------
+
+  // Nothing under `mem_copy_str` records how big an allocation was, so this is the only place the
+  // request's size is checked. It fails loudly: a truncated request is a protocol error the server
+  // reports as something else entirely, three layers from the cause.
+  let _send = fn (fd: int, sbuf: int, req: str) ->
+    if str_len req > write_cap then
+      fail ("fetch: a " ++ str_of_int (str_len req) ++ "-byte request does not fit the "
+            ++ str_of_int write_cap ++ "-byte write buffer")
+    else
+      let n = mem_copy_str sbuf 0 req in
+      let rec go = fn (sent: int) ->
+        if sent >= n then sent
+        else
+          let w = tcp_write fd (sbuf + sent) (n - sent) in
+          if w <= 0 then sent else go (sent + w)
+      in go 0;
+
+  // Everything, until the peer closes. `-1` is a deadline and is retried a bounded number of times;
+  // an unbounded retry here is how a gate hangs instead of failing, and a gate that hangs reports
+  // nothing while consuming the whole budget.
+  let _recv_all = fn (fd: int, rbuf: int) ->
+    let rec go = fn (acc: bytes, stalls: int) ->
+      let n = tcp_read fd rbuf read_chunk in
+      if n > 0 then go (bytes_concat acc (mem_to_bytes rbuf n)) 0
+      else if n == 0 then acc
+      else if n == -1 && stalls < 30 then go acc (stalls + 1)
+      else acc
+    in go empty 0;
+
+  // --- one request -----------------------------------------------------------
+  //
+  // `ca` is a PEM file to trust instead of the system store, which is what makes this gateable
+  // without a network: the check serves the corpus over TLS from a certificate it generated, and
+  // both this and curl are pointed at the same one. Passing "" uses the system trust store, which
+  // is what a real page needs.
+  //
+  // `Accept-Encoding: identity` is deliberate and is a scope decision, not an oversight: gzip is a
+  // separate dependency (mgz) and asking for what cannot be decoded would make every real page come
+  // back as noise that looks like a decoder bug.
+  let get = fn (u: url_parts, ca: str) ->
+    // `url_parts.port` is a STRING, and it is empty both when the URL named no port AND when it
+    // named the scheme's default — the Standard drops a default port on serialisation, so the two
+    // are the same URL and the parser stores them the same way. Asking `default_port` covers both.
+    //
+    // The host of an IPv6 URL is serialised WITH its brackets (`[::1]`), which is what belongs in a
+    // `Host:` header and is not what `getaddrinfo` takes. Stripped here, and only here.
+    let host =
+      if str_len u.host >= 2 && str_eq (substring u.host 0 1) "["
+      then substring u.host 1 (str_len u.host - 1) else u.host in
+    let ps = if str_len u.port > 0 then u.port else Url.default_port u.scheme in
+    let port = int_of_str ps in
+    let path =
+      let p = if str_len u.path == 0 then "/" else u.path in
+      if u.has_query then p ++ "?" ++ u.query else p
+    in
+    let fail_with = fn (e: str) -> response { status = 0, headers = "", body = empty, err = e } in
+    let fd = tcp_connect host port in
+    if fd < 0 then fail_with ("connect failed: " ++ host ++ ":" ++ str_of_int port)
+    else
+      // A read with no deadline is how this hangs on a peer that accepts and then says nothing.
+      let _ = tcp_set_timeout fd 15000 in
+      let tls = if str_eq u.scheme "https" then tcp_starttls_verified fd host ca else 0 in
+      if tls < 0 then let _ = tcp_close fd in fail_with ("TLS verification failed: " ++ host)
+      else
+        // The header carries the host AS WRITTEN, brackets and all, and the port only when it is
+        // not the scheme's default — that is the URL's own serialisation, not the socket's.
+        let hosth = if str_len u.port > 0 then u.host ++ ":" ++ u.port else u.host in
+        let req = "GET " ++ path ++ " HTTP/1.1\r\nHost: " ++ hosth
+                  ++ "\r\nUser-Agent: mbrowse\r\nAccept-Encoding: identity"
+                  ++ "\r\nConnection: close\r\n\r\n" in
+        let sbuf = mem_alloc write_cap in
+        let rbuf = mem_alloc read_chunk in
+        let _ = _send fd sbuf req in
+        let raw = _recv_all fd rbuf in
+        let _ = tcp_close fd in
+        let he = _header_end raw in
+        if he < 0 then fail_with "no header terminator in the response"
+        else
+          let headers = _ascii raw 0 (he - 4) in
+          let rest = bytes_slice raw he (bytes_len raw - he) in
+          let te = to_lower (header headers "transfer-encoding") in
+          let body = if str_contains te "chunked" then _dechunk rest 0 empty else rest in
+          let first = match str_split (str_replace headers "\r\n" "\n") "\n" with
+                      | Cons (l, _) -> l
+                      | Nil -> "" in
+          response { status = status_of first, headers = headers, body = body, err = "" };
+
+  // The convenience the callers actually want. A URL that does not parse is a value, not a failure.
+  let url = fn (s: str, ca: str) ->
+    match Url.parse s with
+    | Some u -> get u ca
+    | None -> response { status = 0, headers = "", body = empty, err = "not a URL: " ++ s };
+}

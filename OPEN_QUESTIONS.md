@@ -10,11 +10,26 @@ rejected answer attached is worth more than a question.
 Each entry says what the failure is, what was tried, and what would settle it. Where a gate can see
 the question, the count is given; where it cannot, that is the finding.
 
+**The counts here are checked.** They were not, and `Q-6` spent a day saying 61 of 109 with 48
+failures while the gate was pinned at 71 of 76 — a number written twice, with only one of the copies
+compared against anything. `scripts/questions_check.sh` runs three kinds of line:
+
+    - **Number:** `71` = `<command printing the current value>`
+    - **Reproduces when:** `<command exiting 0 while the symptom is present>`
+    - **Documents:** `a.html` `b.html` in `LAYOUT_LIST`
+
+A literal that disagrees with its command is stale in either direction — a count that has gone up
+looks like progress and is the same defect. A symptom that stops reproducing, or a document that
+starts passing, is a retire candidate. An entry with none of the three lines is counted and named,
+so that "nothing here can be machine-checked" is a number rather than a silence.
+
 ---
 
 ## Q-1. An inline box's height, when a child sticks out of it
 
 **4 documents** — `block-in-inline-nested-001`, `-002`, `-002-ref`, `block-in-inline-append-002-ref`.
+
+- **Documents:** `block-in-inline-nested-001.html` `block-in-inline-nested-002.html` `block-in-inline-nested-002-ref.html` `block-in-inline-append-002-ref.html` in `LAYOUT_LIST`
 
 `block-in-inline-nested-002-ref` wants a `<span>` with no border of its own to be ten pixels taller
 than its line, because the empty `<span>` inside it has a 5px border. Every simple reading of that is
@@ -36,6 +51,8 @@ what it is a union of, and that is exactly the question.
 
 **2 documents** — `inline-table-valign-001`, `-001-ref`.
 
+- **Documents:** `inline-table-valign-001.html` `inline-table-valign-001-ref.html` in `LAYOUT_LIST`
+
 `is_table` asks for the string `table` exactly, so an inline-table is laid out as an ordinary block
 and none of the row machinery runs.
 
@@ -55,6 +72,8 @@ it never had.
 
 **4 documents** — `inlines-004`, `inlines-005`, `inline-block-003`, `inline-block-005`, off by one to
 three pixels each.
+
+- **Documents:** `inlines-004.html` `inlines-005.html` `inline-block-003.html` `inline-block-005.html` in `LAYOUT_LIST`
 
 An inline-block's advance on the line goes through its border-box width, which is a rounded whole
 number. The browser keeps the fraction. So a line of several of them drifts by up to half a pixel
@@ -89,6 +108,19 @@ vendored, and vendoring a font for one branch is a real cost that has not been p
 the finding: 106 documents have every element box exactly where the browser puts it and at least one
 character somewhere else.
 
+- **Number:** `112` = `sed -n 's/.*EXPECT_PASS:-\([0-9]*\).*/\1/p' scripts/glyphpos_check.sh`
+- **Number:** `218` = `sed -n 's/.*EXPECT_PASS:-\([0-9]*\).*/\1/p' scripts/layout_check.sh`
+- **Number:** `228` = `ls test/data/layout/*.glyphs | wc -l`
+- **Number:** `116` = `echo $(( $(ls test/data/layout/*.glyphs | wc -l) - $(sed -n 's/.*EXPECT_PASS:-\([0-9]*\).*/\1/p' scripts/glyphpos_check.sh) ))`
+- **Number:** `106` = `echo $(( $(ls test/data/layout/*.glyphs | wc -l) - $(sed -n 's/.*EXPECT_PASS:-\([0-9]*\).*/\1/p' scripts/glyphpos_check.sh) - $(ls test/data/layout/*.expected | wc -l) + $(sed -n 's/.*EXPECT_PASS:-\([0-9]*\).*/\1/p' scripts/layout_check.sh) ))`
+
+The last of those is the surplus of character failures over box failures, and it reads as "106
+documents" only while every box failure is also a character failure. **Measured rather than assumed**
+— all ten documents in the box gate's failing list were run through the character gate and all ten
+fail it too, so the surplus is 116 - 10. It is not gated, because doing so means running both slow
+gates and intersecting their lists; if the two sets ever come apart, the arithmetic above will still
+print 106 and it will have stopped meaning that.
+
 Two causes, from the diffs:
 
   - **Ligatures.** The browser substitutes `fi` with a single glyph through GSUB, so its two
@@ -101,13 +133,25 @@ Two causes, from the diffs:
 **What would settle it:** GSUB for the first; a decision about fractional box widths for the second.
 They are independent.
 
-## Q-6. Painting — done, and what it costs
+## Q-6. Painting costs an hour, and the time is not where it looks
 
-Closed. `src/paint.mere` turns boxes and glyphs into pixels and `reftest_check.sh` compares 109 pairs
-the WPT authors named: **61 pass**. The pipeline runs end to end — bytes, characters, tokens, a DOM,
-styles, boxes, ink.
+`src/paint.mere` turns boxes and glyphs into pixels and `reftest_check.sh` compares them. The
+pipeline runs end to end — bytes, characters, tokens, a DOM, styles, boxes, ink. What is open here is
+the cost of asking.
 
-Two things it leaves open.
+- **Number:** `109` = `grep -cE '^(SAME|DIFF)' test/data/layout/reftest.browser`
+- **Number:** `33` = `grep -c '^DIFF' test/data/layout/reftest.browser`
+- **Number:** `76` = `grep -c '^SAME' test/data/layout/reftest.browser`
+- **Number:** `71` = `sed -n 's/.*EXPECT_PASS:-\([0-9]*\).*/\1/p' scripts/reftest_check.sh`
+
+**71 of 76 pass, and each of the 5 that fail has a side that already fails the layout gate.** The
+denominator is 76 and not the 109 pairs the suite names: the browser renders 33 of them differently
+itself, so those were never pairs. See the head of `reftest_check.sh` for how that was measured.
+
+**This entry is why the counts in this file are now checked at all.** It said 61 of 109 with 48
+failures for a day after the gate was pinned at 71 of 76 — the gate's number is compared against
+reality on every run and the prose was compared against nothing, so the copy that drifted was the
+copy nobody could see drift.
 
 **It takes about ninety minutes**, because painting asks the outline whether it covers each pixel of
 each glyph's box and there are 218 pages of them. That is the honest cost of the only gate that draws;
@@ -125,8 +169,8 @@ needs the gate to be quick yet and the version here is the one the raster gate a
 without `z-index` and this corpus has not yet said otherwise; when it does, the answer is stacking
 contexts and not a bigger sort.
 
-The 48 failures are the layout failures seen from the other side. A test and its reference that lay
-out to different heights are two different pictures, and a reftest cannot say which of the two is
+The 5 remaining failures are layout failures seen from the other side. A test and its reference that
+lay out to different heights are two different pictures, and a reftest cannot say which of the two is
 wrong — that is what the other gates are for. It says that two pages disagree.
 
 ## Q-7. How long the layout gate takes
@@ -189,6 +233,12 @@ the cascade and a new step in every width calculation, which is a change to the 
 door and not to the 21 here. The document stays and the count is pinned at 20 so that implementing it
 makes this gate fail and say so.
 
+- **Number:** `20` = `sed -n 's/.*EXPECT_GEO:-\([0-9]*\).*/\1/p' scripts/img_check.sh`
+- **Number:** `21` = `sed -n 's/.*EXPECT_SEQ:-\([0-9]*\).*/\1/p' scripts/img_check.sh`
+- **Reproduces when:** `! grep -qih 'max-width' $IN`
+- **Over:** `src/layout.mere src/style.mere`
+- **Poisoned by adding:** `| "max-width" -> Some (parse_length v)`
+
 ## Q-11 — a stated ratio under `border-box`
 
 When the page states one dimension of an image and `box-sizing: border-box`, the other dimension is
@@ -198,6 +248,15 @@ document here and wrong in principle.
 
 No document in the corpus has that shape, so this is written down rather than guessed at. Adding one
 is cheap and is the right next step if anything in this area is touched.
+
+- **Reproduces when:** `! awk '/box-sizing:border-box/{w=/width:/;h=/height:/; if(w!=h) found=1} END{exit !found}' $IN`
+- **Over:** `test/data/img/*.html`
+- **Poisoned by adding:** `<style>img{box-sizing:border-box;width:60px}</style>`
+
+The first version of that check asked whether any document uses `box-sizing` at all, and two do —
+so it reported this question as retired on its first run. They state BOTH dimensions or NEITHER,
+and the shape here is exactly one: the ratio has to be used for the disagreement to show. One
+expression, two questions, and the wrong one is the easy one to write.
 
 ## Q-12 — a scaled image has no exact answer
 
@@ -277,3 +336,137 @@ cannot be compared for glyphs. It was the character-position gate: the browser p
 x=10 and this put it at 8. A reftest says two pages disagree; the gates with an outside oracle say which
 one is lying.
 
+## Q-16 — `tcp_connect` tries one address and stops
+
+The first thing A9 needed was a socket, and the first thing the socket did was fail against
+`localhost`.
+
+`getaddrinfo` returns a LIST, ordered by the platform's preference. mere's `tcp_connect` takes
+`res->ai_family` and `res->ai_addr` from the head of it and returns -1 if that one does not connect;
+it never walks `ai_next`. On this machine `localhost` resolves to `::1` first, so a server bound to
+`127.0.0.1` is unreachable by name while `curl` — which falls through to the next address — reaches
+it over the same resolution.
+
+This is not a loopback curiosity. It is the ordinary case for the real web: a host with an AAAA
+record on a network with no working IPv6 route resolves fine, answers on IPv4, and cannot be
+connected to from here. Every dogfood before this one either dialled a literal address or a name
+that happens to resolve IPv4-first, which is why a socket layer that has been in use since v0.1.91
+had never been asked this.
+
+- **Number:** `9` = `sed -n 's/.*EXPECT_PASS:-\([0-9]*\).*/\1/p' scripts/fetch_check.sh`
+
+**The gate asserts the current behaviour rather than describing it.** `scripts/fetch_check.sh`
+fetches over `127.0.0.1` — the certificate carries `IP:127.0.0.1` as well as `DNS:localhost`, so
+verification is unaffected and the difference is purely the connect — and its last case requires the
+`localhost` spelling to come back `ERR connect failed`. When `tcp_connect` learns to walk the list,
+that case fails and says the assertion is stale, which is the only way a note like this one closes.
+
+**What would settle it:** upstream, a loop — try each `ai_next` in turn and return the first that
+connects, which is what every client library does and what the standard call is shaped for. It is
+about six lines. It is not done here because a fix belongs with a version number, a changelog entry
+and a parity case in the repository that owns the runtime, and `mere`'s version is currently
+inconsistent with itself: `lib/version.ml` says `0.1.283` while nine source comments and the last
+commit message say `v0.1.284`. Cutting a release on top of that would compound it.
+
+## Q-17 — a unit this engine does not know is treated as pixels
+
+The first real page A9 fetched named its widths in `vw` and its margins in `vh`, and the answers came
+back plausible and wrong. `example.com` asks for `width: 60vw` on a body in an 800-pixel viewport;
+the browser gives it 480 and this gives it **60**, because `Style.px_at` ends its unit table with
+`else 1.0` — an unrecognised unit is scaled as though it were `px`.
+
+**The standard's answer is not "guess", it is "drop".** A declaration whose value cannot be parsed is
+invalid and is ignored, so `width: 60vw` in an engine without viewport units should leave `width` at
+`auto` — and `auto` on a block is the containing block's width, which is 800 and much closer to 480
+than 60 is. **The approximation is further from right than the refusal would have been**, and it
+arrives wearing the face of an answer: 60 is a number, it is in range, and nothing about it says a
+unit went unread.
+
+This is the general shape and it is worth the entry on its own: an absent distinction filled in with
+a plausible default is harder to find than a missing feature, because a missing feature announces
+itself and a wrong default does not. Every gate in this repository was written against documents that
+use `px` and `em`.
+
+- **Reproduces when:** `! grep -qw 'vw' $IN`
+- **Over:** `src/style.mere`
+- **Poisoned by adding:** `else if unit == "vw" then vw_scale`
+
+**What would settle it, in the order the cost says:**
+
+1. **Make an unknown unit invalid rather than one pixel.** `px_at` returns an int and has no way to
+   say "no value", which is why the fallback exists at all — the sentinel has to reach the cascade so
+   the declaration can be dropped. This is the correctness fix and it is independent of implementing
+   anything.
+2. **Then viewport units**, which need the viewport threaded to the cascade; it currently is not,
+   because nothing before now asked for a length that depends on it.
+
+Both are visible in `scripts/northstar_check.sh`, whose geometry number for this page is pinned at 0
+of 7. It is pinned rather than skipped so that either fix makes the gate say the answers moved.
+
+## Q-18 — this engine had never been compiled
+
+A9's measurement report has to be of a binary: `now_ms` has no interpreter mock and says so rather
+than returning a plausible zero, which is the right refusal and is also what surfaced this. The
+program compiled — `mere -c` exited 0 with nothing on stderr — and then clang reported **29 errors in
+the generated C**.
+
+**Nothing had said so because nothing had asked.** Of the gate scripts here, exactly one compiles
+anything, and it was written today — until then every number in the README was an interpreted number.
+A library that only ever runs interpreted has untested portability and no gate is in a position to
+notice. The counts below are the two halves of that, and the first of them was itself wrong on the
+first run: 16 was a guess and the answer is 15.
+
+- **Number:** `1` = `grep -l 'MERE" -c' scripts/*_check.sh | grep -c ''`
+- **Number:** `15` = `ls scripts/*_check.sh | grep -c ''`
+
+The first version of that command was `grep -lc`, which is `-l` and `-c` together and unspecified —
+it printed 1 in one shell and 16 in another, and the gate reported it stale on its first run. Two
+answers from one expression, and the wrong one was the one that looked like the right one.
+
+**Two independent families, and the split was measured rather than guessed** — renaming three
+identifiers took the count from 29 to 14, so the remainder is not a consequence of the first.
+
+### 1. A C keyword used as a binder becomes a C keyword in a struct (15 of the 29)
+
+A lifted inner function's captures become the fields of a C struct, and the names go through
+unescaped. `src/style.mere` had `fn (short: str) -> fn (long: str)` and `src/layout.mere` had
+`fn (inline: str)`, so the backend emitted `const char* short;` and the generated C did not parse.
+Two lines reproduce it, and the interpreter is right:
+
+    type t = { short: str };
+    let v = t { short = "x" } in print v.short
+
+Same site family as mere v0.1.280, where a module-qualified capture name reached the same emitter
+verbatim and produced `long long Wire.delimited;`. That fix flattened dots in three places; escaping
+was not part of it, and a keyword is the other way the same field name can be invalid.
+
+**Worked around here, not fixed.** The three binders are renamed with a comment pointing at this
+entry, the way `contrib/http2`'s naming workaround became a comment about history.
+
+### 2. A capture two levels of lifting away is not threaded (14 of the 29)
+
+Ten lines, and the interpreter answers 9:
+
+    type r = { id: int, n: int };
+    let outer = fn (id: int) ->
+      let mid = fn (xs: r list) ->
+        let rec inner = fn (ys: r list) ->
+          match ys with
+          | Nil -> r { id = id, n = 0 }
+          | Cons (y, rest) -> if y.id == id then y else inner rest
+        in inner xs
+      in mid [r { id = 1, n = 7 }, r { id = 2, n = 9 }];
+    print (str_of_int (outer 2).n)
+
+**Measured, not assumed, in two directions.** Renaming `id` throughout keeps the two errors, so it is
+not about the identifier; removing the middle function drops it to zero, so it is the DEPTH. One level
+of lifting threads the capture and two do not.
+
+This is the shape mere v0.1.283 recorded in `contrib/graphql` — "two inner functions captured a
+variable two levels of lifting away" — and resolved by having the userland functions take the value as
+a parameter. The compiler side is still open, and `src/jpeg.mere` is where it lands here.
+
+**What would settle it:** upstream, in the order the cost says — escape the field names (mechanical,
+and it belongs next to `flatten_module_dots`), then thread the capture through the second level of
+lifting. Until both, `scripts/northstar_measure.sh` cannot produce a report, and it says that rather
+than printing a time for a stage that did not run.

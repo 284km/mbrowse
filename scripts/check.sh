@@ -6,9 +6,23 @@ set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MERE="${MERE:-mere}"
 command -v "$MERE" >/dev/null 2>&1 || { echo "check: no mere — set MERE=/path/to/mere.exe" >&2; exit 1; }
-out=$("$MERE" "$ROOT/test/dom_check.mere"; "$MERE" "$ROOT/test/tree_check.mere"; "$MERE" "$ROOT/test/sniff_check.mere"; "$MERE" "$ROOT/test/nodes_check.mere"; "$MERE" "$ROOT/test/formatting_check.mere"; "$MERE" "$ROOT/test/aaa_check.mere"; "$MERE" "$ROOT/test/style_check.mere"; "$MERE" "$ROOT/test/font_check.mere")
-echo "$out"
-echo "$out" | grep -q MISMATCH && { echo "check: failed" >&2; exit 1; }
+# ONE AT A TIME, AND A PROGRAM THAT DOES NOT RUN IS A FAILURE. These were a single command
+# substitution whose output was searched for `MISMATCH`, which asks only "did a running program
+# disagree with itself". A program that does not START has no output to disagree with: a type error
+# prints to stderr, contributes no MISMATCH, and the list's exit status is the LAST program's — so a
+# failure anywhere but the end was invisible.
+#
+# Measured when this was written: `formatting_check` had not compiled since 2026-08-14 and
+# `style_check` since 2026-08-15, four and five days during which this line said ok. Both were the
+# tests rotting while the source moved — `elem` gained a field, `Reconstruct.run` gained a parameter
+# — which is exactly the drift a unit gate exists to catch and the one shape it could not see.
+for t in dom tree sniff nodes formatting aaa style font; do
+  if ! out=$("$MERE" "$ROOT/test/${t}_check.mere" 2>&1); then
+    echo "$out"; echo "check: test/${t}_check.mere did not run" >&2; exit 1
+  fi
+  echo "$out"
+  case "$out" in *MISMATCH*) echo "check: test/${t}_check.mere failed" >&2; exit 1 ;; esac
+done
 sh "$ROOT/scripts/css_check.sh"
 sh "$ROOT/scripts/tree_check.sh"
 sh "$ROOT/scripts/encoding_check.sh"
@@ -18,12 +32,24 @@ MODE=segments sh "$ROOT/scripts/glyf_check.sh"
 MODE=raster sh "$ROOT/scripts/glyf_check.sh"
 MODE=text sh "$ROOT/scripts/glyf_check.sh"
 MODE=coverage sh "$ROOT/scripts/glyf_check.sh"
-sh "$ROOT/scripts/layout_check.sh"
+# The lists let `questions_check.sh` verify that the documents OPEN_QUESTIONS.md names as failing
+# are still failing. Without them it can only check the counts.
+QL="${TMPDIR:-/tmp}/mbrowse_layout_list.$$"; RL="${TMPDIR:-/tmp}/mbrowse_reftest_list.$$"
+rm -f "$QL" "$RL"; trap 'rm -f "$QL" "$RL"' EXIT
+LAYOUT_LIST="$QL" sh "$ROOT/scripts/layout_check.sh"
 sh "$ROOT/scripts/img_check.sh"
 sh "$ROOT/scripts/imgpaint_check.sh"
 sh "$ROOT/scripts/glyphpos_check.sh"
 sh "$ROOT/scripts/jpeg_check.sh"
 sh "$ROOT/scripts/jpeg_pixels_check.sh"
+sh "$ROOT/scripts/fetch_check.sh"
+# A real page, off the real web, from a committed snapshot. Every number here is pinned
+# including the bad ones — it is a ladder, and the gate fails when a rung MOVES either way.
+sh "$ROOT/scripts/northstar_check.sh"
 # Last, and slowest by a long way: the only gate that draws.
-sh "$ROOT/scripts/reftest_check.sh"
+REFTEST_LIST="$RL" sh "$ROOT/scripts/reftest_check.sh"
+# After the gates, because it reads their lists: the counts and claims in OPEN_QUESTIONS.md, held to
+# the same standard as the code. Everything else here is checked against something; this file was
+# not, and Q-6 spent a day 10 pairs and 43 failures out of date as a result.
+LAYOUT_LIST="$QL" REFTEST_LIST="$RL" sh "$ROOT/scripts/questions_check.sh"
 echo "check: ok"

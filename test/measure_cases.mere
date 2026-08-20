@@ -1,0 +1,50 @@
+// Where the time goes, for one page, stage by stage.
+//
+// `now_ms` has no interpreter mock and says so, so this is a COMPILED program — which is the right
+// shape anyway: A9's report is about the thing somebody would run, not about the interpreter that
+// checks it. Every gate in this repository runs interpreted, so this is also the only place the
+// pipeline is measured as a binary.
+//
+// The stages are cumulative reads of one clock rather than a timer per stage, because a stage that
+// is timed by a wrapper measures the wrapper too. Each line is a delta.
+import "../src/sniff.mere";
+import "../src/paint.mere";
+import "../src/tree.mere";
+
+extern fn now_ms: unit -> int;
+
+let path = match args () with Cons (p, _) -> p | Nil -> "";
+let dir =
+  let ps = str_split path "/" in
+  if list_len ps <= 1 then "" else str_join "/" (list_take ps (list_len ps - 1));
+let fontpath = "test/data/font/NotoSans-Regular.ttf";
+
+let t0 = now_ms ();
+let src = Sniff.text_of_file path;
+let t1 = now_ms ();
+let toks = Html.tokenize src;
+let t2 = now_ms ();
+let dom = Tree.build toks;
+let t3 = now_ms ();
+let f = Font.load fontpath;
+let t4 = now_ms ();
+let bs = Layout.boxes_in dir fontpath dom;
+let t5 = now_ms ();
+let h = match bs with Cons (b, _) -> (if b.h < 1 then 1 else b.h) | Nil -> 1;
+let ink = Paint.render (Paint.paint f bs 800 h) 800 h;
+let t6 = now_ms ();
+
+let row = fn (name: str) -> fn (ms: int) -> print (name ++ "\t" ++ str_of_int ms);
+let _ = row "read+sniff+decode" (t1 - t0);
+let _ = row "tokenize" (t2 - t1);
+let _ = row "tree" (t3 - t2);
+let _ = row "font" (t4 - t3);
+let _ = row "style+layout" (t5 - t4);
+let _ = row "paint" (t6 - t5);
+let _ = row "TOTAL" (t6 - t0);
+// Sizes, so a suspiciously fast stage can be told from a stage that had nothing to do.
+let _ = print ("bytes\t" ++ str_of_int (str_len src));
+let _ = print ("boxes\t" ++ str_of_int (list_len bs));
+let _ = print ("rows\t" ++ str_of_int h);
+let _ = print ("ink-chars\t" ++ str_of_int (str_len ink));
+0

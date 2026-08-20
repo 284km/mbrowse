@@ -4,3 +4,15 @@ _build/
 *.wat
 *.wasm
 mbrowse
+
+# Python's caches, from the maintenance scripts.
+__pycache__/
+*.pyc
+
+# The fetch gate's corpus is GENERATED, deterministically, by scripts/fetch_server.py on every run —
+# the same reason the reftests commit no expected images: both sides are made at gate time, so there
+# is nothing to keep in step. 200 KB of it is a synthetic byte pattern from a one-line function.
+#
+# `test/data/northstar/` is the opposite and is committed: a snapshot of a real page whose whole
+# purpose is that the bytes do NOT change, with its URL, date and digest beside it.
+test/data/fetch/

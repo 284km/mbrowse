@@ -52,6 +52,8 @@ sh scripts/check.sh
 | glyph outlines, 5 ways | fontTools                      | exact      |
 | JPEG headers           | libjpeg, through Pillow        | 9 of 9     |
 | JPEG pixels            | libjpeg, exactly, no tolerance | 297 of 297 |
+| HTTPS fetch            | curl, over our own TLS server  | 9 of 9     |
+| OPEN_QUESTIONS.md      | the gates it makes claims about | 16 checks |
 
 The HTML **tokenizer** is not in this table and not in this repository: it is a Mere package, gated
 against html5lib-tests where it lives. The line has to be drawn somewhere and it is drawn at what
@@ -70,6 +72,37 @@ nothing is regenerated when the engine changes. Which is exactly why they could 
 engine that draws nothing passes every one. The geometry is independently checked, so a blank page
 would already be failing elsewhere, and the reftests are free to check what geometry cannot — colour,
 what covers what, and whether the ink lands inside the box measured for it.
+
+**A document enters as bytes, and its encoding is decided before anything reads it.** Every driver
+used to open a page with `str_join "\n" (read_lines path)`, which meant this repository gated its
+sniffing module and then ran a pipeline that used neither it nor a decoder. `Sniff.text` is the pair
+— decide, then apply — and it is the single entry point for a page off disk and a page off a socket,
+so the two differ in where the bytes came from and in nothing else.
+
+Measured before changing it: 154 of the 228 layout documents differ between the two readings, all of
+them by one to three trailing newlines that `read_lines` drops and a browser does not, and no file in
+the corpus contains a CR so nothing else can differ. Every one of those documents is ASCII, which is
+why the fetch corpus carries a Shift_JIS page: it is the only input here that can tell a right
+encoding decision from a wrong one, and it is compared both as bytes and as the text it decodes to.
+
+**Bytes now come off a socket as well as off disk.** `src/fetch.mere` connects, verifies the
+certificate, asks for one resource and reads until the peer is done — as `bytes`, because
+`mem_to_str` stops at the first zero and a page's images are full of them. `scripts/fetch_check.sh`
+holds it to **curl over a TLS server this repository starts**, which is what makes it reproducible:
+a live URL is a moving target, so a red run would mean "the page changed" as often as it means
+anything and a green run on a machine with no network would mean nothing. Five bodies, each present
+because something plausible fails on exactly one of them — zero bytes, more than one read, chunked
+with a size-line extension, and a body split across two writes — plus a case requiring an untrusted
+certificate to be refused, because `tcp_starttls` and `tcp_starttls_verified` pass all five
+identically and without it "the certificate is checked" is a claim with nothing under it.
+
+**And the counts in `OPEN_QUESTIONS.md` are checked too**, which they were not: `Q-6` said 61 of 109
+pairs with 48 failures for a day after the gate was pinned at 71 of 76. The gate's number is
+compared against reality on every run and the prose was compared against nothing, so the copy that
+drifted was the one nobody could see drift. `scripts/questions_check.sh` runs each entry's stated
+numbers, its reproduction, and the documents it names as failing — and requires every reproduction
+to come with the input that makes it stop reproducing, because a search that finds nothing gives the
+same reassuring answer as a search that is broken.
 
 What is NOT here: a window. The picture exists as pixels and nothing puts it on a screen.
 

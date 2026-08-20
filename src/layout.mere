@@ -248,13 +248,15 @@ module Layout {
   // from a parent to a child once — and every caller here is already standing at that edge, so handing
   // it over costs nothing and asking for it costs the depth of the tree per property.
   let style_of = fn (ua: prepared list) -> fn (author: prepared list) ->
-                 fn (e: elem) -> fn (ancestors: elem list) -> fn (inline: str) -> fn (pst: sty) ->
+                 fn (e: elem) -> fn (ancestors: elem list) -> fn (inline_css: str) -> fn (pst: sty) ->
+    // `inline_css`, because `inline` is a C keyword and this parameter becomes a struct field
+    // in the generated C. See Q-18.
     let h1 = Style.hits_for ua 0 e ancestors 0 in
     let h2 = Style.hits_for author 1 e ancestors 0 in
     let h3 =
       // An inline `style=` is a declaration list with no selector, so it is given a specificity
       // above every selector rather than a place in the cascade of its own.
-      list_map (list_filter (Rules.declaration_list inline)
+      list_map (list_filter (Rules.declaration_list inline_css)
                             (fn (r: rule) -> match r with Decl (_n, _v, _i) -> true | _ -> false))
                (fn (r: rule) ->
                   match r with
@@ -616,7 +618,7 @@ module Layout {
           //
           // The RETRY is what makes it affordable. Asking "does this contain a block" before laying
           // anything out means walking every descendant of every element and resolving its style each
-          // time — note 166's square, and here worse than one: it did not finish in ten minutes. The
+          // time — a square, and here worse than one: it did not finish in ten minutes. The
           // walk that was happening anyway reports what it met, and only the head is redone.
           // The split itself, for the shape the corpus has: the pieces on either side of the block are
           // white space, so neither generates a box of its own and only their EDGES survive. The union
@@ -1490,7 +1492,7 @@ module Layout {
     let n = if x == float_w + tiu && line == 0 && not on then 0 else line + 1 in
     // The third answer: whether anything block-level turned up inside. Asking that as a QUERY before
     // laying out means walking every descendant of every element and resolving its style each time —
-    // which is note 166's square, and here it was worse than a square and did not finish. Reporting it
+    // which is a square, and here it was worse than one and did not finish. Reporting it
     // from the walk that was happening anyway costs nothing, and the caller retries.
     //
     // The HEIGHT is returned as well as the line count, and they are no longer the same fact. A caller

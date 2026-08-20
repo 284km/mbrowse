@@ -49,7 +49,7 @@ let _ = check "not needed while the element is open" (not (Reconstruct.needed fl
 let _ = check "needed once it is closed" (Reconstruct.needed fl Nil);
 
 let (ar3, pid) = Nodes.element ar2 bodyid "p" Nil;
-let (ar4, o4, fl4, ins) = Reconstruct.run ar3 Nil fl pid;
+let (ar4, o4, fl4, ins) = Reconstruct.run ar3 Nil fl pid (0 - 1);
 let (ar5, _t) = Nodes.text ar4 ins "X";
 let _ = check "the b is reopened inside the p"
   (Nodes.serialize ar5 == Dom.serialize (Cons (Element ("body", Nil,

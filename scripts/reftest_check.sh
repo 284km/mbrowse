@@ -56,22 +56,28 @@
 # The four numbers are the same lesson from four sides. **Two pages that both omit something agree about
 # it perfectly**, so every correct addition to the painter costs pairs before it gains them.
 #
-# **The 19 that fail:**
+# **What is left, by cause** — deliberately without a total. This said `The 19 that fail` above a
+# breakdown of 5, 0 and 0 for a day, which is the same defect Q-6 had in `OPEN_QUESTIONS.md`: a
+# number written twice, with only the copy in `EXPECT_PASS` ever compared against anything. The count
+# is the line this gate prints; `questions_check.sh` holds Q-6 to it, and this says only what KIND of
+# thing is left.
 #
-#     5   have a side that already fails the layout gate — a layout failure seen from the other side,
-#         and nothing more to say about them here.
-#     0   are painting order any more. That was six, and Appendix E's order fixed five of them; the
-#         sixth was not paint order at all — an inline box's `background: green` painted NOTHING,
-#         because the inline box was built with no background, no border and the block-level layer. A
-#         missing feature that looked exactly like a wrong order, because only one of the two
-#         overlapping boxes was ever drawn.
-#     0   are anything else. This was 10 at its worst. `block-in-inline-empty-*` and `block-in-inline-insert-012` to `-016`
-#         compare two references that say
-#         the same rendering two ways: one `display: inline` box containing block children, and the
-#         same thing written out already split, with `border-right: none` on the first piece and
-#         `border-left: none` on the last. An inline box broken by a block child becomes several
-#         fragments and the border is divided among them — the left edge on the first, the right on the
-#         last, none in between. This draws one border around one box.
+#   - **Layout, seen from the other side.** Every remaining failure is one of these, and there is
+#     nothing more to say about them here: a test and its reference that lay out to different heights
+#     are two different pictures, and a reftest cannot say which of the two is wrong.
+#
+#   - **Painting order: none left.** There were six. Appendix E's order fixed five, and the sixth was
+#     not paint order at all — an inline box's `background: green` painted NOTHING, because the inline
+#     box was built with no background, no border and the block-level layer. A missing feature that
+#     looked exactly like a wrong order, because only one of the two overlapping boxes was ever drawn.
+#
+#   - **Anything else: none left.** This was ten at its worst — `block-in-inline-empty-*` and
+#     `block-in-inline-insert-012` to `-016`, which compare two references that say the same rendering
+#     two ways: one `display: inline` box containing block children, and the same thing written out
+#     already split, with `border-right: none` on the first piece and `border-left: none` on the last.
+#     An inline box broken by a block child becomes several fragments and the border is divided among
+#     them — the left edge on the first, the right on the last, none in between. This used to draw one
+#     border around one box.
 #
 # **Both of those only became visible because borders started being drawn.** Two pages that both omit
 # a border agree about it perfectly. See Q-14 and Q-15.

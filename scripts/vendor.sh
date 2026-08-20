@@ -29,16 +29,30 @@ for f in decode.mere labels.mere jis.mere jis_index.mere; do
   echo "vendored mere-encoding/$f"
 done
 
+# A fetch needs to know what a URL means, and a page's links need resolving against it. Both are
+# the URL Standard's answers rather than string surgery, and there is an implementation of it
+# already held to the WPT suite where it lives — writing a second one here would be a second thing
+# to be wrong, with no oracle attached.
+mkdir -p "$ROOT/.mere_modules/mere-url"
+for f in host.mere path.mere percent.mere ipv6.mere; do
+  cp "$MERE_SRC/contrib/url/$f" "$ROOT/.mere_modules/mere-url/$f"
+  echo "vendored mere-url/$f"
+done
+
 # Imports inside a vendored module name the package, not a sibling file. Done in
 # python because the obvious `sed -E` for it is one of the places BSD and GNU differ.
 python3 - "$ROOT" <<'REWIRE'
 import os, re, sys
 root = sys.argv[1]
-for pkg in ("mere-html", "mere-encoding"):
+for pkg in ("mere-html", "mere-encoding", "mere-url"):
     d = os.path.join(root, ".mere_modules", pkg)
     for f in os.listdir(d):
         p = os.path.join(d, f); s = open(p).read()
-        s2 = re.sub(r'import "(?!mere-)([a-z_]+\.mere)"', r'import "%s/\1"' % pkg, s)
+        # [a-z0-9_], not [a-z_]: `ipv6.mere` is the only sibling with a digit in it and it was the
+        # only one this rewrote nothing for, so the vendored copy imported a path that does not
+        # resolve. A rewriter that silently skips what it does not recognise leaves a module that
+        # fails at its first use rather than here.
+        s2 = re.sub(r'import "(?!mere-)([a-z0-9_]+\.mere)"', r'import "%s/\1"' % pkg, s)
         if s2 != s:
             open(p, "w").write(s2)
             print("rewired " + pkg + "/" + f)

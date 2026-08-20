@@ -182,4 +182,18 @@ module Sniff {
       if d == "" then "windows-1252"
       else if d == "utf-16le" || d == "utf-16be" then "utf-8"
       else d;
+
+  // --- the whole job -------------------------------------------------------
+  //
+  // Bytes to text, which is the PAIR and not either half: an encoding decided and never applied is a
+  // decision nobody acted on, and bytes decoded without deciding are decoded as a guess. Until this
+  // existed every driver read a document with `str_join "\n" (read_lines path)` — so this module was
+  // gated on its own and the pipeline underneath it ran neither half.
+  //
+  // It is also what makes a page off a socket and a page off disk the same page: they differ in where
+  // the bytes came from and in nothing else, which is the property A9 needs and the reason the entry
+  // point is bytes rather than a path.
+  let text = fn (b: bytes) -> Encoding.decode_labelled (of_bytes b) b;
+
+  let text_of_file = fn (path: str) -> text (read_bytes path);
 }

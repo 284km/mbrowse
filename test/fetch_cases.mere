@@ -1,0 +1,31 @@
+// One URL, fetched.
+//
+// `--out PATH` writes the body to a file rather than to stdout, and that is not a convenience: mere
+// prints a program's own result value after it runs, so a body written to stdout comes back with an
+// extra line on the end. Four of this gate's five cases were off by exactly those two bytes, which
+// reads as an encoding bug and is a harness bug. A file has no such line.
+import "../src/fetch.mere";
+import "../src/sniff.mere";
+
+let argl = args ();
+let nth = fn (n: int) ->
+  let rec go = fn (l, i: int) ->
+    match l with Nil -> "" | Cons (x, r) -> if i == n then x else go r (i + 1)
+  in go argl 0;
+let url = nth 0;
+let ca = nth 1;
+let out = nth 2;
+// `text` runs the body through the same sniff-and-decode a document off disk goes through, so the
+// two paths differ in where the bytes came from and in nothing else. That is the property A9 needs,
+// and asserting it here is the only place the corpus has a body it changes.
+let mode = nth 3;
+let r = Fetch.url url ca;
+if str_len r.err > 0 then let _ = print ("ERR " ++ r.err) in 1
+else if str_eq mode "text" then
+  let _ = write_file out (Sniff.text r.body) in
+  let _ = print (Sniff.of_bytes r.body) in 0
+else if str_len out > 0 then
+  let f = file_openrw out in
+  let _ = file_pwrite_bytes f 0 r.body in
+  let _ = print (str_of_int r.status) in 0
+else let _ = print (str_of_int r.status ++ " " ++ str_of_int (bytes_len r.body)) in 0

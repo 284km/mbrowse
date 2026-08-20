@@ -3,11 +3,16 @@
 // One document per run rather than a batch, because these are real files with newlines in them
 // and escaping a whole reftest onto one line would put the escaping between the corpus and the
 // thing being tested. The harness loops instead.
+import "../src/sniff.mere";
 import "../src/layout.mere";
 import "../src/tree.mere";
 
 let path = match args () with Cons (p, _) -> p | Nil -> "";
-let src = str_join "\n" (read_lines path);
+// The document's bytes, sniffed and decoded — not `read_lines`, which drops the trailing
+// newlines a browser sees and never runs the encoding half at all. Measured before changing:
+// 154 of the 228 documents here differ between the two readings, all of them by one to three
+// trailing newlines, and no file in the corpus contains a CR so nothing else can differ.
+let src = Sniff.text_of_file path;
 // The document's own directory, because a relative `src` is relative to the document and not to
 // wherever the harness was run from.
 let dir =

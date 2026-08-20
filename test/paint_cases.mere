@@ -1,9 +1,14 @@
 // One page, painted, as run-length rows.
+import "../src/sniff.mere";
 import "../src/paint.mere";
 import "../src/tree.mere";
 
 let path = match args () with Cons (p, _) -> p | Nil -> "";
-let src = str_join "\n" (read_lines path);
+// The document's bytes, sniffed and decoded — not `read_lines`, which drops the trailing
+// newlines a browser sees and never runs the encoding half at all. Measured before changing:
+// 154 of the 228 documents here differ between the two readings, all of them by one to three
+// trailing newlines, and no file in the corpus contains a CR so nothing else can differ.
+let src = Sniff.text_of_file path;
 let f = Font.load "test/data/font/NotoSans-Regular.ttf";
 // The document's own directory, because a relative `src` is relative to the document.
 let dir =
