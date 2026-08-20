@@ -46,7 +46,15 @@ sed 's/^/  | /' "$T/block.sh"
 # it runs in a scratch directory anyway; the `cd` is what makes the relative paths in the block
 # resolve, which is also what a reader has when they follow the instructions.
 cd "$T"
-ln -sf "$ROOT/test" test
+# EVERY top-level entry, not a guessed list. The first version linked only `test/`, because the block
+# at the time needed only `test/`; pointing the README at `src/main.mere` made the gate fail with
+# `Sys_error("src/main.mere: ...")` -- the gate reporting the exact defect it exists to catch, about
+# itself. A harness that enumerates what the thing under test needs is a harness that goes stale the
+# moment that changes, so this enumerates the repository instead.
+for e in "$ROOT"/* "$ROOT"/.mere_modules; do
+  [ -e "$e" ] || continue
+  ln -sf "$e" "$T/$(basename "$e")"
+done
 if PATH="$T/bin:$PATH" sh -e "$T/block.sh" > "$T/out" 2>"$T/err"; then
   echo "readme_check: ok — the block builds and runs"
 else

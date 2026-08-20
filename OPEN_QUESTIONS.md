@@ -457,15 +457,16 @@ program compiled — `mere -c` exited 0 with nothing on stderr — and then clan
 the generated C**.
 
 **Nothing had said so because nothing had asked.** Of the gate scripts here, exactly one compiled
-anything, and it was written the day this was found (there are three now, the others being the window
-gate and this one; a fourth, `readme_check.sh`, compiles too and appears in NEITHER count, because
-its compiler is named in README.md rather than in the script -- which is the whole point of it) — until then every number in the README was an interpreted number.
+anything, and it was written the day this was found (there are four now: this one, the window gate,
+the fetch gate, and the end-to-end pipeline gate. A fifth, `readme_check.sh`, compiles too and appears
+in NEITHER count, because its compiler is named in README.md rather than in the script -- which is the
+whole point of it) — until then every number in the README was an interpreted number.
 A library that only ever runs interpreted has untested portability and no gate is in a position to
 notice. The counts below are the two halves of that, and the first of them was itself wrong on the
 first run: 16 was a guess and the answer is 15.
 
-- **Number:** `3` = `grep -l 'MERE" -c' scripts/*_check.sh | grep -c ''`
-- **Number:** `18` = `ls scripts/*_check.sh | grep -c ''`
+- **Number:** `4` = `grep -l 'MERE" -c' scripts/*_check.sh | grep -c ''`
+- **Number:** `19` = `ls scripts/*_check.sh | grep -c ''`
 - **Number:** `4` = `sed -n 's/.*EXPECT_PASS:-\([0-9]*\).*/\1/p' scripts/compiled_check.sh`
 
 The first version of that command was `grep -lc`, which is `-l` and `-c` together and unspecified —
@@ -588,3 +589,46 @@ that measurement is currently load-bearing for exactly three unit conversions; i
 only gate that would notice is the north-star geometry, and only for pages using `vh`. The number is
 right and almost nothing depends on it being right, which is the state a measurement should not be
 left in.
+
+## Q-20 — `mere -t` and `mere -c` resolve an entry file's imports differently
+
+Writing `src/main.mere` turned this up immediately, because it is the first program here that lives
+in `src/` and imports its siblings. Every other entry point is in `test/` and spells its imports
+`../src/x.mere`, which turns out not to be a style.
+
+Measured on the real repository, from the repository root, with the same file and only the import
+spelling changed:
+
+| spelling in `src/main.mere` | `mere -t` | `mere -c` |
+|---|---|---|
+| `import "fetch.mere"` | **FAIL** | ok |
+| `import "./fetch.mere"` | **FAIL** | ok |
+| `import "src/fetch.mere"` | ok | **FAIL** |
+| `import "../src/fetch.mere"` | ok | ok |
+
+So the two flags disagree, and they disagree in opposite directions: the typechecker resolves an
+entry file's imports against the working directory, the C backend against the file's own directory,
+and `../src/` is the only spelling both accept — from a file that is itself in `src/`, where `..`
+then `src` is a round trip. **A program can typecheck and fail to compile on nothing but where its
+imports were looked for.**
+
+- **Number:** `4` = `grep -c '^import "\.\./src/' src/main.mere`
+- **Reproduces when:** `! grep -q 'import "[a-z_]*\.mere"' $IN`
+- **Over:** `src/main.mere`
+- **Poisoned by adding:** `import "fetch.mere";`
+
+**The first version of that line was `! grep -q 'import "\.\./src/'`** — "the workaround is still
+here" — and the gate called it a retire candidate immediately, correctly and for the wrong-looking
+reason. The polarity was inverted, but the deeper problem is that a check for the PRESENCE of a
+workaround cannot be poisoned by ADDING text: nothing you append to the input makes an existing
+string stop existing. It could never have gone red, so it was not a check. Phrased as the absence of
+the natural spelling it can: the poison writes `import "fetch.mere";` and the reproduction fails.
+
+That reproduction is still a shape check and a weak one — it says nobody here uses the natural
+spelling, not that the compiler is why. The strong version would compile the same file twice with the two flags and require
+them to agree, which is a test for the Mere repository rather than this one: the failure is in the
+compiler and a gate here could only observe it through this one file.
+
+**Nothing is broken by it right now**, which is exactly why it is written down rather than worked
+around silently. The cost was an afternoon of reading resolution errors that named a path nobody had
+written, and the next person to add a program under `src/` pays it again.

@@ -53,9 +53,12 @@ sh scripts/check.sh
 | JPEG headers           | libjpeg, through Pillow        | 9 of 9     |
 | JPEG pixels            | libjpeg, exactly, no tolerance | 297 of 297 |
 | HTTPS fetch            | curl, over our own TLS server  | 9 of 9     |
-| OPEN_QUESTIONS.md      | the gates it makes claims about | 16 checks |
+| OPEN_QUESTIONS.md      | the gates it makes claims about | 35 checks |
 | the engine COMPILED    | the same engine interpreted    | 4 of 4     |
 | a real page's geometry | a browser's own rects          | 7 of 7     |
+| the window's pixels    | the painter's, read back off it | 3 of 3    |
+| HTTPS vs disk, end to end | each other, through one program | 285 rows |
+| the README's build block | run, not read                | ok         |
 
 The HTML **tokenizer** is not in this table and not in this repository: it is a Mere package, gated
 against html5lib-tests where it lives. The line has to be drawn somewhere and it is drawn at what
@@ -157,6 +160,39 @@ three unit conversions and by no layout or paint decision at all. So the window 
 finished document instead: 285 pixels for `example.com`, 938 for the tallest document here, and four
 documents are already taller than the viewport. That is a scroll offset and a clip, it is deliberately
 not a small change, and it is Q-19.
+
+## The whole sentence, as one program
+
+`src/main.mere` is the last piece and it is deliberately thin — nothing in it is not glue. That was
+the test: the four steps at the top of this file each had a gate long before any program chained
+them, and if wiring them together had needed a new idea then one of the pieces was wrong. It needed
+two, both about being a command-line program rather than about browsers. Where a CA bundle lives is a
+fact about the machine, so it is looked up in four known locations rather than defaulted to one that
+is wrong half the time — a TLS error naming a certificate is the least useful way to say "I do not
+know where your trust store is". And the program has to call `exit`: without it Mere prints the final
+value and leaves the process status at 0, so `mbrowse nope.html` printed `1` and told the shell
+everything was fine. A number on stdout is not an exit status.
+
+`scripts/pipeline_check.sh` is the gate, and it needs no oracle. It serves this repository's
+committed snapshot of a real page over real TLS — a certificate generated for that run — fetches it
+through the program, draws it, reads the window back, and requires the result to be identical to what
+the same program draws from the same bytes on disk. A URL and a path differ only in where the bytes
+came from; everything after that is one code path, so any disagreement is in the fetch, the decode,
+or something that depends on which of the two it was. Those are exactly the bugs no other gate here
+can see, because every other gate reads from disk. What it does not prove is that the picture is
+*right* — a pipeline wrong in the same way twice passes here, which is why the reftests and the two
+browser-oracle gates exist.
+
+Poisoned three ways: change one letter in the page the server hands out and the pixels move; make the
+URL path skip the decode and it draws a blank; give the URL path a viewport eight pixels narrower and
+it dies on the geometry. And the gate's own first run was wrong in a way only its row-count pin could
+catch — a `sed '$d'` copied from the window gate was deleting the last row of the picture. Both paths
+lost the same row, so they still compared equal.
+
+Getting there also cost an afternoon on something that is not a browser problem at all: `mere -t` and
+`mere -c` resolve an entry file's imports against different bases, in opposite directions, and
+`../src/x.mere` is the only spelling both accept — from a file that is itself in `src/`. Every driver
+in `test/` already used that form and nobody knew it was load-bearing. Q-20.
 
 [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md) is what this repository knows it does not know, with the
 repairs that have already been tried and measured and rejected. Several of the remaining failures
@@ -404,22 +440,32 @@ because the output is not a number but a page that looks nearly right.
 
 ## Building
 
-Needs a built `mere`. See that repository for how; then:
+Needs a built `mere`, SDL2 and OpenSSL. See that repository for `mere`; then:
 
 ```
-mere -c test/screen_cases.mere > mbrowse.c
-clang -O2 mbrowse.c -o mbrowse $(sdl2-config --cflags) $(sdl2-config --libs) -lm
+SSL=$(brew --prefix openssl@3 2>/dev/null || echo /usr)
+mere -c src/main.mere > mbrowse.c
+clang -O2 -w mbrowse.c -o mbrowse $(sdl2-config --cflags) $(sdl2-config --libs) \
+  -I"$SSL/include" -L"$SSL/lib" -lssl -lcrypto -lm
 SDL_VIDEODRIVER=dummy ./mbrowse test/data/northstar/example-com/index.html
 ```
 
-**There is no `src/main.mere` and this section named one for a long time**, which is
-the same defect as a stale count with none of the excuses: an instruction nobody ran.
-The four steps in the sentence at the top of this file each exist and each have a gate
-— `src/fetch.mere` gets bytes over HTTPS, the tree and layout and paint run on them,
-`src/screen.mere` puts the result on a window — but no single program chains all four,
-because nothing needed one. The north-star gate fetches with a vendoring script and
-reads a committed snapshot; the window driver above takes a local file. Wiring them
-into one binary that takes a URL is what `src/main.mere` would be.
+`scripts/readme_check.sh` extracts that block from this file at run time and runs it, because for a
+long time this section said `mere src/main.mere` and **there was no `src/main.mere`** — an instruction
+nobody had ever executed. Extracted rather than copied into the script: a copy is a paraphrase, and a
+paraphrase tests the paraphrase.
+
+Then `./mbrowse https://example.com/` for the real thing — fetched over TLS, verified against your
+system trust store, which it finds by looking rather than by guessing. Drop the
+`SDL_VIDEODRIVER=dummy` to get a window you can look at, and `--capture` prints the window's pixels
+instead of leaving it open, which is what the gates compare.
+
+**The block above deliberately ends on a local file and not on that URL**, because it is executed by
+a gate and a gate that needs the internet is a gate that fails for reasons that are not about this
+repository. The URL path is not therefore untested: `scripts/pipeline_check.sh` serves the committed
+snapshot over real TLS from a certificate generated for that run, fetches it through this program,
+and requires the picture to be identical to the one drawn from the same bytes on disk. Two ways in,
+one picture out, and no oracle needed — the two paths are each other's.
 
 ## Why static pages first
 

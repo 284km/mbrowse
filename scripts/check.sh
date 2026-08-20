@@ -56,6 +56,10 @@ sh "$ROOT/scripts/screen_check.sh"
 # And the build instructions the README actually contains, extracted from it at run time rather
 # than copied here. It named `src/main.mere` for a long time and that file has never existed.
 sh "$ROOT/scripts/readme_check.sh"
+# The whole sentence at the top of the README, end to end: the committed snapshot served over real
+# TLS, fetched through src/main.mere, drawn, read back off the window, and required to equal what the
+# same program draws from the same bytes on disk. No oracle -- the two paths are each other's.
+sh "$ROOT/scripts/pipeline_check.sh"
 # Last, and slowest by a long way: the only gate that draws.
 REFTEST_LIST="$RL" sh "$ROOT/scripts/reftest_check.sh"
 # After the gates, because it reads their lists: the counts and claims in OPEN_QUESTIONS.md, held to

@@ -1,0 +1,137 @@
+// src/main.mere — the sentence at the top of the README, as one program.
+//
+// "Fetch a page over HTTPS, parse it, lay it out, and draw it in a window." Every one of those four
+// steps existed and had a gate before this file did, and NO PROGRAM CHAINED THEM. The README told
+// you to build `src/main.mere` for months while there was no such file, which is what
+// `scripts/readme_check.sh` now exists to stop.
+//
+// It is deliberately thin. There is nothing here that is not glue: the whole point is that the
+// pieces already fit, and if any of this had needed a new idea then one of the pieces was wrong.
+//
+// Usage:
+//   mbrowse <url>              https:// or http:// — fetched
+//   mbrowse <path>             a local file — read
+//   mbrowse ... --ca PATH      the trust store to verify against (found automatically otherwise)
+//   mbrowse ... --capture      print the WINDOW's pixels instead of leaving it open
+//
+// **Two ways in, one picture out.** A URL and a path are different only in where the bytes came
+// from: both go through the same sniff-and-decode, the same tree builder, the same layout and the
+// same painter. That is not a convenience, it is the property `scripts/pipeline_check.sh` measures —
+// it serves this repository's committed snapshot of a real page over real TLS and requires the
+// fetched picture to equal the picture from the file on disk. An end-to-end check with no oracle,
+// because the two paths are each other's.
+
+// `../src/` and not `fetch.mere`, from a file that is ITSELF in `src/`. Measured, not styled:
+// `mere -t` and `mere -c` resolve an ENTRY file's imports against different bases, in opposite
+// directions -- a bare sibling name typechecks nowhere and compiles fine, `src/fetch.mere` is the
+// reverse, and `../src/fetch.mere` is the only spelling BOTH accept. Every driver in `test/` already
+// used that form and nobody knew it was load-bearing. Q-20.
+import "../src/fetch.mere";
+import "../src/sniff.mere";
+import "../src/tree.mere";
+import "../src/screen.mere";
+
+module Main {
+
+  let font_path = "test/data/font/NotoSans-Regular.ttf";
+
+  // Where a trust store lives is a fact about the machine, so it is LOOKED UP rather than guessed.
+  // A default that is wrong on half of all machines produces a TLS error naming a certificate, which
+  // is the least informative way to say "I do not know where your CA bundle is".
+  let ca_candidates =
+    Cons ("/etc/ssl/cert.pem",                            // macOS, and BSDs
+    Cons ("/etc/ssl/certs/ca-certificates.crt",           // Debian, Ubuntu
+    Cons ("/etc/pki/tls/certs/ca-bundle.crt",             // Fedora, RHEL
+    Cons ("/opt/homebrew/etc/ca-certificates/cert.pem",   // Homebrew's openssl@3
+    Nil))));
+
+  let rec find_ca = fn (l: str list) ->
+    match l with
+    | Nil -> ""
+    | Cons (p, r) -> if file_exists p then p else find_ca r;
+
+  let is_url = fn (s: str) ->
+    str_index_of s "https://" == 0 || str_index_of s "http://" == 0;
+
+  // A page's images and stylesheets resolve against the directory it came from. For a file that is
+  // its parent; for a URL it is EMPTY, and that is a real limitation rather than an oversight: the
+  // layout engine resolves a relative reference by reading a local file, so a fetched page draws its
+  // text and not its images. Saying so here beats a relative path that silently finds nothing.
+  let dir_of = fn (path: str) ->
+    let ps = str_split path "/" in
+    if list_len ps <= 1 then "" else str_join "/" (list_take ps (list_len ps - 1));
+
+  // The four steps. `src` is text by the time it gets here, whichever way in it came.
+  let draw = fn (src: str) -> fn (docdir: str) -> fn (w: int) ->
+    let f = Font.load font_path in
+    let bs = Layout.boxes_in docdir font_path (Tree.build (Html.tokenize src)) in
+    let h = match bs with Cons (b, _) -> (if b.h < 1 then 1 else b.h) | Nil -> 1 in
+    ( Paint.paint f bs w h, h );
+}
+
+let argl = args ();
+
+let rec flag_after = fn (name: str) -> fn (l: str list) ->
+  match l with
+  | Nil -> ""
+  | Cons (x, r) -> if str_eq x name then (match r with Cons (v, _) -> v | Nil -> "") else flag_after name r;
+
+let rec has_flag = fn (name: str) -> fn (l: str list) ->
+  match l with Nil -> false | Cons (x, r) -> str_eq x name || has_flag name r;
+
+// The first argument that is not a flag and not a flag's value. Written out rather than assumed to
+// be argv[0], because `--ca PATH` in front of the target is a thing people type.
+let rec first_target = fn (l: str list) ->
+  match l with
+  | Nil -> ""
+  | Cons (x, r) ->
+    if str_eq x "--ca" then (match r with Cons (_v, rr) -> first_target rr | Nil -> "")
+    else if str_index_of x "--" == 0 then first_target r
+    else x;
+
+let target = first_target argl;
+let capture = has_flag "--capture" argl;
+let ca = let given = flag_after "--ca" argl in if str_len given > 0 then given else Main.find_ca Main.ca_candidates;
+
+// `exit` and not just the value: without it the program PRINTS its result and leaves the process
+// status at 0, so `mbrowse nope.html` said `1` and told the shell everything was fine. A number on
+// stdout is not an exit status, and a CLI whose failures exit 0 cannot be used in a script -- which
+// is the only reason this program has an exit status worth talking about.
+let code =
+if str_len target == 0 then
+  let _ = print "usage: mbrowse <url-or-path> [--ca PATH] [--capture]" in 2
+else
+  // The one branch in this program, and it is only about where the bytes come from.
+  let got =
+    if Main.is_url target then
+      if str_len ca == 0 then
+        ( "", "no CA bundle found — pass --ca PATH (looked in " ++ str_join ", " Main.ca_candidates ++ ")" )
+      else
+        let r = Fetch.url target ca in
+        if str_len r.err > 0 then ( "", r.err )
+        else if r.status != 200 then ( "", "HTTP " ++ str_of_int r.status ++ " for " ++ target )
+        else ( Sniff.text r.body, "" )
+    else if file_exists target then ( Sniff.text_of_file target, "" )
+    else ( "", "no such file: " ++ target )
+  in
+  match got with
+  | (src, err) ->
+    if str_len err > 0 then let _ = print ("mbrowse: " ++ err) in 1
+    else
+      let docdir = if Main.is_url target then "" else Main.dir_of target in
+      match Main.draw src docdir 800 with
+      | (v, h) ->
+        match Screen.show "mbrowse" v 800 h with
+        | None -> let _ = print "mbrowse: no display" in 1
+        | Some win ->
+          if capture then
+            match Window.capture win with
+            | None -> let _ = print "mbrowse: no capture" in 1
+            | Some c ->
+              let _ = print (Paint.render (Screen.vec_of_canvas c) 800 h) in
+              let _ = Window.close win in 0
+          else
+            let _ = Window.close win in
+            let _ = print ("mbrowse: drew " ++ str_of_int h ++ " rows of " ++ target) in 0
+;
+exit code

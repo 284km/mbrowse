@@ -55,6 +55,13 @@ def make_corpus():
             '</head>\n<body><p>\u3053\u3093\u306b\u3061\u306f\u3001\u4e16\u754c\u3002'
             '\u534a\u89d2\uff76\uff85\u3082\u3042\u308b\u3002</p></body></html>\n')
     w("sjis.html", sjis.encode("shift_jis"))
+    # The committed snapshot of a real page, served over real TLS. `pipeline_check.sh` fetches it
+    # through `src/main.mere` and requires the picture to equal the one that program draws from the
+    # same bytes on disk -- an end-to-end check of the whole pipeline with no oracle, because the two
+    # paths are each other's. Read unconditionally rather than behind `if os.path.isfile`: the
+    # snapshot is committed, so a missing one is a broken checkout and not a reason to serve less.
+    ns = os.path.join(ROOT, "test", "data", "northstar", "example-com", "index.html")
+    w("example-com.html", open(ns, "rb").read())
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
