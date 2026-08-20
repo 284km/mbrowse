@@ -56,6 +56,13 @@ type sty = {
   w: int, h: int,                      // -1 for auto
   w_pct: int, h_pct: int,              // -1 when not a percentage
   mt: int, mr: int, mb: int, ml: int,
+  // WHETHER THE HORIZONTAL MARGINS WERE `auto`, which the numbers cannot say. A margin may be
+  // negative, so the sentinel that used to mean `auto` was removed once the range widened -- and
+  // `auto` then arrived as 0, which is a different rule with the same number. `margin: 0 auto`
+  // centres a block and `margin: 0` does not; collapsing them put every centred page at x = 0 and
+  // looked exactly like the rule not existing. Two booleans, for the same reason `url_parts` keeps
+  // `has_query` beside `query`: presence and value are separate state.
+  ml_auto: bool, mr_auto: bool,
   pt: int, pr: int, pb: int, pl: int,
   bt: int, br: int, bb: int, bl: int,
   // Which pass of the painter this element's boxes belong to — CSS 2.1 Appendix E's own step numbers,
@@ -146,6 +153,24 @@ module Style {
   // computed value of the parent and this constant goes away.
   let root_em = 16;
 
+  // THE VIEWPORT, because `vw` and `vh` are a percentage of it and there is nothing else to ask.
+  // Constants for the same reason `layout.mere`'s `viewport_w` is one: they are the size the
+  // expectations were taken in, and a parameter would be a knob with exactly one setting that
+  // every caller has to thread.
+  //
+  // **513 AND NOT 600, WHICH IS THE POINT.** The oracle runs the browser at
+  // `--window-size=800,600`, and 600 is the WINDOW. Asked what viewport it actually had, the
+  // same browser under the same flags answers `innerHeight=513` — so `15vh` is 77 and not 90,
+  // which is exactly what its rects said and what taking the flag at its word did not predict.
+  // Re-derive it by dumping `window.innerWidth`/`innerHeight` from a page loaded with the flags
+  // in `scripts/gen_layout_expected.py`; do not read it off the flag.
+  //
+  // Measured before adding these: no document in the 228-document layout corpus or the image one
+  // uses a viewport unit, so no pinned number could move. The page that does is the north-star
+  // snapshot, which asks for `60vw` and `15vh`.
+  let viewport_w = 800;
+  let viewport_h = 513;
+
   // ---- lengths ------------------------------------------------------------------
 
   let _is_digit = fn (c: str) -> c != "" && c >= "0" && c <= "9";
@@ -185,6 +210,16 @@ module Style {
           else if unit == "in" then 96.0
           else if unit == "cm" then 96.0 / 2.54
           else if unit == "mm" then 9.6 / 2.54
+          // The viewport units. 1vw is a HUNDREDTH of the viewport, not a percent of the
+          // containing block: `width: 60vw` on a nested element is still 60% of the window,
+          // which is why these belong here with the absolute units and not with `%`, which
+          // comes back as a sentinel for layout to resolve against a parent it can see.
+          else if unit == "vw" then float_of_int viewport_w / 100.0
+          else if unit == "vh" then float_of_int viewport_h / 100.0
+          else if unit == "vmin" then
+            float_of_int (if viewport_w < viewport_h then viewport_w else viewport_h) / 100.0
+          else if unit == "vmax" then
+            float_of_int (if viewport_w > viewport_h then viewport_w else viewport_h) / 100.0
           else 1.0 in
         let v = mag * scale in
         int_of_float (if v < 0.0 then v - 0.5 else v + 0.5);
@@ -646,7 +681,8 @@ module Style {
           fs = root_em, lh_px = 0 - 1, lh_num = 0.0 - 1.0, dir = "ltr", ws = "normal",
           ti_px = 0, ti_pct = 0 - 1, color = 0, bg = 0 - 1,
           left = 0 - 1, top = 0 - 1, w = 0 - 1, h = 0 - 1, w_pct = 0 - 1, h_pct = 0 - 1,
-          mt = 0, mr = 0, mb = 0, ml = 0, pt = 0, pr = 0, pb = 0, pl = 0,
+          mt = 0, mr = 0, mb = 0, ml = 0, ml_auto = false, mr_auto = false,
+          pt = 0, pr = 0, pb = 0, pl = 0,
           bt = 0, br = 0, bb = 0, bl = 0, bc = 0, layer = 3 };
 
   // `pst` is the PARENT's computed style, and it is what makes this inheritance rather than a lookup.
@@ -855,6 +891,10 @@ module Style {
       mr = mlen (side "margin" "margin-right" 1),
       mb = mlen (side "margin" "margin-bottom" 2),
       ml = mlen (side "margin" "margin-left" 3),
+      // The STRING, not the number: `mlen` has already turned `auto` into 0 by the time anyone
+      // could tell the two apart. Asked here, where the declaration is still text.
+      ml_auto = to_lower (side "margin" "margin-left" 3) == "auto",
+      mr_auto = to_lower (side "margin" "margin-right" 1) == "auto",
       pt = plen (side "padding" "padding-top" 0),
       pr = plen (side "padding" "padding-right" 1),
       pb = plen (side "padding" "padding-bottom" 2),

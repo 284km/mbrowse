@@ -370,6 +370,12 @@ commit message say `v0.1.284`. Cutting a release on top of that would compound i
 
 ## Q-17 — a unit this engine does not know is treated as pixels
 
+**Half of this is done and the title says so without the word CLOSED, which is deliberate.**
+`scripts/questions_check.sh` treats `CLOSED` anywhere in a heading as "this entry owes no
+reproduction" and skips the check — so writing "CLOSED for the units, open for the fallback"
+made the still-open half stop being checked, silently, which is the exact failure this file
+exists to prevent. A partially closed entry is an open entry with a smaller scope.
+
 The first real page A9 fetched named its widths in `vw` and its margins in `vh`, and the answers came
 back plausible and wrong. `example.com` asks for `width: 60vw` on a body in an 800-pixel viewport;
 the browser gives it 480 and this gives it **60**, because `Style.px_at` ends its unit table with
@@ -387,9 +393,50 @@ a plausible default is harder to find than a missing feature, because a missing 
 itself and a wrong default does not. Every gate in this repository was written against documents that
 use `px` and `em`.
 
-- **Reproduces when:** `! grep -qw 'vw' $IN`
+### The units are in, and the north-star geometry is exact
+
+`vw`, `vh`, `vmin` and `vmax`, and `margin: auto` centring — between them the whole of the
+difference. `scripts/northstar_check.sh` went from **0 of 7 boxes to 7 of 7**, element for
+element, and the ink from 93.9% differing to 76.3%.
+
+**Measured before adding them**: no document in the 228-document layout corpus or the image one
+uses a viewport unit, so no pinned number could move. Measured after: it did not — layout is
+still 218 of 228 with the identical failing set, character positions 112, image boxes and ink
+unmoved.
+
+**Two of the three steps could only be measured, not reasoned about.**
+
+`--window-size=800,600` names the WINDOW. Asked what viewport it actually had, the same browser
+under the same flags answers `innerHeight=513` — so `15vh` is 77 and not 90, which is exactly
+what its rects said and what taking the flag at its word did not predict. The constant carries
+the command to re-derive it.
+
+And `margin: auto` did not work when it was implemented, because `mlen` had already turned
+`auto` into 0. That collapse was a correct decision made for a different reason — the sentinel
+that used to mean `auto` was removed once margins were allowed to be negative, since "a
+sentinel stops being a sentinel the moment the range it hid in widens" — but nothing replaced
+what it had been carrying. So `margin: 0 auto` and `margin: 0`, two different rules, arrived as
+the same number, and a centred page came out at x = 0, which looks exactly like the rule not
+existing. `ml_auto` and `mr_auto` are booleans beside the numbers now, the same way
+`url_parts` keeps `has_query` beside `query`: presence and value are separate state.
+
+### What is still open: the fallback for a unit that IS unknown
+
+`else 1.0` is still there, so `width: 60foo` is still 60 pixels rather than an invalid
+declaration. Making it invalid needs `px_at` to be able to say "no value" and the cascade to
+drop the declaration, which is a different change from adding a unit — and no document here
+asks for one, so it is not measurable from this corpus today. The general shape stays worth the
+entry: an absent distinction filled in with a plausible default is harder to find than a
+missing feature, because a missing feature announces itself and a wrong default does not.
+
+The reproduction is phrased as an ABSENCE, because that is what the poison mechanism can
+disturb: what is missing is any way for `px_at` to say "this is not a length at all". A
+"the fallback is still there" check cannot be poisoned by adding a file, and a check that
+cannot fail is the thing this gate is for.
+
+- **Reproduces when:** `! grep -q 'not_a_length' $IN`
 - **Over:** `src/style.mere`
-- **Poisoned by adding:** `else if unit == "vw" then vw_scale`
+- **Poisoned by adding:** `let not_a_length = 0 - 3;`
 
 **What would settle it, in the order the cost says:**
 
@@ -400,8 +447,7 @@ use `px` and `em`.
 2. **Then viewport units**, which need the viewport threaded to the cascade; it currently is not,
    because nothing before now asked for a length that depends on it.
 
-Both are visible in `scripts/northstar_check.sh`, whose geometry number for this page is pinned at 0
-of 7. It is pinned rather than skipped so that either fix makes the gate say the answers moved.
+The gate said the answers moved, which is what pinning a bad number is for.
 
 ## Q-18 — this engine had never been compiled — CLOSED
 

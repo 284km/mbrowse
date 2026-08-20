@@ -66,7 +66,11 @@ for d in "$DATA"/*/; do
 done
 
 echo "northstar: $pages page(s)"
-EXPECT="${EXPECT_NORTHSTAR:-example-com 1 0/7 93.886;}"
+# Was `0/7 93.886`. The geometry is exact now: viewport units, and `margin: auto` centring,
+# which between them were the whole of it. The ink still differs because the page asks for
+# `opacity: 0.8`, which nothing here implements, and because two engines antialias text
+# differently — the reason this number has a tolerance at all rather than being exact.
+EXPECT="${EXPECT_NORTHSTAR:-example-com 1 7/7 76.253;}"
 if [ "$report" != "$EXPECT" ]; then
   echo "northstar: the answers moved"
   echo "  was:  $EXPECT"

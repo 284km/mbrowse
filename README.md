@@ -55,7 +55,7 @@ sh scripts/check.sh
 | HTTPS fetch            | curl, over our own TLS server  | 9 of 9     |
 | OPEN_QUESTIONS.md      | the gates it makes claims about | 16 checks |
 | the engine COMPILED    | the same engine interpreted    | 4 of 4     |
-| a real page's geometry | a browser's own rects          | 0 of 7     |
+| a real page's geometry | a browser's own rects          | 7 of 7     |
 
 The HTML **tokenizer** is not in this table and not in this repository: it is a Mere package, gated
 against html5lib-tests where it lives. The line has to be drawn somewhere and it is drawn at what
@@ -113,6 +113,16 @@ fixed upstream (a closure capture's name is a C struct field, and two places the
 dropped a frame-local whose name shadowed a builtin). `scripts/compiled_check.sh` keeps it that way,
 and asks the stronger question while it is there: not "does it compile" but "does the binary answer
 what the interpreter answers", which is the failure a compiling backend can still have.
+
+**And the first real page's geometry is exact**, element for element — 0 of 7 boxes to 7 of 7.
+Two rules were the whole of it: viewport units, and `margin: auto` centring. Neither could be
+reasoned to. `--window-size=800,600` names the WINDOW, and the same browser under the same
+flags reports `innerHeight=513`, so `15vh` is 77 and not 90 — asked, rather than read off the
+flag. And `margin: auto` did nothing once implemented, because the length parser had already
+turned `auto` into 0: a correct decision made for a different reason, with nothing put back to
+carry what the sentinel had meant, so two different rules arrived as the same number. The ink
+still differs by 76%, which is a tolerance question — the page asks for `opacity`, which does
+not exist here, and two engines antialias text differently.
 
 That also unblocked the measurement the north-star gate owed. `example.com`, fetched, parsed, laid
 out and painted: **44 ms and a 39 MiB high-water mark**, of which 19 ms is loading the font and 17 is

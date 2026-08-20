@@ -108,7 +108,7 @@ module Layout {
           bsz = "content-box", fs = st.fs, lh_px = st.lh_px, lh_num = st.lh_num, dir = st.dir,
           ws = st.ws, ti_px = st.ti_px, ti_pct = st.ti_pct, color = st.color, bg = st.bg,
           w = w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
-          mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
+          mt = st.mt, ml_auto = st.ml_auto, mr_auto = st.mr_auto, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = st.pr, pb = st.pb, pl = st.pl,
           bt = st.bt, br = st.br, bb = st.bb, bl = st.bl, bc = st.bc, layer = st.layer };
 
@@ -144,7 +144,7 @@ module Layout {
           bsz = bsz, fs = st.fs, lh_px = st.lh_px, lh_num = st.lh_num, dir = st.dir,
           ws = st.ws, ti_px = st.ti_px, ti_pct = st.ti_pct, color = st.color, bg = st.bg,
           w = w, h = h, w_pct = st.w_pct, h_pct = st.h_pct,
-          mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
+          mt = st.mt, ml_auto = st.ml_auto, mr_auto = st.mr_auto, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = st.pr, pb = st.pb, pl = st.pl,
           bt = st.bt, br = st.br, bb = st.bb, bl = st.bl, bc = st.bc, layer = st.layer };
 
@@ -158,7 +158,7 @@ module Layout {
           bsz = st.bsz, fs = st.fs, lh_px = st.lh_px, lh_num = st.lh_num, dir = st.dir,
           ws = st.ws, ti_px = st.ti_px, ti_pct = st.ti_pct, color = st.color, bg = st.bg,
           w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
-          mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
+          mt = st.mt, ml_auto = st.ml_auto, mr_auto = st.mr_auto, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = st.pr, pb = st.pb, pl = st.pl,
           bt = w, br = w, bb = w, bl = w, bc = 0, layer = st.layer };
 
@@ -168,7 +168,7 @@ module Layout {
           bsz = st.bsz, fs = st.fs, lh_px = st.lh_px, lh_num = st.lh_num, dir = st.dir,
           ws = st.ws, ti_px = st.ti_px, ti_pct = st.ti_pct, color = st.color, bg = st.bg,
           w = st.w, h = st.h, w_pct = st.w_pct, h_pct = st.h_pct,
-          mt = st.mt, mr = st.mr, mb = st.mb, ml = st.ml,
+          mt = st.mt, ml_auto = st.ml_auto, mr_auto = st.mr_auto, mr = st.mr, mb = st.mb, ml = st.ml,
           pt = st.pt, pr = 0, pb = st.pb, pl = 0,
           bt = st.bt, br = 0, bb = st.bb, bl = 0, bc = 0, layer = st.layer };
 
@@ -1912,7 +1912,23 @@ module Layout {
     let rtl = match ancestors with
               | Nil -> false
               | Cons (_par, _up) -> pst.dir == "rtl" in
-    let bx0 = if rtl then cbw - st.mr - bw_total else st.ml in
+    // `margin-left: auto` and `margin-right: auto` on a block with a stated width CENTRE it: the
+    // two of them share what is left of the containing block. `auto` arrives here as -1, the
+    // sentinel the length parser uses for it, so a box with `margin: 0 auto` had both margins
+    // read as -1 and was placed at -1 -- clamped to the left edge, which looks like the rule
+    // simply not existing and is what `example.com` looked like.
+    //
+    // Only when the width is NOT auto. With an auto width the standard resolves the width to fill
+    // instead and the margins become zero, which is what an unstated width already does here.
+    let auto_ml = st.ml_auto in
+    let auto_mr = st.mr_auto in
+    let centred = auto_ml && auto_mr && st.w >= 0 in
+    let free = cbw - bw_total in
+    let ml_used = if centred then (if free > 0 then free / 2 else 0)
+                  else if auto_ml then 0 else st.ml in
+    let mr_used = if centred then (if free > 0 then free - free / 2 else 0)
+                  else if auto_mr then 0 else st.mr in
+    let bx0 = if rtl then cbw - mr_used - bw_total else ml_used in
     // The children clear the same edge the box was placed from, which in a right-to-left containing
     // block is not the left margin. Using `st.ml` here while the box itself was placed from the right
     // put every child of an RTL box at the wrong x and only the box right.
