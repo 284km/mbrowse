@@ -46,6 +46,9 @@ sh "$ROOT/scripts/fetch_check.sh"
 # A real page, off the real web, from a committed snapshot. Every number here is pinned
 # including the bad ones — it is a ladder, and the gate fails when a rung MOVES either way.
 sh "$ROOT/scripts/northstar_check.sh"
+# The engine, compiled, answering what the interpreter answers. Every other gate here runs
+# interpreted, which is how this engine went its whole life without being compiled once.
+sh "$ROOT/scripts/compiled_check.sh"
 # Last, and slowest by a long way: the only gate that draws.
 REFTEST_LIST="$RL" sh "$ROOT/scripts/reftest_check.sh"
 # After the gates, because it reads their lists: the counts and claims in OPEN_QUESTIONS.md, held to

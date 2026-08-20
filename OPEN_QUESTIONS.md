@@ -403,7 +403,7 @@ use `px` and `em`.
 Both are visible in `scripts/northstar_check.sh`, whose geometry number for this page is pinned at 0
 of 7. It is pinned rather than skipped so that either fix makes the gate say the answers moved.
 
-## Q-18 — this engine had never been compiled
+## Q-18 — this engine had never been compiled — CLOSED
 
 A9's measurement report has to be of a binary: `now_ms` has no interpreter mock and says so rather
 than returning a plausible zero, which is the right refusal and is also what surfaced this. The
@@ -416,8 +416,9 @@ A library that only ever runs interpreted has untested portability and no gate i
 notice. The counts below are the two halves of that, and the first of them was itself wrong on the
 first run: 16 was a guess and the answer is 15.
 
-- **Number:** `1` = `grep -l 'MERE" -c' scripts/*_check.sh | grep -c ''`
-- **Number:** `15` = `ls scripts/*_check.sh | grep -c ''`
+- **Number:** `2` = `grep -l 'MERE" -c' scripts/*_check.sh | grep -c ''`
+- **Number:** `16` = `ls scripts/*_check.sh | grep -c ''`
+- **Number:** `4` = `sed -n 's/.*EXPECT_PASS:-\([0-9]*\).*/\1/p' scripts/compiled_check.sh`
 
 The first version of that command was `grep -lc`, which is `-l` and `-c` together and unspecified —
 it printed 1 in one shell and 16 in another, and the gate reported it stale on its first run. Two
@@ -466,7 +467,30 @@ This is the shape mere v0.1.283 recorded in `contrib/graphql` — "two inner fun
 variable two levels of lifting away" — and resolved by having the userland functions take the value as
 a parameter. The compiler side is still open, and `src/jpeg.mere` is where it lands here.
 
-**What would settle it:** upstream, in the order the cost says — escape the field names (mechanical,
-and it belongs next to `flatten_module_dots`), then thread the capture through the second level of
-lifting. Until both, `scripts/northstar_measure.sh` cannot produce a report, and it says that rather
-than printing a time for a stage that did not run.
+### Closed, both families, upstream
+
+**Family 1** was fixed by routing a closure capture's name through `c_safe_name`, the `mu_` prefix
+v0.1.56 chose over a reserved-word list. The two paths that build that struct were disagreeing about
+it — the inner-lifted one had always prefixed — which is the second time the same pair disagreed
+about the same struct.
+
+**Family 2 was two holes, not one** (mere v0.1.286). `known` decides what is not captured and
+`host_locals` is what rescues a name from it; a curried parameter's name was discarded by the
+walker's own `Fun` case, and descending into a lifted body reset the list to empty. **Three things
+have to line up** — the name shadows a builtin, it is a curried parameter or read from a nested lift,
+and it is read from a lifted function — which is why a decade of programs never hit it and one
+browser did.
+
+**And the reason this entry existed now has a gate.** `scripts/compiled_check.sh` compiles the engine
+and requires the binary to answer what the interpreter answers, document for document. "It compiles"
+is the weaker half: a backend can compile and be wrong, so the interpreter is the oracle, the same
+way it is for the language's own cross-backend parity. Poisoned two ways — a build that fails reports
+the errors rather than the fact, and a document dropping silently out of the sample fails the count.
+
+The measurement `scripts/northstar_measure.sh` owed: a 559-byte page in 44 ms, of which 19 is loading
+the font and 17 is style and layout, at a 39 MiB high-water mark.
+
+**What is still open is the other keyword surface**, and it is a separate entry's worth: a user
+RECORD field called `short` still emits a C keyword. Record fields are a different struct reached
+from about a dozen sites — typedef, construction, update, access, `show_`, `to_json`, `from_json`,
+`eq`, pattern binding — and nothing here reaches it.

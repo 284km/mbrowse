@@ -723,9 +723,9 @@ module Style {
     // `sh` and `lg` AND NOT `short` and `long`, which is not a style preference: both are C
     // keywords, and a lifted inner function's captures become the fields of a C struct — so the
     // backend emitted `const char* short;` and the generated C did not parse. See Q-18.
-    let side = fn (sh: str) -> fn (lg: str) -> fn (which: int) ->
-      let (lv, ls, lo) = winner_at hs lg in
-      let (sv, ss, so) = winner_at hs sh in
+    let side = fn (short: str) -> fn (long: str) -> fn (which: int) ->
+      let (lv, ls, lo) = winner_at hs long in
+      let (sv, ss, so) = winner_at hs short in
       if lv != "" && (sv == "" || ls > ss || (ls == ss && lo >= so)) then lv
       else if sv == "" then ""
       else

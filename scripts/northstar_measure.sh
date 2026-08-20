@@ -53,7 +53,11 @@ for n in $pages; do
   # `/usr/bin/time -l` for the high-water mark; the stage table comes from the program itself,
   # because a wrapper timing a stage measures the wrapper.
   /usr/bin/time -l "$T/m" "$page" > "$T/out" 2> "$T/rss" || true
+  # A row is `name<TAB>value` and nothing else. mere prints a program's own result value
+  # after it runs, so the driver's trailing `0` arrived here as a stage called "0" with no
+  # time — the same extra line that made the fetch gate's byte comparisons off by two.
   while IFS='	' read -r k v; do
+    [ -n "$v" ] || continue
     case "$k" in
       bytes|boxes|rows|ink-chars) ;;
       *) printf '%-20s %-20s %s\n' "$n" "$k" "$v" ;;

@@ -54,6 +54,8 @@ sh scripts/check.sh
 | JPEG pixels            | libjpeg, exactly, no tolerance | 297 of 297 |
 | HTTPS fetch            | curl, over our own TLS server  | 9 of 9     |
 | OPEN_QUESTIONS.md      | the gates it makes claims about | 16 checks |
+| the engine COMPILED    | the same engine interpreted    | 4 of 4     |
+| a real page's geometry | a browser's own rects          | 0 of 7     |
 
 The HTML **tokenizer** is not in this table and not in this repository: it is a Mere package, gated
 against html5lib-tests where it lives. The line has to be drawn somewhere and it is drawn at what
@@ -103,6 +105,19 @@ drifted was the one nobody could see drift. `scripts/questions_check.sh` runs ea
 numbers, its reproduction, and the documents it names as failing — and requires every reproduction
 to come with the input that makes it stop reproducing, because a search that finds nothing gives the
 same reassuring answer as a search that is broken.
+
+**And the engine is compiled now, which it never had been.** Fifteen gate scripts here invoke `mere`
+and until recently not one of them compiled anything, so every number above was an interpreted
+number — and when something finally asked, `mere -c` produced 29 C errors in two families. Both are
+fixed upstream (a closure capture's name is a C struct field, and two places the capture walker
+dropped a frame-local whose name shadowed a builtin). `scripts/compiled_check.sh` keeps it that way,
+and asks the stronger question while it is there: not "does it compile" but "does the binary answer
+what the interpreter answers", which is the failure a compiling backend can still have.
+
+That also unblocked the measurement the north-star gate owed. `example.com`, fetched, parsed, laid
+out and painted: **44 ms and a 39 MiB high-water mark**, of which 19 ms is loading the font and 17 is
+style and layout. `now_ms` has no interpreter mock — it says so rather than returning a plausible
+zero — so this had to be a binary, and that requirement is what surfaced all of the above.
 
 What is NOT here: a window. The picture exists as pixels and nothing puts it on a screen.
 

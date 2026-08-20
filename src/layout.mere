@@ -248,7 +248,7 @@ module Layout {
   // from a parent to a child once — and every caller here is already standing at that edge, so handing
   // it over costs nothing and asking for it costs the depth of the tree per property.
   let style_of = fn (ua: prepared list) -> fn (author: prepared list) ->
-                 fn (e: elem) -> fn (ancestors: elem list) -> fn (inline_css: str) -> fn (pst: sty) ->
+                 fn (e: elem) -> fn (ancestors: elem list) -> fn (inline: str) -> fn (pst: sty) ->
     // `inline_css`, because `inline` is a C keyword and this parameter becomes a struct field
     // in the generated C. See Q-18.
     let h1 = Style.hits_for ua 0 e ancestors 0 in
@@ -256,7 +256,7 @@ module Layout {
     let h3 =
       // An inline `style=` is a declaration list with no selector, so it is given a specificity
       // above every selector rather than a place in the cascade of its own.
-      list_map (list_filter (Rules.declaration_list inline_css)
+      list_map (list_filter (Rules.declaration_list inline)
                             (fn (r: rule) -> match r with Decl (_n, _v, _i) -> true | _ -> false))
                (fn (r: rule) ->
                   match r with
