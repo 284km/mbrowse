@@ -1,0 +1,70 @@
+// src/screen.mere — the painter's pixels, on a screen.
+//
+// This is the last step of A9 and the only one that opens anything. Everything that checks the
+// drawing compares reference pixels and needs no display: `reftest_check.sh` compares two of our
+// own renderings, `imgpaint_check.sh` compares against a browser's screenshot, and the north-star
+// gate compares boxes against a browser's rects. A window is for looking at, and for the one
+// question the others cannot ask — whether what was painted is what a compositor receives.
+//
+// **The conversion is the whole file.** `Paint.paint` answers an `int Vec`, one packed `0xRRGGBB`
+// per pixel and no alpha, because run-length rows of hex are what its gate compares. A `canvas` is
+// a `ByteBuf` of PREMULTIPLIED RGBA. Every pixel the painter produces is opaque, and premultiplying
+// by 255 is the identity, so the move is a widening rather than a blend — which is why this is a
+// loop and not a call into `Canvas`.
+
+import "paint.mere";
+import "mere-raster/canvas.mere";
+import "mere-window/window.mere";
+
+module Screen {
+
+  // `int Vec` of 0xRRGGBB -> canvas of premultiplied RGBA.
+  //
+  // The alpha byte is 255 and the three colour bytes are copied through: `Canvas.rgba r g b 255`
+  // would give the same answer for every pixel here and cost a multiply and a rounding step per
+  // channel per pixel. Stated rather than assumed, because it stops being true the moment anything
+  // in the painter draws something translucent — `opacity` is the first thing that would, and it
+  // is not implemented (Q-17's neighbour).
+  let canvas_of = fn (v: int Vec) -> fn (w: int) -> fn (h: int) ->
+    let c = Canvas.new_ w h in
+    let n = w * h in
+    let rec go = fn (i: int) ->
+      if i >= n then c
+      else
+        let p = vec_get v i in
+        let o = i * 4 in
+        let _ = bytebuf_set c.px o ((p / 65536) % 256) in
+        let _ = bytebuf_set c.px (o + 1) ((p / 256) % 256) in
+        let _ = bytebuf_set c.px (o + 2) (p % 256) in
+        let _ = bytebuf_set c.px (o + 3) 255 in
+        go (i + 1)
+    in go 0;
+
+  // Open, show once, and hand the window back so the caller decides how long to look at it. The
+  // window is NOT closed here: a function that opens and closes cannot be used to show anything.
+  let show = fn (title: str) -> fn (v: int Vec) -> fn (w: int) -> fn (h: int) ->
+    match Window.open_ w h title with
+    | None -> None
+    | Some win ->
+      let c = canvas_of v w h in
+      // Composited over white, which is what a page with no background is on.
+      let _ = Window.show win c (Canvas.rgba 255 255 255 255) in
+      Some win;
+
+  // And back the other way, for the readback. Returning an `int Vec` rather than formatting rows
+  // here means `Paint.render` does the formatting -- the SAME function whose output the reftests
+  // and the imgpaint gate compare. A second run-length encoder would agree with the first until it
+  // did not, and the disagreement would look like a window bug.
+  let vec_of_canvas = fn (c: canvas) ->
+    let v = vec_new () in
+    let rec go = fn (i: int) ->
+      if i >= c.w * c.h then v
+      else
+        let o = i * 4 in
+        let r = bytebuf_get c.px o in
+        let g = bytebuf_get c.px (o + 1) in
+        let b = bytebuf_get c.px (o + 2) in
+        let _ = vec_push v (r * 65536 + g * 256 + b) in
+        go (i + 1)
+    in go 0;
+}

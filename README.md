@@ -129,7 +129,34 @@ out and painted: **44 ms and a 39 MiB high-water mark**, of which 19 ms is loadi
 style and layout. `now_ms` has no interpreter mock — it says so rather than returning a plausible
 zero — so this had to be a binary, and that requirement is what surfaced all of the above.
 
-What is NOT here: a window. The picture exists as pixels and nothing puts it on a screen.
+And then the window, which is the last thing A9 asked for. `contrib/window` opens one, takes a
+canvas, and — the part that matters for a gate — will read the pixels back out. `src/screen.mere` is
+the whole of the wiring: the painter answers one packed `0xRRGGBB` per pixel because run-length rows
+of hex are what its gate compares, a canvas is premultiplied RGBA, and every pixel a page produces
+is opaque, so the conversion is a widening rather than a blend.
+
+`scripts/screen_check.sh` then asks the one question none of the other pixel gates can. The reftests
+compare two of our own renderings, `imgpaint_check.sh` compares against a browser's screenshot, and
+the north-star gate compares boxes against a browser's rects — none of them can tell you whether
+what a compositor *receives* is what the painter produced. So the gate shows a page, reads the
+window back, and requires it to be identical, for three pages including `example.com`.
+
+A readback would normally be a tautology, and this one is not: the capability poisons the pixel block
+before asking SDL to fill it, so a capture that short-circuits comes back as the poison. Poisoning
+the gate four ways shows it: swap two colour channels and 2 of 3 pages go red; read the readback one
+byte off, likewise; hand the window a width the painter did not use and it dies on the geometry
+rather than on a colour; and *skip the `show` entirely* and every page comes back `800x000000` —
+the poison, not the image. The comparison also reuses `Paint.render` rather than a second run-length
+encoder, because two encoders agree until they do not and the disagreement would read as a window
+bug. It skips without SDL2, and runs under SDL's `dummy` driver otherwise, so it does not open a
+window on your desktop while you work.
+
+**What the window then exposed is that the viewport bounds nothing.** `vh` resolves against a
+viewport 513 pixels tall, measured from a browser rather than assumed — and that number is read by
+three unit conversions and by no layout or paint decision at all. So the window is sized to the
+finished document instead: 285 pixels for `example.com`, 938 for the tallest document here, and four
+documents are already taller than the viewport. That is a scroll offset and a clip, it is deliberately
+not a small change, and it is Q-19.
 
 [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md) is what this repository knows it does not know, with the
 repairs that have already been tried and measured and rejected. Several of the remaining failures

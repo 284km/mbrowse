@@ -456,14 +456,15 @@ than returning a plausible zero, which is the right refusal and is also what sur
 program compiled — `mere -c` exited 0 with nothing on stderr — and then clang reported **29 errors in
 the generated C**.
 
-**Nothing had said so because nothing had asked.** Of the gate scripts here, exactly one compiles
-anything, and it was written today — until then every number in the README was an interpreted number.
+**Nothing had said so because nothing had asked.** Of the gate scripts here, exactly one compiled
+anything, and it was written the day this was found (there are three now, the others being the window
+gate and this one) — until then every number in the README was an interpreted number.
 A library that only ever runs interpreted has untested portability and no gate is in a position to
 notice. The counts below are the two halves of that, and the first of them was itself wrong on the
 first run: 16 was a guess and the answer is 15.
 
-- **Number:** `2` = `grep -l 'MERE" -c' scripts/*_check.sh | grep -c ''`
-- **Number:** `16` = `ls scripts/*_check.sh | grep -c ''`
+- **Number:** `3` = `grep -l 'MERE" -c' scripts/*_check.sh | grep -c ''`
+- **Number:** `17` = `ls scripts/*_check.sh | grep -c ''`
 - **Number:** `4` = `sed -n 's/.*EXPECT_PASS:-\([0-9]*\).*/\1/p' scripts/compiled_check.sh`
 
 The first version of that command was `grep -lc`, which is `-l` and `-c` together and unspecified —
@@ -536,7 +537,53 @@ the errors rather than the fact, and a document dropping silently out of the sam
 The measurement `scripts/northstar_measure.sh` owed: a 559-byte page in 44 ms, of which 19 is loading
 the font and 17 is style and layout, at a 39 MiB high-water mark.
 
-**What is still open is the other keyword surface**, and it is a separate entry's worth: a user
-RECORD field called `short` still emits a C keyword. Record fields are a different struct reached
-from about a dozen sites — typedef, construction, update, access, `show_`, `to_json`, `from_json`,
-`eq`, pattern binding — and nothing here reaches it.
+**The other keyword surface has since been closed upstream too, and it needed the same rule.** A
+user RECORD field called `short` used to emit a C keyword: record fields are a different struct,
+reached from about a dozen sites — typedef, construction, access, `show`, `to_json`, `from_json`,
+`eq`, pattern binding — and nothing in this repository reaches it, which is why it outlived the
+first fix. The upstream release gives every record field the same uniform prefix rather than
+escaping a list of reserved words, for the reason the list was rejected the first time: it is
+inherently incomplete, and this is the sixth time it had recurred.
+
+Two things had to stay true through that, and one of them broke first. Field names appear in the C
+struct AND as JSON keys, and `from_json` was reading its designator and its key from the same string
+— so prefixing renamed every key of every serialised record, which four of the upstream parity
+programs caught. `show` has the same split. Measured here after the fact, a record with fields named
+`short`, `register`, `unsigned` and `default` runs identically on the interpreter, C and LLVM, and
+both `show` and `to_json` still spell the fields the way the source did.
+
+## Q-19 — the viewport bounds nothing, so the window is as tall as the document
+
+`vh` resolves against a viewport 513 pixels tall, measured from the browser rather than assumed from
+`--window-size` (Q-17). That number then reaches **nothing else.** It is read by three unit
+conversions in `src/style.mere` and no layout or paint decision anywhere consults it, so the window
+`src/screen.mere` opens is sized to the finished document instead: 285 pixels for `example.com`, and
+938 for the tallest document in the corpus. On a screen that is a window taller than the display with
+nothing to scroll it, and 4 documents here are already in that range.
+
+- **Number:** `4` = `for f in test/data/layout/*.expected test/data/northstar/*/*.expected; do head -1 $f | cut -f5; done | awk '$1>513' | grep -c ''`
+- **Number:** `0` = `cat src/layout.mere src/paint.mere src/screen.mere | grep -c 'viewport_h'`
+- **Reproduces when:** `! grep -hvE '^ *//' $IN | grep -qE 'scroll_y|viewport_h'`
+- **Over:** `src/layout.mere src/paint.mere src/screen.mere`
+- **Poisoned by adding:** `let scroll_y = 0;`
+
+**That check was wrong on its first run and the gate said so**, which is the first time it has caught
+an entry written the same day. The term was `scroll`, and `src/layout.mere` matched — in a COMMENT,
+about `overflow: scroll` and margin collapsing. A code-shape check reads prose as code, and prose is
+where the words you are searching for are most likely to appear, because a comment is exactly where
+someone explains the thing that is not implemented. Hence the `grep -hvE '^ *//'` and a term
+(`scroll_y`) that only an implementation would carry.
+
+**This is a scroll offset and a clip, and it is deliberately not a small change**, because the
+question underneath it is which of the two the engine should have. A clip alone makes the window a
+fixed size and throws the rest of the page away, which is wrong but testable. An offset means paint
+takes a `scroll_y`, which is a parameter on the one function whose output every pixel gate compares
+— so the reftests, `imgpaint_check.sh` and the new window gate all move at once, and the honest
+version of that change starts by pinning what they say now.
+
+**What makes this worth an entry rather than a TODO** is that a viewport height nothing reads is
+indistinguishable from a viewport height that is wrong. Q-17 got 513 from asking the browser, and
+that measurement is currently load-bearing for exactly three unit conversions; if it were 400 the
+only gate that would notice is the north-star geometry, and only for pages using `vh`. The number is
+right and almost nothing depends on it being right, which is the state a measurement should not be
+left in.

@@ -1,0 +1,39 @@
+// One page, painted, on a window — and the window's pixels read back and compared.
+//
+// The readback is evidence rather than a tautology because `Window.capture` poisons the pixel
+// block before asking SDL for it: `show` wrote the image into that same block, so a capture that
+// merely handed back what was written would come back as the poison. That trap is recorded in this
+// repository for exactly this capability, and the capability closes it upstream.
+//
+// `--capture` prints the WINDOW's pixels through `Paint.render`, the same function whose output the
+// reftests compare, so the two sides are diffable by the comparison this repository already has.
+import "../src/screen.mere";
+import "../src/tree.mere";
+import "../src/sniff.mere";
+
+let argl = args ();
+let nth = fn (n: int) ->
+  let rec go = fn (l, i: int) -> match l with Nil -> "" | Cons (x, r) -> if i == n then x else go r (i + 1)
+  in go argl 0;
+let path = nth 0;
+let mode = nth 1;
+let src = Sniff.text_of_file path;
+let f = Font.load "test/data/font/NotoSans-Regular.ttf";
+let dir = let ps = str_split path "/" in
+          if list_len ps <= 1 then "" else str_join "/" (list_take ps (list_len ps - 1));
+let bs = Layout.boxes_in dir "test/data/font/NotoSans-Regular.ttf" (Tree.build (Html.tokenize src));
+let w = 800;
+let h = match bs with Cons (b, _) -> (if b.h < 1 then 1 else b.h) | Nil -> 1;
+let v = Paint.paint f bs w h;
+match Screen.show "mbrowse" v w h with
+| None -> let _ = print "no display" in 1
+| Some win ->
+  if str_eq mode "--capture" then
+    match Window.capture win with
+    | None -> let _ = print "no capture" in 1
+    | Some c ->
+      let _ = print (Paint.render (Screen.vec_of_canvas c) w h) in
+      let _ = Window.close win in 0
+  else
+    let _ = Window.close win in
+    let _ = print "shown" in 0

@@ -29,6 +29,17 @@ for f in decode.mere labels.mere jis.mere jis_index.mere; do
   echo "vendored mere-encoding/$f"
 done
 
+# The window and the canvas it composites. `contrib/raster` is the canvas type and the polygon
+# fill; `contrib/window` is SDL. Only the last step of the pipeline needs them -- everything that
+# checks the drawing compares reference pixels and opens nothing.
+mkdir -p "$ROOT/.mere_modules/mere-raster" "$ROOT/.mere_modules/mere-window"
+for f in canvas.mere path.mere; do
+  cp "$MERE_SRC/contrib/raster/$f" "$ROOT/.mere_modules/mere-raster/$f"
+  echo "vendored mere-raster/$f"
+done
+cp "$MERE_SRC/contrib/window/window.mere" "$ROOT/.mere_modules/mere-window/window.mere"
+echo "vendored mere-window/window.mere"
+
 # A fetch needs to know what a URL means, and a page's links need resolving against it. Both are
 # the URL Standard's answers rather than string surgery, and there is an implementation of it
 # already held to the WPT suite where it lives — writing a second one here would be a second thing
@@ -44,15 +55,28 @@ done
 python3 - "$ROOT" <<'REWIRE'
 import os, re, sys
 root = sys.argv[1]
-for pkg in ("mere-html", "mere-encoding", "mere-url"):
+for pkg in ("mere-html", "mere-encoding", "mere-url", "mere-raster", "mere-window"):
     d = os.path.join(root, ".mere_modules", pkg)
     for f in os.listdir(d):
         p = os.path.join(d, f); s = open(p).read()
-        # [a-z0-9_], not [a-z_]: `ipv6.mere` is the only sibling with a digit in it and it was the
-        # only one this rewrote nothing for, so the vendored copy imported a path that does not
-        # resolve. A rewriter that silently skips what it does not recognise leaves a module that
-        # fails at its first use rather than here.
+        # Two forms, and a rewriter that skips what it does not recognise is how a vendored module
+        # comes to import a path that does not resolve -- found twice: `ipv6.mere`, because the
+        # pattern was `[a-z_]+` and could not see a digit, and `../raster/canvas.mere`, because it
+        # could not see a directory. So both forms are handled AND anything left over is an error
+        # here rather than a failure at the module's first use.
+        #   "sibling.mere"          -> "<pkg>/sibling.mere"
+        #   "../other/file.mere"    -> "mere-other/file.mere"
         s2 = re.sub(r'import "(?!mere-)([a-z0-9_]+\.mere)"', r'import "%s/\1"' % pkg, s)
+        s2 = re.sub(r'import "\.\./([a-z0-9_]+)/([a-z0-9_]+\.mere)"',
+                    r'import "mere-\1/\2"', s2)
+        # AT THE START OF A LINE, because `import "contrib/encoding/decode.mere"` also appears
+        # inside a usage comment and is not an import. The first version of this check read every
+        # occurrence and stopped the vendoring over a code sample.
+        left = [m for m in re.findall(r'(?m)^import "([^"]+)"', s2) if not m.startswith("mere-")]
+        if left:
+            raise SystemExit("vendor: %s/%s imports %s, which nothing rewrote -- "
+                             "the vendored copy would not resolve it"
+                             % (pkg, f, ", ".join(left)))
         if s2 != s:
             open(p, "w").write(s2)
             print("rewired " + pkg + "/" + f)

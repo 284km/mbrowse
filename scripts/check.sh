@@ -49,6 +49,10 @@ sh "$ROOT/scripts/northstar_check.sh"
 # The engine, compiled, answering what the interpreter answers. Every other gate here runs
 # interpreted, which is how this engine went its whole life without being compiled once.
 sh "$ROOT/scripts/compiled_check.sh"
+# The pixels, on an actual window, read back out of the compositor. Compiled too, because the
+# window capability has no interpreter mock. The readback is evidence and not a tautology only
+# because the capability poisons the pixel block before asking SDL to fill it. Skips without SDL2.
+sh "$ROOT/scripts/screen_check.sh"
 # Last, and slowest by a long way: the only gate that draws.
 REFTEST_LIST="$RL" sh "$ROOT/scripts/reftest_check.sh"
 # After the gates, because it reads their lists: the counts and claims in OPEN_QUESTIONS.md, held to
