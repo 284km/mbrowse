@@ -458,13 +458,14 @@ the generated C**.
 
 **Nothing had said so because nothing had asked.** Of the gate scripts here, exactly one compiled
 anything, and it was written the day this was found (there are three now, the others being the window
-gate and this one) — until then every number in the README was an interpreted number.
+gate and this one; a fourth, `readme_check.sh`, compiles too and appears in NEITHER count, because
+its compiler is named in README.md rather than in the script -- which is the whole point of it) — until then every number in the README was an interpreted number.
 A library that only ever runs interpreted has untested portability and no gate is in a position to
 notice. The counts below are the two halves of that, and the first of them was itself wrong on the
 first run: 16 was a guess and the answer is 15.
 
 - **Number:** `3` = `grep -l 'MERE" -c' scripts/*_check.sh | grep -c ''`
-- **Number:** `17` = `ls scripts/*_check.sh | grep -c ''`
+- **Number:** `18` = `ls scripts/*_check.sh | grep -c ''`
 - **Number:** `4` = `sed -n 's/.*EXPECT_PASS:-\([0-9]*\).*/\1/p' scripts/compiled_check.sh`
 
 The first version of that command was `grep -lc`, which is `-l` and `-c` together and unspecified —

@@ -318,7 +318,7 @@ that a contour can start on an off-curve point — because no glyph in this font
 its 3,748. That branch is written and is verified by nothing here, and the gate's header says so: a
 branch nothing can exercise is not a branch anything has checked.
 
-## Where the tree builder is## Where the tree builder is
+## Where the tree builder is
 
 ```
 sh scripts/tree_check.sh          # html5lib tree construction: 185 of 189
@@ -407,9 +407,19 @@ because the output is not a number but a page that looks nearly right.
 Needs a built `mere`. See that repository for how; then:
 
 ```
-mere src/main.mere > mbrowse.c
+mere -c test/screen_cases.mere > mbrowse.c
 clang -O2 mbrowse.c -o mbrowse $(sdl2-config --cflags) $(sdl2-config --libs) -lm
+SDL_VIDEODRIVER=dummy ./mbrowse test/data/northstar/example-com/index.html
 ```
+
+**There is no `src/main.mere` and this section named one for a long time**, which is
+the same defect as a stale count with none of the excuses: an instruction nobody ran.
+The four steps in the sentence at the top of this file each exist and each have a gate
+— `src/fetch.mere` gets bytes over HTTPS, the tree and layout and paint run on them,
+`src/screen.mere` puts the result on a window — but no single program chains all four,
+because nothing needed one. The north-star gate fetches with a vendoring script and
+reads a committed snapshot; the window driver above takes a local file. Wiring them
+into one binary that takes a URL is what `src/main.mere` would be.
 
 ## Why static pages first
 
@@ -418,3 +428,18 @@ loadable code, and **both are needed only by JavaScript**. A browser without it 
 therefore a program the language can already express — which makes it the right
 first target, and makes the JavaScript question a separate one to answer later on
 evidence rather than in advance.
+
+## Licensing
+
+MIT, the same as Mere — see [LICENSE](LICENSE).
+
+Two things here are not covered by that and carry their own terms:
+
+- `.mere_modules/` is vendored from the Mere repository by `scripts/vendor.sh`. It is
+  MIT and the same author, so nothing changes, but it is somebody's copy of somebody's
+  code either way and worth naming.
+- `test/data/font/NotoSans-Regular.ttf` is Noto Sans, under the **SIL Open Font License
+  1.1**, with its license text beside it in `test/data/font/NotoSans-LICENSE.txt`. It is
+  a test fixture rather than a part of the program — every font-metric, glyph and paint
+  number in this repository is measured against it, which is why it is committed rather
+  than fetched.

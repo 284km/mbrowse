@@ -53,6 +53,9 @@ sh "$ROOT/scripts/compiled_check.sh"
 # window capability has no interpreter mock. The readback is evidence and not a tautology only
 # because the capability poisons the pixel block before asking SDL to fill it. Skips without SDL2.
 sh "$ROOT/scripts/screen_check.sh"
+# And the build instructions the README actually contains, extracted from it at run time rather
+# than copied here. It named `src/main.mere` for a long time and that file has never existed.
+sh "$ROOT/scripts/readme_check.sh"
 # Last, and slowest by a long way: the only gate that draws.
 REFTEST_LIST="$RL" sh "$ROOT/scripts/reftest_check.sh"
 # After the gates, because it reads their lists: the counts and claims in OPEN_QUESTIONS.md, held to
