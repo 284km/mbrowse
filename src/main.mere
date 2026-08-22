@@ -12,6 +12,8 @@
 //   mbrowse <url>              https:// or http:// — fetched
 //   mbrowse <path>             a local file — read
 //   mbrowse ... --ca PATH      the trust store to verify against (found automatically otherwise)
+//   mbrowse ... --scroll N     start N pixels down the page (clamped to the page)
+//   mbrowse ... --full         a window as tall as the document, however tall that is
 //   mbrowse ... --capture      print the WINDOW's pixels instead of leaving it open
 //
 // **Two ways in, one picture out.** A URL and a path are different only in where the bytes came
@@ -85,12 +87,18 @@ let rec first_target = fn (l: str list) ->
   match l with
   | Nil -> ""
   | Cons (x, r) ->
-    if str_eq x "--ca" then (match r with Cons (_v, rr) -> first_target rr | Nil -> "")
+    if str_eq x "--ca" || str_eq x "--scroll" then (match r with Cons (_v, rr) -> first_target rr | Nil -> "")
     else if str_index_of x "--" == 0 then first_target r
     else x;
 
 let target = first_target argl;
 let capture = has_flag "--capture" argl;
+let full = has_flag "--full" argl;
+// `int_of_str ""` is a crash, and `flag_after` answers "" for a flag nobody passed -- so the first
+// version of this line made the program die on EVERY invocation without `--scroll`, which is all of
+// them. An absent flag is a value, not an error; the default is written here rather than left to a
+// conversion that has no opinion about emptiness.
+let scroll = let given = flag_after "--scroll" argl in if str_len given == 0 then 0 else int_of_str given;
 let ca = let given = flag_after "--ca" argl in if str_len given > 0 then given else Main.find_ca Main.ca_candidates;
 
 // `exit` and not just the value: without it the program PRINTS its result and leaves the process
@@ -120,18 +128,29 @@ else
     else
       let docdir = if Main.is_url target then "" else Main.dir_of target in
       match Main.draw src docdir 800 with
-      | (v, h) ->
-        match Screen.show "mbrowse" v 800 h with
+      | (doc, doc_h) ->
+        // The window is the VIEWPORT, not the document. It used to be the document, so a page 1202
+        // pixels tall opened a window 1202 tall on a viewport that is 513 -- and the viewport height
+        // was a number three unit conversions read and nothing else. `--full` keeps the old
+        // behaviour reachable, because it is what every pixel gate here compares and losing the
+        // ability to ask for it would make this program unable to answer the same question they do.
+        let view_h = if full then doc_h else if doc_h < Style.viewport_h then doc_h else Style.viewport_h in
+        let at = Paint.clamp_scroll doc_h view_h scroll in
+        let v = if full then doc else Paint.viewport doc 800 doc_h view_h scroll in
+        match Screen.show "mbrowse" v 800 view_h with
         | None -> let _ = print "mbrowse: no display" in 1
         | Some win ->
           if capture then
             match Window.capture win with
             | None -> let _ = print "mbrowse: no capture" in 1
             | Some c ->
-              let _ = print (Paint.render (Screen.vec_of_canvas c) 800 h) in
+              let _ = print (Paint.render (Screen.vec_of_canvas c) 800 view_h) in
               let _ = Window.close win in 0
           else
             let _ = Window.close win in
-            let _ = print ("mbrowse: drew " ++ str_of_int h ++ " rows of " ++ target) in 0
+            // The document height AND the window's, because they are different now and a report
+            // that gives one of them cannot say which page was too tall to fit.
+            let _ = print ("mbrowse: drew " ++ str_of_int view_h ++ " of " ++ str_of_int doc_h
+                           ++ " rows at y=" ++ str_of_int at ++ " of " ++ target) in 0
 ;
 exit code

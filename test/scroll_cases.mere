@@ -1,0 +1,74 @@
+// One document, painted ONCE — then every question about windows onto it, answered from that
+// single raster.
+//
+// The first version of this driver answered one question per invocation, which read as tidy and
+// meant the gate launched it TEN times per document: dims, the full render, the identity slice,
+// three alignments, and two clamp probes checked two ways. Every launch re-tokenized, re-built,
+// re-laid-out and re-painted the same page — layout being minutes of interpreter time on the tall
+// documents — so a gate whose subject is a SLICING FUNCTION spent 90% of its budget re-deriving
+// the thing being sliced. It ran for an hour and a half without finishing its first document. A
+// gate that takes two hours is a gate nobody runs, which is the same defect as no gate.
+//
+// So: paint once, print every section. The gate re-splits the output and does ALL judging itself —
+// the driver claims which offset each slice is for (the `#SLICE n` headers), and the gate
+// recomputes the expected offsets from `#DIMS` and refuses headers it did not predict. Otherwise a
+// driver that quietly chose easier offsets would be testing something else under the right names.
+//
+// Section markers start with `#`, which no `Paint.render` row can start with (rows are run-length
+// hex: `800xffffff ...`).
+
+// `paint.mere`, NOT `screen.mere`: this driver never opens anything, and the screen module pulls
+// SDL headers into the generated C -- which made the compiled driver need SDL to link for a program
+// that compares integers. The window half of the claim lives in `screen_check.sh`.
+import "../src/paint.mere";
+import "../src/tree.mere";
+import "../src/sniff.mere";
+
+let argl = args ();
+let path = match argl with Cons (p, _) -> p | Nil -> "";
+
+let src = Sniff.text_of_file path;
+let f = Font.load "test/data/font/NotoSans-Regular.ttf";
+let dir = let ps = str_split path "/" in
+          if list_len ps <= 1 then "" else str_join "/" (list_take ps (list_len ps - 1));
+let bs = Layout.boxes_in dir "test/data/font/NotoSans-Regular.ttf" (Tree.build (Html.tokenize src));
+let w = 800;
+let doc_h = match bs with Cons (b, _) -> (if b.h < 1 then 1 else b.h) | Nil -> 1;
+let vp = Style.viewport_h;
+let v = Paint.paint f bs w doc_h;
+
+// A slice, rendered. The row count is what `Paint.viewport` actually produced — min(h, doc_h) —
+// so a short document's window prints short rather than lying about its size.
+let slice = fn (h: int) -> fn (s: int) ->
+  let rows = if h > doc_h then doc_h else h in
+  Paint.render (Paint.viewport v w doc_h h s) w rows;
+
+let _ = print ("#DIMS " ++ str_of_int w ++ " " ++ str_of_int doc_h ++ " " ++ str_of_int vp);
+let _ = print "#FULL";
+let _ = print (Paint.render v w doc_h);
+let _ = print "#IDENTITY";
+let _ = print (slice doc_h 0);
+let code =
+  if doc_h > vp then
+    let last = doc_h - vp in
+    let one = fn (s: int) ->
+      let _ = print ("#SLICE " ++ str_of_int s) in
+      print (slice vp s) in
+    let _ = one 0 in
+    let _ = one 37 in
+    let _ = one last in
+    let over = doc_h + 1000 in
+    let _ = print ("#CLAMP " ++ str_of_int over ++ " " ++ str_of_int (Paint.clamp_scroll doc_h vp over)) in
+    let _ = print "#OVER" in
+    let _ = print (slice vp over) in
+    let _ = print ("#CLAMP -5 " ++ str_of_int (Paint.clamp_scroll doc_h vp (0 - 5))) in
+    let _ = print "#UNDER" in
+    let _ = print (slice vp (0 - 5)) in
+    0
+  else
+    // Shorter than the viewport: the window is the document, never padding.
+    let _ = print "#SHORT" in
+    let _ = print (slice vp 0) in
+    0
+;
+exit code

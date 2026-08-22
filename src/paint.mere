@@ -237,6 +237,46 @@ module Paint {
     let nib = fn (sh: int) -> char_at d ((c / sh) - (c / (sh * 16)) * 16) in
     nib 1048576 ++ nib 65536 ++ nib 4096 ++ nib 256 ++ nib 16 ++ nib 1;
 
+  // --- the viewport ----------------------------------------------------------------
+  //
+  // `paint` draws the whole document, and until now the whole document was what went on the screen:
+  // a page 1202 pixels tall opened a window 1202 pixels tall, on a viewport that is 513. The viewport
+  // height was read by three unit conversions in `style.mere` and by no layout or paint decision
+  // anywhere, which is Q-19 -- and a viewport height nothing reads cannot be told from one that is
+  // wrong.
+  //
+  // **This is a slice and NOT a parameter on `paint`.** Threading a `scroll_y` through the painter
+  // would put it on the one function whose output every pixel gate compares, so the reftests, the
+  // image-ink gate, the north-star gate and the window gate would all move at once and the honest
+  // version of that change starts by pinning what they say today. Slicing the finished raster
+  // instead leaves every one of those outputs byte-identical, and it is not a lesser answer: with no
+  // incremental paint here, "draw the document and show a window onto it" IS the model.
+  //
+  // The cost is that a tall document is rastered in full before any of it is shown, which is exactly
+  // what already happened, so nothing regresses. When that stops being acceptable the parameter is
+  // the answer and this comment is the record of why it was not needed first.
+  //
+  // `scroll_y` is CLAMPED rather than trusted: a caller asking to scroll past the end gets the last
+  // window, and one asking for a negative offset gets the first. A viewport taller than the document
+  // is the document -- the caller decides the window's height, and `main` gives it
+  // `min (doc_h, viewport_h)`, so this never has to invent rows that were never painted.
+  let clamp_scroll = fn (doc_h: int) -> fn (view_h: int) -> fn (scroll_y: int) ->
+    let most = doc_h - view_h in
+    let most = if most < 0 then 0 else most in
+    if scroll_y < 0 then 0 else if scroll_y > most then most else scroll_y;
+
+  let viewport = fn (v: int Vec) -> fn (w: int) -> fn (doc_h: int) -> fn (view_h: int) -> fn (scroll_y: int) ->
+    let top = clamp_scroll doc_h view_h scroll_y in
+    let rows = if view_h > doc_h then doc_h else view_h in
+    let out = vec_new () in
+    let n = w * rows in
+    let rec go = fn (i: int) ->
+      if i >= n then out
+      else
+        let _ = vec_push out (vec_get v (top * w + i)) in
+        go (i + 1)
+    in go 0;
+
   let render = fn (v: int Vec) -> fn (w: int) -> fn (h: int) ->
     let rec row = fn (y: int) -> fn (out: str list) ->
       if y >= h then str_join "\n" (list_rev out)

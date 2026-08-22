@@ -72,7 +72,13 @@ module Layout {
   // because it is part of what the expected values MEAN: change it and every number in
   // `test/data/layout/*.expected` is wrong, so both have to change together and a default hides
   // that.
-  let viewport_w = 800;
+  //
+  // Taken FROM `Style` rather than written again. It was written again -- `let viewport_w = 800`
+  // here and `let viewport_w = 800` there -- and the two are the same viewport by definition, so
+  // they can only ever disagree by mistake. `vw` resolves against one of them and every box width
+  // against the other, and nothing would have said so: the class of documents where the difference
+  // shows is documents that use `vw`, and there was exactly one of those in the whole corpus.
+  let viewport_w = Style.viewport_w;
 
   // The one font size there is, because `font-size` is not resolved yet. It is the initial value and the
   // size the gate's expectations were taken at; when font-size lands this becomes a computed value and

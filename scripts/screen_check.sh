@@ -91,8 +91,51 @@ for d in $DOCS; do
   fi
 done
 
+# --- the window as a WINDOW, not just as a surface ------------------------------------
+# Everything above compares one full-document render against the window it was written to. Since
+# Q-19 the window is the VIEWPORT, and `mbrowse --scroll N` picks which part of the page is in it --
+# a path that runs through the compiled binary and through SDL, where nothing else here looks. The
+# interpreted half of that claim is `scroll_check.sh`'s; this is the half that survives a compiler
+# and a compositor.
+#
+# The comparison is again against itself: the readback at offset S must equal rows S..S+H of the
+# readback of the WHOLE document. Both sides come off the window, so a bug in the slice shows and a
+# bug shared by both sides is invisible -- which is correct, because `scroll_check.sh` is what holds
+# the slice against the raster, and this holds the window against the window.
+"$MERE" -c "$ROOT/src/main.mere" > "$T/main.c" 2>/dev/null
+SSL_PREFIX="${SSL_PREFIX:-$(brew --prefix openssl@3 2>/dev/null || echo /usr/local)}"
+if [ -f "$SSL_PREFIX/include/openssl/ssl.h" ] && \
+   $CC -O2 -w "$T/main.c" -o "$T/mbrowse" $(sdl2-config --cflags) $(sdl2-config --libs) \
+      -I"$SSL_PREFIX/include" -L"$SSL_PREFIX/lib" -lssl -lcrypto -lm 2>/dev/null; then
+  TALLDOC="test/data/layout/inline-block-005.html"
+  if [ -f "$TALLDOC" ]; then
+    SDL_VIDEODRIVER=dummy "$T/mbrowse" "$TALLDOC" --full --capture > "$T/wfull" 2>/dev/null || true
+    doc=$(awk 'END{print NR}' "$T/wfull")
+    vp=$(sed -n 's/.*let viewport_h = \([0-9]*\).*/\1/p' "$ROOT/src/style.mere")
+    if [ "$doc" -gt "$vp" ] 2>/dev/null; then
+      for s in 0 200 $((doc - vp)); do
+        total=$((total + 1))
+        SDL_VIDEODRIVER=dummy "$T/mbrowse" "$TALLDOC" --scroll "$s" --capture > "$T/wsl" 2>/dev/null || true
+        sed -n "$((s + 1)),$((s + vp))p" "$T/wfull" > "$T/wwant"
+        if cmp -s "$T/wsl" "$T/wwant"; then pass=$((pass + 1))
+        else
+          fail=$((fail + 1))
+          echo "  DIFF the window at y=$s is not rows $((s + 1))..$((s + vp)) of the window at --full"
+        fi
+      done
+      echo "  the viewport moves: 3 offsets over a $doc-row page in a $vp-row window"
+    else
+      echo "  SKIP the scroll offsets ($TALLDOC is $doc rows, not taller than $vp)"
+    fi
+  fi
+else
+  echo "  SKIP the scroll offsets (src/main.mere needs OpenSSL to link)"
+fi
+
 echo "screen: $pass of $total pages reach the window unchanged"
-EXPECT_PASS=${EXPECT_PASS:-3}
+# 3 pages + 3 scroll offsets. Derived, not guessed: `scroll_check.sh`'s pin was 30 because 30 was a
+# guess and its first run called "34 and 0" a failure.
+EXPECT_PASS=${EXPECT_PASS:-6}
 if [ "$pass" -ne "$EXPECT_PASS" ]; then
   echo "screen_check: expected exactly $EXPECT_PASS, got $pass"
   exit 1

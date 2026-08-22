@@ -457,16 +457,17 @@ program compiled — `mere -c` exited 0 with nothing on stderr — and then clan
 the generated C**.
 
 **Nothing had said so because nothing had asked.** Of the gate scripts here, exactly one compiled
-anything, and it was written the day this was found (there are four now: this one, the window gate,
-the fetch gate, and the end-to-end pipeline gate. A fifth, `readme_check.sh`, compiles too and appears
-in NEITHER count, because its compiler is named in README.md rather than in the script -- which is the
-whole point of it) — until then every number in the README was an interpreted number.
+anything, and it was written the day this was found (there are five now: this one, the window gate,
+the fetch gate, the end-to-end pipeline gate, and the scroll gate -- the last compiled out of
+necessity, after its interpreted form spent ten minutes per document building run-length text. A
+sixth, `readme_check.sh`, compiles too and appears in NEITHER count, because its compiler is named
+in README.md rather than in the script -- which is the whole point of it) — until then every number in the README was an interpreted number.
 A library that only ever runs interpreted has untested portability and no gate is in a position to
 notice. The counts below are the two halves of that, and the first of them was itself wrong on the
 first run: 16 was a guess and the answer is 15.
 
-- **Number:** `4` = `grep -l 'MERE" -c' scripts/*_check.sh | grep -c ''`
-- **Number:** `19` = `ls scripts/*_check.sh | grep -c ''`
+- **Number:** `5` = `grep -l 'MERE" -c' scripts/*_check.sh | grep -c ''`
+- **Number:** `20` = `ls scripts/*_check.sh | grep -c ''`
 - **Number:** `4` = `sed -n 's/.*EXPECT_PASS:-\([0-9]*\).*/\1/p' scripts/compiled_check.sh`
 
 The first version of that command was `grep -lc`, which is `-l` and `-c` together and unspecified —
@@ -554,20 +555,19 @@ programs caught. `show` has the same split. Measured here after the fact, a reco
 `short`, `register`, `unsigned` and `default` runs identically on the interpreter, C and LLVM, and
 both `show` and `to_json` still spell the fields the way the source did.
 
-## Q-19 — the viewport bounds nothing, so the window is as tall as the document
+## Q-19 — the viewport bounds nothing, so the window is as tall as the document — CLOSED
 
 `vh` resolves against a viewport 513 pixels tall, measured from the browser rather than assumed from
 `--window-size` (Q-17). That number then reaches **nothing else.** It is read by three unit
 conversions in `src/style.mere` and no layout or paint decision anywhere consults it, so the window
 `src/screen.mere` opens is sized to the finished document instead: 285 pixels for `example.com`, and
-938 for the tallest document in the corpus. On a screen that is a window taller than the display with
+1202 for the tallest document in the corpus (a browser says 938 for that one and it is one of
+layout's ten known failures -- the number that matters HERE is the one this engine draws). On a screen that is a window taller than the display with
 nothing to scroll it, and 4 documents here are already in that range.
 
 - **Number:** `4` = `for f in test/data/layout/*.expected test/data/northstar/*/*.expected; do head -1 $f | cut -f5; done | awk '$1>513' | grep -c ''`
-- **Number:** `0` = `cat src/layout.mere src/paint.mere src/screen.mere | grep -c 'viewport_h'`
-- **Reproduces when:** `! grep -hvE '^ *//' $IN | grep -qE 'scroll_y|viewport_h'`
-- **Over:** `src/layout.mere src/paint.mere src/screen.mere`
-- **Poisoned by adding:** `let scroll_y = 0;`
+- **Number:** `34` = `sed -n 's/.*EXPECT:-\([0-9]*\).*/\1/p' scripts/scroll_check.sh`
+- **Number:** `1` = `grep -c 'let viewport_w = Style.viewport_w' src/layout.mere`
 
 **That check was wrong on its first run and the gate said so**, which is the first time it has caught
 an entry written the same day. The term was `scroll`, and `src/layout.mere` matched — in a COMMENT,
@@ -576,19 +576,49 @@ where the words you are searching for are most likely to appear, because a comme
 someone explains the thing that is not implemented. Hence the `grep -hvE '^ *//'` and a term
 (`scroll_y`) that only an implementation would carry.
 
-**This is a scroll offset and a clip, and it is deliberately not a small change**, because the
-question underneath it is which of the two the engine should have. A clip alone makes the window a
-fixed size and throws the rest of the page away, which is wrong but testable. An offset means paint
-takes a `scroll_y`, which is a parameter on the one function whose output every pixel gate compares
-— so the reftests, `imgpaint_check.sh` and the new window gate all move at once, and the honest
-version of that change starts by pinning what they say now.
+**It was neither of the two things this entry expected**, and that is the whole of what closing it
+taught. The entry said an offset means `paint` takes a `scroll_y` — a parameter on the one function
+whose output every pixel gate compares, so the reftests, `imgpaint_check.sh` and the window gate
+would all move at once. That framing was wrong, and it is worth naming why: it assumed the choice
+was WHERE IN THE PAINTER to put the offset, when the answer was not to put it in the painter at all.
 
-**What makes this worth an entry rather than a TODO** is that a viewport height nothing reads is
-indistinguishable from a viewport height that is wrong. Q-17 got 513 from asking the browser, and
-that measurement is currently load-bearing for exactly three unit conversions; if it were 400 the
-only gate that would notice is the north-star geometry, and only for pages using `vh`. The number is
-right and almost nothing depends on it being right, which is the state a measurement should not be
-left in.
+`Paint.viewport` slices the finished raster. `Paint.paint` keeps its signature, so every one of those
+gates is byte-identical — verified, not assumed: the layout gate's verdict AND its ten-document
+failing set are unchanged, and the reftests, image-ink, north-star, window and pipeline gates all
+report what they reported before. It is not a lesser answer either. With no incremental paint here,
+"draw the document, show a window onto it" IS the model, and the cost — rastering a tall page in full
+before showing any of it — is exactly what already happened. When that stops being acceptable, the
+parameter is the answer, and the comment in `paint.mere` is the record of why it was not needed
+first.
+
+`scripts/scroll_check.sh` holds it, and needs no oracle: the claim is "row k of a window at
+`scroll_y` is row `scroll_y + k` of the document", and the document is right there to ask. Identity
+first (a window as tall as the document IS the document), because without it every other comparison
+is between two wrong things and may well agree. Then alignment at three offsets, clamping at both
+ends checked twice over (the offset the code chose AND the pixels it produced), and one document
+shorter than the viewport so "never invent rows nobody painted" is exercised rather than assumed.
+
+**Two things were wrong on the way and both were numbers.** The gate's `EXPECT` was 30 because 30 was
+a guess, so its first run reported `34 and 0` as a failure; it is derived arithmetic now, written out.
+And the prose here and in the README said the tallest document is **938**, which is a browser's
+height for a page this engine gets wrong — we draw 1202, and that page is one of layout's ten known
+failures. Two true measurements, one false sentence.
+
+**The other half of this was a number written twice.** `layout.mere` had its own `let viewport_w =
+800` beside `Style.viewport_w = 800`. They are the same viewport by definition, so they could only
+ever disagree by mistake — and the documents where the difference would show are the ones that use
+`vw`, of which the corpus has exactly one. Nothing would have said so.
+
+**What made this worth an entry rather than a TODO** was that a viewport height nothing reads is
+indistinguishable from a viewport height that is wrong. Q-17 got 513 from asking a browser, and that
+measurement was load-bearing for exactly three unit conversions; if it had been 400 the only gate
+that would have noticed is the north-star geometry, and only for pages using `vh`. It is load-bearing
+for the window now, and `scroll_check.sh` fails if the window stops agreeing with the document.
+
+**What is still not here** is anything that MOVES the offset: no key handling, no wheel, no scrollbar.
+`mbrowse --scroll N` is the whole interface, which is enough to check that the window is a window
+onto the page and not enough to read a long page with. Input is `contrib/window`'s third job and this
+repository has not needed it yet.
 
 ## Q-20 — `mere -t` and `mere -c` resolve an entry file's imports differently
 

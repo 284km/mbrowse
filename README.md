@@ -56,7 +56,8 @@ sh scripts/check.sh
 | OPEN_QUESTIONS.md      | the gates it makes claims about | 35 checks |
 | the engine COMPILED    | the same engine interpreted    | 4 of 4     |
 | a real page's geometry | a browser's own rects          | 7 of 7     |
-| the window's pixels    | the painter's, read back off it | 3 of 3    |
+| the window's pixels    | the painter's, read back off it | 6 of 6    |
+| a window onto the page | the page itself, sliced        | 34 of 34   |
 | HTTPS vs disk, end to end | each other, through one program | 285 rows |
 | the README's build block | run, not read                | ok         |
 
@@ -154,12 +155,23 @@ encoder, because two encoders agree until they do not and the disagreement would
 bug. It skips without SDL2, and runs under SDL's `dummy` driver otherwise, so it does not open a
 window on your desktop while you work.
 
-**What the window then exposed is that the viewport bounds nothing.** `vh` resolves against a
-viewport 513 pixels tall, measured from a browser rather than assumed — and that number is read by
-three unit conversions and by no layout or paint decision at all. So the window is sized to the
-finished document instead: 285 pixels for `example.com`, 938 for the tallest document here, and four
-documents are already taller than the viewport. That is a scroll offset and a clip, it is deliberately
-not a small change, and it is Q-19.
+**What the window then exposed was that the viewport bounded nothing** — `vh` resolved against a
+viewport 513 pixels tall that three unit conversions read and no layout or paint decision consulted,
+so the window opened as tall as the finished document: 1202 pixels for the tallest thing this engine
+renders. (1202, not the 938 a browser says for that page — it is one of layout's ten known failures,
+and the first version of this sentence quoted the browser's number for a page we get wrong, which is
+the easiest way to write something false out of two true measurements.)
+
+That is closed now, and the answer was not the parameter Q-19 predicted. `Paint.viewport` slices the
+finished raster; `Paint.paint` keeps its signature, so every pixel gate's output is byte-identical —
+verified, not assumed. With no incremental paint, "draw the document, show a window onto it" *is* the
+model, and the cost — rastering a tall page in full before showing any of it — is exactly what
+already happened. `mbrowse` opens a viewport-sized window, `--scroll N` picks where in the page it
+sits (clamped at both ends), `--full` keeps the old whole-document window reachable.
+`scripts/scroll_check.sh` holds the slice to "row k of the window at S is row S+k of the document" —
+the document is the oracle, so there is nothing else to be one. What is still absent is anything that
+*moves* the offset: no keys, no wheel, no scrollbar. `--scroll N` is the whole interface, which is
+enough to check the window is a window and not enough to read a long page with.
 
 ## The whole sentence, as one program
 
